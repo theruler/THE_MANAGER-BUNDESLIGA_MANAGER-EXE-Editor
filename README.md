@@ -5,9 +5,9 @@ Warning:
 The editor is sill in BETA STAGE, use at your own risk. Make backups!
 
 what this editor can do at the moment:
-- Strings length can be expanded (caveat: the total bytes cannot exceed the block size)
-- Auto translation with web engines
-- Font editing, import/export, re-mapping
+- strings length can be expanded (caveat: the total bytes cannot exceed the block size)
+- auto translation with web engines
+- font editing, import/export, re-mapping
 
 what it can't do (because there are tools that can do it already):
 - edit MANA.DAT
@@ -16,8 +16,5 @@ what it can't do (because there are tools that can do it already):
 
 TODO:
 - support all EXE variants
-
-
-Note:
-Most of the code has been processed by Claude (Sonnet 4.6 and 5), so it is highly unoptimized.
+- manual code optimization (almost 80% of the code has been processed by Claude - Sonnet 4.6/5)
 
