@@ -14,6 +14,8 @@ what it can't do (because there are tools that can do it already):
 - edit graphics
 - edit/play goal scenes
 
+TODO:
+- support all EXE variants
 
 
 Note:
