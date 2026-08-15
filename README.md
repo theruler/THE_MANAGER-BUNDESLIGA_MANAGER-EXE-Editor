@@ -1,5 +1,5 @@
 # THE_MANAGER-BUNDESLIGA_MANAGER-EXE-Editor
-EXE strings translation for Bundesliga Manager professionale and his THE MANAGER italian variant coded in Python (entry point: main.py).
+EXE strings translation for Bundesliga Manager professional and THE MANAGER italian variant, coded in Python (entry point: main.py).
 
 Warning:
 The editor is sill in BETA STAGE, use at your own risk. Make backups!
