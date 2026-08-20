@@ -409,7 +409,6 @@ class DOSTranslationEditor:
         self.filename_label = ttk.Label(top_frame, text="", font=("Segoe UI", 9, "italic"), foreground="#7F8C8D")
         self.filename_label.pack(side=tk.LEFT, padx=(8, 0))
         self.year_label = ttk.Label(top_frame, text="Starting year:", font=("Segoe UI", 9, "bold"))
-        self.year_label.pack(side=tk.LEFT, padx=(18, 4))
         self.year_spinbox = ttk.Spinbox(
             top_frame,
             from_=1900, to=2099,
@@ -418,9 +417,7 @@ class DOSTranslationEditor:
             state=tk.DISABLED,
             font=("Segoe UI", 9),
         )
-        self.year_spinbox.pack(side=tk.LEFT)
         self.year_var.trace_add("write", self._on_year_changed)
-        self.supported_controls.append(self.year_spinbox)
         self.status_label   = ttk.Label(top_frame, text=self.tr("header.no_file"), font=("Segoe UI", 9, "italic"))
         self.status_label.pack(side=tk.RIGHT)
         ttk.Style().configure("TNotebook.Tab", font=("Segoe UI", 10, "bold"), padding=(12, 5))
@@ -630,6 +627,17 @@ class DOSTranslationEditor:
         for widget in getattr(self, "supported_controls", []):
             widget_state = "readonly" if self.is_supported and isinstance(widget, ttk.Combobox) else state
             widget.config(state=widget_state)
+        year_label   = getattr(self, "year_label",   None)
+        year_spinbox = getattr(self, "year_spinbox", None)
+        if year_label is not None and year_spinbox is not None:
+            if self.is_supported:
+                year_label.pack(side=tk.LEFT, padx=(18, 4))
+                year_spinbox.pack(side=tk.LEFT)
+                year_spinbox.config(state=tk.NORMAL)
+            else:
+                year_spinbox.config(state=tk.DISABLED)
+                year_label.pack_forget()
+                year_spinbox.pack_forget()
         for widget_name in ("edit_text", "translate_text"):
             widget = getattr(self, widget_name, None)
             if widget is not None:
@@ -1730,7 +1738,7 @@ class DOSTranslationEditor:
 
         notebook = ttk.Notebook(dialog)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 4))
-        tabs = {name: ttk.Frame(notebook) for name in ("Summary", "Strings", "Blocks", "Pointers", "Fonts")}
+        tabs = {name: ttk.Frame(notebook) for name in ("Summary", "Strings", "Blocks", "Pointers", "Fonts", "Year")}
         for name, frame in tabs.items():
             notebook.add(frame, text="  %s  " % self.tr("preview.tab." + name.lower()))
 
@@ -1745,6 +1753,7 @@ class DOSTranslationEditor:
             f"Unique glyphs changed: {summary['glyphs_changed']}",
             f"Fonts affected: {', '.join(summary['fonts_affected']) or 'none'}",
             f"Pointer sources changed: {summary['pointer_sources_changed']}",
+            f"Starting year changed: {'yes' if summary['year_changed'] else 'no'}",
             "",
             f"Repack required for logical changes: {'yes' if summary['repack_needed'] else 'no'}",
             f"Repack status: {summary['repack_status']}",
@@ -1847,6 +1856,24 @@ class DOSTranslationEditor:
                 "yes" if row["bitmap_changed"] else "no",
                 row["changed_physical_bytes"],
             ), tags=(row["status"],))
+
+        year_row = snapshot.get("year")
+        year_tree = self._make_preview_tree(tabs["Year"], [
+            ("status",  "Status",  80,  tk.CENTER),
+            ("offset",  "Offset",  90,  tk.CENTER),
+            ("old",     "Old year", 90, tk.CENTER),
+            ("new",     "New year", 90, tk.CENTER),
+        ])
+        if year_row is not None:
+            status = "PASS" if year_row["changed"] else "UNCHANGED"
+            year_tree.insert("", tk.END, values=(
+                status,
+                f"0x{year_row['offset']:X}",
+                str(year_row["old_year"]),
+                str(year_row["new_year"]),
+            ), tags=(status,))
+        else:
+            year_tree.insert("", tk.END, values=("N/A", "—", "—", "—"))
 
         ttk.Button(dialog, text=self.tr("dlg.preview.close"),
                    command=dialog.destroy).pack(pady=(2, 10))
