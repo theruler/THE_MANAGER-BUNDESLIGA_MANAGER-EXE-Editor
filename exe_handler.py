@@ -158,6 +158,31 @@ def unpack_in_memory(data: bytearray) -> bytearray:
     except Exception:
         return data
 
+
+def get_mz_relocation_sites(data) -> list[int]:
+    """Return file offsets of all valid MZ relocation words."""
+    if len(data) < 0x1C or data[0:2] != b'MZ':
+        raise ValueError("MZ header not found")
+
+    reloc_count = read_u16(data, 0x06)
+    header_size = read_u16(data, 0x08) * 16
+    reloc_start = read_u16(data, 0x18)
+    reloc_end = reloc_start + reloc_count * 4
+
+    if header_size < 0x1C or header_size > len(data):
+        raise ValueError("Invalid MZ header size")
+    if reloc_start < 0x1C or reloc_end > header_size or reloc_end > len(data):
+        raise ValueError("Invalid MZ relocation table")
+
+    sites = set()
+    for pos in range(reloc_start, reloc_end, 4):
+        offset, segment = struct.unpack_from("<HH", data, pos)
+        site = header_size + segment * 16 + offset
+        if site < header_size or site + 2 > len(data):
+            raise ValueError(f"MZ relocation site outside image: {site:#x}")
+        sites.add(site)
+    return sorted(sites)
+
 GAME_PROFILES = {
     "THE MANAGER": {
         "ds_start": 0x53CE0,
@@ -171,6 +196,21 @@ GAME_PROFILES = {
         "code_ptrs":   [(0x2E3BB, 0x5890A), (0x2E402, 0x5891E)],
         "fixed_strings": [(0x55438, 11)],
         "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
+        "immutable_signature": {
+            "header_size": 0x6D80,
+            "relocation_table_offset": 0x1C,
+            "relocation_count": 7000,
+            "relocation_topology_sha256": "95235ED9EEB658148E86843DC0381D846BB8FFD91C0515850EE23D590588ED15",
+            "entry_cs": 0x3A45,
+            "entry_ip": 0x0018,
+            "diagnostic_stack_ss": 0x578D,
+            "diagnostic_stack_sp": 0x1000,
+            "code_anchors": (
+                (0x0F753, "55 8B EC B8 0A 00 9A C8 02 ?? ?? 2A C0 50 B9 EF 00 51 B9 3F 01 51 B9 2B 00 51 2B C9 51 8E 06 AA"),
+                (0x1F7B7, "55 8B EC B8 68 00 9A C8 02 ?? ?? 57 56 8E 06 2A"),
+                (0x228E0, "55 8B EC B8 0E 00 9A C8 02 ?? ?? 56 C6 46 FA 00"),
+            ),
+        },
     },
     "BUNDESLIGA MANAGER PROFESSIONAL": {
         "ds_start": 0x537E0,
@@ -183,6 +223,49 @@ GAME_PROFILES = {
         "code_ptrs":   [(0x2DEB3, 0x58226), (0x2DEFA, 0x58236)],
         "fixed_strings": [(0x56174, 8)],
         "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
+        "immutable_signature": {
+            "header_size": 0x6CB0,
+            "relocation_table_offset": 0x1C,
+            "relocation_count": 6946,
+            "relocation_topology_sha256": "8D0F8560784383D50D92DB5902B9ABF4ADA29D34035CD6FE18F14E2EEE29611E",
+            "entry_cs": 0x3A01,
+            "entry_ip": 0x0016,
+            "diagnostic_stack_ss": 0x5709,
+            "diagnostic_stack_sp": 0x1000,
+            "code_anchors": (
+                (0x0F749, "55 8B EC B8 0A 00 9A C6 02 ?? ?? 2A C0 50 B9 EF 00 51 B9 3F 01 51 B9 2B 00 51 2B C9 51 8E 06 B0"),
+                (0x1FFFA, "55 8B EC B8 02 00 9A C6 02 ?? ?? 8E 06 20 9E B0"),
+                (0x242CF, "55 8B EC B8 4A 00 9A C6 02 ?? ?? 8E 06 AA 9E 26"),
+            ),
+        },
+    },
+    "THE MANAGER (ENGLISH)": {
+        "ds_start": 0x52320,
+        "base_const": bytes.fromhex("694B"),
+        "ptr_ranges": [
+            (0x535E0, 0x535FC), (0x535FE, 0x53646), (0x5364C, 0x538F4),
+            (0x56182, 0x562BA), (0x562EA, 0x56566), (0x56582, 0x56AB6),
+            (0x56CB8, 0x56DCC), (0x5ADE8, 0x5AFA0),
+        ],
+        "valid_ranges": [(0x52B9A, 0x5354C), (0x538FC, 0x56182), (0x56566, 0x56582), (0x5726E, 0x5ADCD)],
+        "code_ptrs": [(0x2E16B, 0x56566), (0x2E1B2, 0x56574)],
+        "fixed_strings": [(0x538F4, 8)],
+        "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
+        "immutable_signature": {
+            "header_size": 0x6C90,
+            "relocation_table_offset": 0x1C,
+            "relocation_count": 6941,
+            "relocation_topology_sha256": "802345DB9DD9B8E6C161D36B570BBBE33F4BC14A8753F89F368571DFD6B538BE",
+            "entry_cs": 0x3A23,
+            "entry_ip": 0x0016,
+            "diagnostic_stack_ss": 0x555F,
+            "diagnostic_stack_sp": 0x1000,
+            "code_anchors": (
+                (0x0F5F3, "55 8B EC B8 0A 00 9A C6 02 ?? ?? 2A C0 50 B9 EF 00 51 B9 3F 01 51 B9 2B 00 51 2B C9 51 8E 06 A4"),
+                (0x1F657, "55 8B EC B8 68 00 9A C6 02 ?? ?? 57 56 8E 06 24"),
+                (0x245A7, "55 8B EC B8 4A 00 9A C6 02 ?? ?? 8E 06 AE 98 26"),
+            ),
+        },
     },
 }
 
@@ -192,7 +275,7 @@ EXE_FONT_PROFILES = {
         "fonts": {
             "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3CF64, "ptr_end": 0x3D022, "glyph_start": 0x3D022, "glyph_end": 0x3D5CE, "num_ptrs": 95, "ascii_start": 0x20},
             "FLOW.FON":   {"type": "fixed",   "rows": 8,  "bytes_per_char": 9, "ptr_start": 0x3D930, "ptr_end": 0x3D9EE, "glyph_start": 0x3D9EE, "glyph_end": 0x3DD18, "num_ptrs": 95, "ascii_start": 0x20},
-            "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3D5DA, "ptr_end": 0x3D698, "glyph_start": 0x3D698, "glyph_end": 0x3D92A, "num_ptrs": 96, "ascii_start": 0x20},
+            "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3D5DA, "ptr_end": 0x3D698, "glyph_start": 0x3D698, "glyph_end": 0x3D92A, "num_ptrs": 95, "ascii_start": 0x20},
         },
     },
     "THE MANAGER": {
@@ -203,6 +286,14 @@ EXE_FONT_PROFILES = {
             "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3DAE4, "ptr_end": 0x3DBA4, "glyph_start": 0x3DBA4, "glyph_end": 0x3DE3D, "num_ptrs": 96, "ascii_start": 0x20},
         },
     },
+    "THE MANAGER (ENGLISH)": {
+        "base_addr": 0x3CA30,
+        "fonts": {
+            "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3D102, "ptr_end": 0x3D1C0, "glyph_start": 0x3D1C0, "glyph_end": 0x3D77D, "num_ptrs": 95, "ascii_start": 0x20},
+            "FLOW.FON":   {"type": "fixed",   "rows": 8,  "bytes_per_char": 9, "ptr_start": 0x3DB2B, "ptr_end": 0x3DBE9, "glyph_start": 0x3DBEB, "glyph_end": 0x3DF15, "num_ptrs": 95, "ascii_start": 0x20},
+            "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3D789, "ptr_end": 0x3D849, "glyph_start": 0x3D85B, "glyph_end": 0x3DAF4, "num_ptrs": 96, "ascii_start": 0x20},
+        },
+    },
 }
 
-__all__ = ['unpack_in_memory', 'GAME_PROFILES', 'EXE_FONT_PROFILES']
+__all__ = ['unpack_in_memory', 'get_mz_relocation_sites', 'GAME_PROFILES', 'EXE_FONT_PROFILES']
