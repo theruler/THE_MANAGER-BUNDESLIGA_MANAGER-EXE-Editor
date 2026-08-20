@@ -163,6 +163,8 @@ class DOSTranslationEditor:
         self.font_pending          = False
         self.font_errors           = []
         self.translation_pending   = False
+        self.year_var              = tk.IntVar(value=0)
+        self._year_spinbox_guard   = False
         self.diff_preview_cache    = PreviewCache()
         self.filter_records        = ()
         self.filter_records_by_id  = {}
@@ -259,7 +261,6 @@ class DOSTranslationEditor:
         ]
         self.root.config(menu=self.menubar)
 
-        # --- Integrazione MANA.DAT editor ---
         try:
             from mana_editor import ManaEditorWindow
             from tkinter import filedialog as _fd
@@ -276,7 +277,7 @@ class DOSTranslationEditor:
             file_menu.add_separator()
             file_menu.add_command(label="MANA.DAT Editor…", command=_open_mana_editor)
         except ImportError:
-            pass   # mana_editor.py non presente — nessun errore
+            pass
 
     def _retranslate_menu(self):
         for index, key in ((0, "menu.file"), (1, "menu.tools"), (2, "menu.view")):
@@ -407,6 +408,19 @@ class DOSTranslationEditor:
         self.profile_label.pack(side=tk.LEFT)
         self.filename_label = ttk.Label(top_frame, text="", font=("Segoe UI", 9, "italic"), foreground="#7F8C8D")
         self.filename_label.pack(side=tk.LEFT, padx=(8, 0))
+        self.year_label = ttk.Label(top_frame, text="Starting year:", font=("Segoe UI", 9, "bold"))
+        self.year_label.pack(side=tk.LEFT, padx=(18, 4))
+        self.year_spinbox = ttk.Spinbox(
+            top_frame,
+            from_=1900, to=2099,
+            textvariable=self.year_var,
+            width=6,
+            state=tk.DISABLED,
+            font=("Segoe UI", 9),
+        )
+        self.year_spinbox.pack(side=tk.LEFT)
+        self.year_var.trace_add("write", self._on_year_changed)
+        self.supported_controls.append(self.year_spinbox)
         self.status_label   = ttk.Label(top_frame, text=self.tr("header.no_file"), font=("Segoe UI", 9, "italic"))
         self.status_label.pack(side=tk.RIGHT)
         ttk.Style().configure("TNotebook.Tab", font=("Segoe UI", 10, "bold"), padding=(12, 5))
@@ -1918,6 +1932,29 @@ class DOSTranslationEditor:
         ]
         return matches[0] if len(matches) == 1 else None
 
+    def _on_year_changed(self, *_args):
+        if self._year_spinbox_guard:
+            return
+        if not self._supported_loaded():
+            return
+        code_year_offset = self.profile.get("code_year")
+        if code_year_offset is None:
+            return
+        try:
+            year_val = self.year_var.get()
+        except (tk.TclError, ValueError):
+            return
+        if not (0 <= year_val <= 0xFFFF):
+            return
+        if code_year_offset + 2 > len(self.exe_data):
+            return
+        packed = year_val.to_bytes(2, "little")
+        if bytes(self.exe_data[code_year_offset:code_year_offset + 2]) == packed:
+            return
+        self.exe_data[code_year_offset:code_year_offset + 2] = packed
+        self._invalidate_diff_preview("year-change")
+        self._update_save_state()
+
     def _reset_state(self):
         self._invalidate_diff_preview("reset", refresh=False)
         self.exe_data               = bytearray()
@@ -1968,6 +2005,11 @@ class DOSTranslationEditor:
         self.profile_label.config(text=self.tr("header.profile_none"))
         self.filename_label.config(text="")
         self.status_label.config(text=self.tr("header.no_file"))
+        self._year_spinbox_guard = True
+        try:
+            self.year_var.set(0)
+        finally:
+            self._year_spinbox_guard = False
         self._set_counter(0, 0)
         self._set_filter_status(None)
         if hasattr(self, "current_range_label"):
@@ -2076,6 +2118,16 @@ class DOSTranslationEditor:
         self.profile_name = detected
         self.profile = GAME_PROFILES[detected]
         self.profile_label.config(text=detected, foreground="#2980B9")
+        self._year_spinbox_guard = True
+        try:
+            code_year_offset = self.profile.get("code_year")
+            if code_year_offset is not None and code_year_offset + 2 <= len(self.exe_data):
+                year_val = int.from_bytes(self.exe_data[code_year_offset:code_year_offset + 2], "little")
+                self.year_var.set(year_val)
+            else:
+                self.year_var.set(0)
+        finally:
+            self._year_spinbox_guard = False
         gcfg = self._game_cfg()
         for key, value in self.profile.get("range_font_defaults", {}).items():
             gcfg["range_font_defaults"].setdefault(str(key), value)

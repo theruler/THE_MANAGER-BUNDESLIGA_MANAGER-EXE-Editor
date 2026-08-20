@@ -160,7 +160,6 @@ def unpack_in_memory(data: bytearray) -> bytearray:
 
 
 def get_mz_relocation_sites(data) -> list[int]:
-    """Return file offsets of all valid MZ relocation words."""
     if len(data) < 0x1C or data[0:2] != b'MZ':
         raise ValueError("MZ header not found")
 
@@ -184,8 +183,9 @@ def get_mz_relocation_sites(data) -> list[int]:
     return sorted(sites)
 
 GAME_PROFILES = {
-    "THE MANAGER": {
+    "THE MANAGER (ITALIAN)": {
         "ds_start": 0x53CE0,
+        "code_year": 0x12AF2,
         "base_const": bytes.fromhex("F64C"),
         "ptr_ranges": [
             (0x543DC, 0x54474), (0x5511C, 0x55148), (0x5514A, 0x5518A),
@@ -214,6 +214,7 @@ GAME_PROFILES = {
     },
     "BUNDESLIGA MANAGER PROFESSIONAL": {
         "ds_start": 0x537E0,
+        "code_year": 0x12A18,
         "base_const": bytes.fromhex("B34C"),
         "ptr_ranges": [
             (0x53EDC, 0x53F74), (0x55AC0, 0x56174), (0x5617C, 0x56184),
@@ -241,6 +242,7 @@ GAME_PROFILES = {
     },
     "THE MANAGER (ENGLISH)": {
         "ds_start": 0x52320,
+        "code_year": 0x128A2,
         "base_const": bytes.fromhex("694B"),
         "ptr_ranges": [
             (0x535E0, 0x535FC), (0x535FE, 0x53646), (0x5364C, 0x538F4),
@@ -278,7 +280,7 @@ EXE_FONT_PROFILES = {
             "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3D5DA, "ptr_end": 0x3D698, "glyph_start": 0x3D698, "glyph_end": 0x3D92A, "num_ptrs": 95, "ascii_start": 0x20},
         },
     },
-    "THE MANAGER": {
+    "THE MANAGER (ITALIAN)": {
         "base_addr": 0x3CC80,
         "fonts": {
             "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3D46E, "ptr_end": 0x3D52C, "glyph_start": 0x3D52C, "glyph_end": 0x3DAD8, "num_ptrs": 95, "ascii_start": 0x20},

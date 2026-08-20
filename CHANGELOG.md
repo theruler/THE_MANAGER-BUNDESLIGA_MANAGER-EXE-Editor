@@ -1,10 +1,8 @@
-# THE MANAGER - Bundesliga Manager String-Editor
-
-## Changelog
+# THE MANAGER - Bundesliga Manager String-Editor ---- Changelog
 
 ### New
 
-- Added support for English THE MANAGER executables.
+- Added support for English THE MANAGER packed executables.
 - Added JSON export and import for strings.
 - Added Changes / Preview for reviewing pending changes before saving.
 - Interface and messages are translated into 5 languages. English is used by default.
@@ -13,6 +11,8 @@
 - Added the new String-Editor application branding and icon.
 - Persistent CharMap data is stored in `data\\char-mapping.json`.
 - `data\\deepl_key.txt` is provided as an empty optional DeepL API key file.
+- Added "Starting Year" selector
+
 
 ### Improved
 
