@@ -12,7 +12,7 @@
 - Persistent CharMap data is stored in `data\\char-mapping.json`.
 - `data\\deepl_key.txt` is provided as an empty optional DeepL API key file.
 - Added "Starting Year" selector
-
+- Added first version of MANA.DAT editor (standalone)
 
 ### Improved
 

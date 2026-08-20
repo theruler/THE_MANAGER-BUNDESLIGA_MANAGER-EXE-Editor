@@ -20,6 +20,7 @@ import json
 import random
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from PIL import Image, ImageTk
 
 HDR_LOGO_OFF  = 0x0000
 HDR_CTF_L_OFF = 0x0040
@@ -53,6 +54,102 @@ RED    = "#C0392B"
 
 LEAGUE_BTN_COLORS = ["#1a6b3c", "#8B0000", "#1a3a6b", "#5a2d82"]
 LEAGUE_BTN_ACTIVE = ["#27ae60", "#c0392b", "#2980b9", "#8e44ad"]
+
+def load_vga_image(vga_path: str, palette_path: str = None, game_mode: str = "EM") -> Image.Image | None:
+
+    if not os.path.isfile(vga_path):
+        return None
+
+    try:
+        with open(vga_path, "rb") as f:
+            data = f.read()
+
+        file_size = len(data)
+        header_len = 8 if game_mode == "BMH" else 6
+
+        if file_size < header_len + 1:
+            return None
+
+        width = data[0] + (data[1] << 8)
+        height = data[2] + (data[3] << 8)
+
+        if width <= 0 or height <= 0 or width > 640 or height > 480:
+            return None
+
+        if game_mode == "BMH":
+            payload_len = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24)
+        else:
+            payload_len = data[4] | (data[5] << 8)
+
+        payload_plus_header = payload_len + header_len
+        payload_end = payload_plus_header - 1
+
+        if payload_end >= file_size or payload_end < header_len:
+            return None
+
+        palette = []
+        if file_size > payload_plus_header:
+            pal_bytes = data[payload_plus_header:]
+            for b in pal_bytes[:768]:
+                palette.append(b * 4 if max(pal_bytes[:768]) <= 63 else b)
+        elif palette_path and os.path.isfile(palette_path):
+            with open(palette_path, "rb") as pf:
+                pal_bytes = pf.read()
+            for b in pal_bytes[:768]:
+                palette.append(b * 4 if max(pal_bytes[:768]) <= 63 else b)
+        else:
+            for i in range(256):
+                palette.extend([i, i, i])
+
+        while len(palette) < 768:
+            palette.extend([0, 0, 0])
+        palette = palette[:768]
+
+        offset = data[payload_end] - 1
+        if offset < 1:
+            return None
+
+        pixels = bytearray()
+        i = header_len
+        target_pixels = width * height
+
+        while i < payload_end and len(pixels) < target_pixels:
+            b = data[i]
+
+            if b > (offset + 1):
+                if i + 1 >= payload_end:
+                    break
+                count = b - offset
+                val = data[i + 1]
+                pixels.extend([val] * count)
+                i += 2
+            elif b == 0:
+                if i + 1 >= payload_end:
+                    break
+                val = data[i + 1]
+                pixels.append(val)
+                i += 2
+            elif b == (offset + 1):
+                i += 1
+            else: 
+                count = b + 1
+                if i + count >= payload_end:
+                    break
+                pixels.extend(data[i + 1 : i + 1 + count])
+                i += count + 1
+
+        if len(pixels) < target_pixels:
+            pixels.extend([0] * (target_pixels - len(pixels)))
+        else:
+            pixels = pixels[:target_pixels]
+
+        img = Image.frombytes("P", (width, height), bytes(pixels))
+        img.putpalette(palette)
+        return img.convert("RGBA")
+
+    except Exception as e:
+        print(f"Errore durante il caricamento del file VGA {vga_path}: {e}")
+        return None
 
 
 def _dec(raw: bytes) -> str:
@@ -160,9 +257,10 @@ class _FixedEntry(tk.Entry):
 
 class _LeagueTab(ttk.Frame):
 
-    def __init__(self, parent, parsed: dict, on_dirty=None):
+    def __init__(self, parent, parsed: dict, filepath: str = "", on_dirty=None):
         super().__init__(parent)
         self._parsed    = parsed
+        self._filepath  = filepath
         self._on_dirty  = on_dirty
         self._building  = True
         self._team_btns: dict[int, tk.Button] = {}
@@ -171,19 +269,13 @@ class _LeagueTab(ttk.Frame):
         self._widgets:  dict[int, dict]   = {}
         self._logo_cvs: dict[int, tk.Canvas] = {}
         self._cur_team: int | None = None
-
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
-
         grid_wrap = ttk.Frame(self, padding=(6, 6))
         grid_wrap.grid(row=0, column=0, sticky="ns")
-
-        ttk.Separator(self, orient="vertical").grid(row=0, column=0,
-            sticky="ns", padx=(0, 0))
-
+        ttk.Separator(self, orient="vertical").grid(row=0, column=0,sticky="ns", padx=(0, 0))
         self._detail_outer = ttk.Frame(self, padding=(10, 6))
         self._detail_outer.grid(row=0, column=1, sticky="nsew")
-
         self._grid_frame = grid_wrap
         self._build_grid()
         self._building = False
@@ -433,43 +525,48 @@ class _LeagueTab(ttk.Frame):
 
         gls_row = ttk.Frame(stat)
         gls_row.grid(row=5, column=0, columnspan=3, sticky="w", pady=3)
-        ttk.Label(gls_row, text="GOALS", width=8, anchor="e",
-                  foreground=MUTED, font=("Segoe UI", 9, "bold")).pack(side="left")
+        ttk.Label(gls_row, text="GOALS", width=8, anchor="e", foreground=MUTED, font=("Segoe UI", 9, "bold")).pack(side="left")
         w["gls"] = []
         for lbl in ("max", "min"):
-            ttk.Label(gls_row, text=lbl, foreground=MUTED,
-                      font=("Segoe UI", 8)).pack(side="left", padx=(6, 1))
-            fe = _FixedEntry(gls_row, 0, 254, width=4,
-                             on_change=lambda: self._writeback(ti))
+            ttk.Label(gls_row, text=lbl, foreground=MUTED,font=("Segoe UI", 8)).pack(side="left", padx=(6, 1))
+            fe = _FixedEntry(gls_row, 0, 254, width=4, on_change=lambda: self._writeback(ti))
             fe.set_int(t["gls"][len(w["gls"])])
             fe.pack(side="left", padx=(0, 2))
             w["gls"].append(fe)
 
-        logo_lf = ttk.LabelFrame(right, text="Logo VGA", padding=(10, 8))
+        logo_lf = ttk.LabelFrame(right, text="Team Logo", padding=(10, 8))
         logo_lf.pack(fill="x")
-        cvs = tk.Canvas(logo_lf, width=200, height=200,
-                        bg="#1a1a2e", highlightthickness=2,
-                        highlightbackground=ACCENT)
+        cvs = tk.Canvas(logo_lf, width=200, height=200,bg="#1a1a2e", highlightthickness=2,highlightbackground=ACCENT)
         cvs.pack(pady=(0, 6))
         self._logo_cvs[ti] = cvs
-        self._draw_logo_placeholder(cvs, t["logo"])
-        ttk.Label(logo_lf, text="Logo ID (PIC/NN.VGA)",
-                  font=("Segoe UI", 8), foreground=MUTED).pack()
+        self._draw_logo_display(cvs, t["logo"])
+        ttk.Label(logo_lf, text="Logo ID", font=("Segoe UI", 8), foreground=MUTED).pack()
+        
+        logo_var = tk.StringVar()
+        logo_sb = ttk.Spinbox(
+            logo_lf, 
+            from_=0, 
+            to=255, 
+            width=6, 
+            textvariable=logo_var, 
+            justify="center",
+            command=lambda _ti=ti: self._on_logo_id_change(_ti)
+        )
+        logo_sb._var = logo_var
+        
+        def _get_int():
+            val = logo_var.get()
+            if val.isdigit():
+                return max(0, min(255, int(val)))
+            return 0
 
-        logo_fe = _FixedEntry(logo_lf, 0, 255, width=6)
-        logo_fe.set_int(t["logo"])
-        logo_fe.pack(pady=(2, 8))
-        w["logo"] = logo_fe
-        logo_fe._var.trace_add("write",
-            lambda *_, _ti=ti: self._on_logo_id_change(_ti))
-
-        ttk.Button(logo_lf, text="⬆  Import VGA…",
-                   command=lambda cv=cvs, idx=ti: self._import_vga(cv, idx)
-                   ).pack(fill="x", pady=2)
-        ttk.Button(logo_lf, text="⬇  Export VGA…",
-                   command=lambda idx=ti: self._export_vga(idx)
-                   ).pack(fill="x", pady=2)
-
+        logo_sb.get_int = _get_int
+        logo_sb.set_int = lambda v: logo_var.set(str(v))
+        
+        logo_sb.set_int(t["logo"])
+        logo_sb.pack(pady=(2, 8))
+        w["logo"] = logo_sb
+        logo_var.trace_add("write", lambda *_, _ti=ti: self._on_logo_id_change(_ti))
         c.columnconfigure(0, weight=0)
         c.columnconfigure(1, weight=1)
         c.rowconfigure(0, weight=1)
@@ -495,16 +592,47 @@ class _LeagueTab(ttk.Frame):
         if self._on_dirty:
             self._on_dirty()
 
-    @staticmethod
-    def _draw_logo_placeholder(cvs: tk.Canvas, logo_id: int):
+    def _draw_logo_display(self, cvs: tk.Canvas, logo_id: int):
         W, H = 200, 200
         cvs.delete("all")
         cvs.create_rectangle(0, 0, W, H, fill="#1a1a2e", outline="")
-        cvs.create_oval(16, 16, W-16, H-16, outline="#3d5a80", width=3)
-        cvs.create_text(W//2, H//2 - 14, text=f"VGA #{logo_id}",
-                        fill="#e0e0e0", font=("Segoe UI", 16, "bold"))
-        cvs.create_text(W//2, H//2 + 18, text=f"PIC/{logo_id:02d}.VGA",
-                        fill="#7f8c8d", font=("Consolas", 11))
+
+        if self._filepath:
+            base_dir = os.path.dirname(os.path.abspath(self._filepath))
+        else:
+            base_dir = "."
+
+        pic_dir = os.path.join(base_dir, "PIC")
+
+        possible_paths = [
+            os.path.join(pic_dir, f"{logo_id:02d}.VGA"),
+            os.path.join(pic_dir, f"{logo_id}.VGA"),
+            os.path.join(pic_dir, f"{logo_id:02d}.vga"),
+            os.path.join(pic_dir, f"{logo_id}.vga"),
+        ]
+
+        vga_path = None
+        for p in possible_paths:
+            if os.path.isfile(p):
+                vga_path = p
+                break
+
+        pal_path = os.path.join(base_dir, "1.PAL")
+        if not os.path.isfile(pal_path):
+            pal_path = os.path.join(pic_dir, "1.PAL")
+
+        pil_img = None
+        if vga_path:
+            pil_img = load_vga_image(vga_path, palette_path=pal_path, game_mode="EM")
+
+        if pil_img:
+            pil_resized = pil_img.resize((W, H), Image.NEAREST)
+            cvs._photo_ref = ImageTk.PhotoImage(pil_resized)
+            cvs.create_image(W // 2, H // 2, image=cvs._photo_ref)
+        else:
+            cvs.create_oval(16, 16, W - 16, H - 16, outline="#3d5a80", width=3)
+            cvs.create_text(W // 2, H // 2 - 14, text=f"VGA #{logo_id}",fill="#e0e0e0", font=("Segoe UI", 16, "bold"))
+            cvs.create_text(W // 2, H // 2 + 18, text=f"PIC/{logo_id:02d}.VGA not found",fill="#e74c3c", font=("Consolas", 8))
 
     def _on_logo_id_change(self, ti: int):
         if self._building:
@@ -513,37 +641,9 @@ class _LeagueTab(ttk.Frame):
         w   = self._widgets.get(ti)
         cvs = self._logo_cvs.get(ti)
         if w and cvs and "logo" in w:
-            self._draw_logo_placeholder(cvs, w["logo"].get_int())
-
-    def _import_vga(self, cvs: tk.Canvas, ti: int):
-        path = filedialog.askopenfilename(
-            title="Import VGA image",
-            filetypes=[("VGA files", "*.VGA *.vga"), ("All files", "*.*")])
-        if not path:
-            return
-        cvs.delete("all")
-        cvs.create_rectangle(0, 0, 200, 200, fill="#1a1a2e", outline="")
-        cvs.create_text(100, 100, text=os.path.basename(path),
-                        fill="#88ccff", font=("Segoe UI", 10), width=190,
-                        justify="center")
-
-    def _export_vga(self, ti: int):
-        path = filedialog.asksaveasfilename(
-            title="Export VGA image",
-            defaultextension=".VGA",
-            filetypes=[("VGA files", "*.VGA"), ("All files", "*.*")])
-        if path:
-            messagebox.showinfo(
-                "Export VGA",
-                "VGA format export not yet implemented.\n"
-                f"Selected destination:\n{path}")
-
+            self._draw_logo_display(cvs, w["logo"].get_int())
 
 class _UefaTab(ttk.Frame):
-    """136 clubs in 5 columns, no scrollbox.
-    Toolbar: year-dropdown (loads from data/uefa_clubs.json) + RANDOMIZE.
-    """
-
     COLS = 5
 
     def __init__(self, parent, parsed: dict, on_dirty=None):
@@ -560,14 +660,6 @@ class _UefaTab(ttk.Frame):
         self._building = False
 
     def _load_db(self):
-        """Return (db_dict, sorted_year_list).
-        db_dict maps year-string -> list[club_name].
-        Supports:
-          - { "1994": ["Club A", ...], "1995": [...] }
-          - { "1994": [{"name": "Club A"}, ...] }
-          - ["Club A", ...]          -> year = "default"
-          - [{"name": "Club A"}]    -> year = "default"
-        """
         search_paths = []
         try:
             base = os.path.dirname(os.path.abspath(__file__))
@@ -765,30 +857,24 @@ class ManaEditorWindow(tk.Toplevel):
             s.theme_use("clam")
         except Exception:
             pass
-        s.configure("TFrame",            background=BG)
-        s.configure("TLabel",            background=BG, foreground=FG,
-                    font=("Segoe UI", 10))
-        s.configure("TLabelframe",       background=BG, foreground=FG,
-                    font=("Segoe UI", 10, "bold"))
+        s.configure("TFrame",background=BG)
+        s.configure("TLabel",background=BG, foreground=FG,font=("Segoe UI", 10))
+        s.configure("TLabelframe",background=BG, foreground=FG,font=("Segoe UI", 10, "bold"))
         s.configure("TLabelframe.Label", background=BG, foreground=FG)
-        s.configure("TButton",           font=("Segoe UI", 9, "bold"),
-                    padding=5, background=ACCENT, foreground="white",
-                    borderwidth=0)
-        s.map("TButton",
-              background=[("active", "#2980B9"), ("disabled", "#BDC3C7")])
-        s.configure("TNotebook.Tab",
-                    font=("Segoe UI", 10, "bold"), padding=(16, 6))
-        s.configure("TEntry",    fieldbackground="white")
-        s.configure("TCombobox", fieldbackground="white")
+        s.configure("TButton",font=("Segoe UI", 9, "bold"),padding=5, background=ACCENT, foreground="white",borderwidth=0)
+        s.map("TButton",background=[("active", "#2980B9"), ("disabled", "#BDC3C7")])
+        s.configure("TNotebook.Tab",font=("Segoe UI", 10, "bold"), padding=(16, 6))
+        s.configure("TEntry",fieldbackground="white")
+        s.configure("TCombobox",fieldbackground="white")
 
     def _build_menu(self):
         mb = tk.Menu(self, tearoff=False)
         self.config(menu=mb)
         fm = tk.Menu(mb, tearoff=False)
         mb.add_cascade(label="File", menu=fm)
-        fm.add_command(label="Open MANA.DAT…",  accelerator="Ctrl+O",       command=self.cmd_open)
-        fm.add_command(label="Save",             accelerator="Ctrl+S",       command=self.cmd_save)
-        fm.add_command(label="Save as…",         accelerator="Ctrl+Shift+S", command=self.cmd_save_as)
+        fm.add_command(label="Open MANA.DAT…",accelerator="Ctrl+O",command=self.cmd_open)
+        fm.add_command(label="Save",accelerator="Ctrl+S",command=self.cmd_save)
+        fm.add_command(label="Save as…",accelerator="Ctrl+Shift+S", command=self.cmd_save_as)
         fm.add_separator()
         fm.add_command(label="Close",            command=self.destroy)
         self.bind_all("<Control-o>", lambda e: self.cmd_open())
@@ -804,28 +890,22 @@ class ManaEditorWindow(tk.Toplevel):
         ttk.Button(top, text="Open…",    command=self.cmd_open   ).pack(side="left", padx=(0, 4))
         ttk.Button(top, text="Save",     command=self.cmd_save   ).pack(side="left", padx=(0, 4))
         ttk.Button(top, text="Save as…", command=self.cmd_save_as).pack(side="left")
-        self._file_lbl = ttk.Label(top, text="No file",
-                                   foreground=MUTED, font=("Segoe UI", 9, "italic"))
+        self._file_lbl = ttk.Label(top, text="No file",foreground=MUTED, font=("Segoe UI", 9, "italic"))
         self._file_lbl.pack(side="left", padx=(16, 0))
-        self._dirty_lbl = ttk.Label(top, text="", foreground=RED,
-                                    font=("Segoe UI", 9, "bold"))
+        self._dirty_lbl = ttk.Label(top, text="", foreground=RED,font=("Segoe UI", 9, "bold"))
         self._dirty_lbl.pack(side="right")
         ttk.Separator(self, orient="horizontal").pack(fill="x")
         self._nb = ttk.Notebook(self)
         self._nb.pack(fill="both", expand=True, padx=6, pady=6)
-        self._status = ttk.Label(self, text="", anchor="w",
-                                 padding=(8, 2), foreground=MUTED,
-                                 font=("Segoe UI", 8))
+        self._status = ttk.Label(self, text="", anchor="w",padding=(8, 2), foreground=MUTED,font=("Segoe UI", 8))
         self._status.pack(side="bottom", fill="x")
 
     def _rebuild_tabs(self):
         for tab in self._nb.tabs():
             self._nb.forget(tab)
-        self._league_tab = _LeagueTab(self._nb, self._parsed,
-                                      on_dirty=self._mark_dirty)
+        self._league_tab = _LeagueTab(self._nb, self._parsed,filepath=self._filepath,on_dirty=self._mark_dirty)
         self._nb.add(self._league_tab, text="  LEAGUE  ")
-        self._uefa_tab = _UefaTab(self._nb, self._parsed,
-                                  on_dirty=self._mark_dirty)
+        self._uefa_tab = _UefaTab(self._nb, self._parsed,on_dirty=self._mark_dirty)
         self._nb.add(self._uefa_tab, text="  UEFA  ")
 
     def _mark_dirty(self):
