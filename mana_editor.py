@@ -130,10 +130,26 @@ def load_vga_image(vga_path: str, palette_path: str = None, game_mode: str = "EM
 
 def _dec(raw: bytes) -> str:
     end = raw.find(b"\x00")
-    return raw[:end if end != -1 else len(raw)].decode("latin-1")
+    b_str = raw[:end if end != -1 else len(raw)]
+    try:
+        return b_str.decode("cp437")
+    except Exception:
+        return b_str.decode("latin-1", errors="replace")
 
 def _enc(name: str, length: int) -> bytes:
-    return (name.upper().encode("latin-1", errors="replace")[:length - 1]).ljust(length, b"\x00")
+    normalized = (
+        name
+        .replace("À", "A").replace("È", "E").replace("É", "E")
+        .replace("Ì", "I").replace("Ò", "O").replace("Ù", "U")
+        .replace("Ä", "AE").replace("Ö", "OE").replace("Ü", "UE")
+        .replace("Ñ", "N")
+    )
+    try:
+        encoded = normalized.encode("cp437", errors="replace")
+    except Exception:
+        encoded = normalized.encode("latin-1", errors="replace")
+    
+    return (encoded[:length - 1]).ljust(length, b"\x00")
 
 def parse_mana(data: bytes) -> dict:
     need = EUROPE_START + N_EUROPE * EUROPE_RECORD
