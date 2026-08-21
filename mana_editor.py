@@ -272,10 +272,13 @@ class _LeagueTab(ttk.Frame):
         self._widgets: dict[int, dict] = {}
         self._logo_cvs: dict[int, tk.Canvas] = {}
         self._cur_team: int | None = None
+        self._points_rule = tk.IntVar(value=3)
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
-        grid_wrap = ttk.Frame(self, padding=(6, 6))
-        grid_wrap.grid(row=0, column=0, sticky="ns")
+        left_wrap = ttk.Frame(self)
+        left_wrap.grid(row=0, column=0, sticky="ns")
+        grid_wrap = ttk.Frame(left_wrap, padding=(6, 6))
+        grid_wrap.pack(side="top", fill="both", expand=True)
         self._detail_outer = ttk.Frame(self, padding=(10, 6))
         self._detail_outer.grid(row=0, column=1, sticky="nsew")
         self._grid_frame = grid_wrap
@@ -293,7 +296,53 @@ class _LeagueTab(ttk.Frame):
             col_offset += 1
             
         self._ghost = tk.Label(self._grid_frame.winfo_toplevel(), bg="#c8dff7", fg="#1a3a6b", font=("Consolas", 9), relief="groove", padx=6, pady=2)
+        self._build_tools_frame()
         self._show_placeholder()
+
+    def _pts_max_for_rule(self) -> int:
+        return 76 if self._points_rule.get() == 2 else 114
+
+    def _pts_total_for_rule(self) -> int:
+        return self._pts_max_for_rule()
+
+    def _build_tools_frame(self):
+        if hasattr(self, '_tools_frame') and self._tools_frame.winfo_exists():
+            self._tools_frame.destroy()
+        tools_f = ttk.LabelFrame(self._grid_frame, text="Tools", padding=(6, 4))
+        self._tools_frame = tools_f
+        rule_f = ttk.Frame(tools_f)
+        rule_f.pack(fill="x", pady=(0, 6))
+        ttk.Label(rule_f, text="points rule", font=("Segoe UI", 8, "bold"), foreground=FG).pack(side="left", padx=(0, 6))
+        for val in (2, 3):
+            rb = ttk.Radiobutton(rule_f, text=str(val), variable=self._points_rule, value=val,
+                                 command=self._on_points_rule_changed)
+            rb.pack(side="left", padx=(0, 4))
+        zero_btn = tk.Button(tools_f, text="ZERO STATS", bg="#8B0000", fg="white",
+                             activebackground="#c0392b", activeforeground="white",
+                             font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,
+                             cursor="hand2", command=self._zero_all_stats)
+        zero_btn.pack(fill="x", pady=(0, 2))
+        self._grid_frame.after(50, self._place_tools_frame)
+
+    def _place_tools_frame(self):
+        if not hasattr(self, '_tools_frame') or not self._tools_frame.winfo_exists():
+            return
+        ref_btn = getattr(self, '_league4_name_btn', None)
+        if ref_btn is None or not ref_btn.winfo_exists() or ref_btn.winfo_x() == 0:
+            self._grid_frame.after(100, self._place_tools_frame)
+            return
+        ref_x = ref_btn.winfo_x()
+        fe1 = self._rank_entries.get(58)
+        fe2 = self._rank_entries.get(59)
+        if fe1 is None or not fe1.winfo_exists() or fe1.winfo_y() == 0:
+            self._grid_frame.after(100, self._place_tools_frame)
+            return
+        ref_y_row1 = fe1.winfo_y()
+        row_h = (fe2.winfo_y() - ref_y_row1) if (fe2 and fe2.winfo_exists()) else 24
+        if row_h <= 0:
+            row_h = 24
+        target_y = ref_y_row1 + row_h * 10  
+        self._tools_frame.place(x=ref_x, y=target_y)
 
     def _build_column(self, li: int, first: int, count: int, rank_max: int, col_offset: int):
         color = LEAGUE_BTN_COLORS[li]
@@ -319,6 +368,8 @@ class _LeagueTab(ttk.Frame):
             btn.bind("<B1-Motion>", lambda e, idx=ti: self._btn_motion(idx, e))
             btn.bind("<ButtonRelease-1>", lambda e, idx=ti: self._btn_release(idx, e))
             self._team_btns[ti] = btn
+            if li == 3 and row_i == 0:
+                self._league4_name_btn = btn
 
     def _rank_changed(self, ti: int):
         if self._building:
@@ -352,6 +403,28 @@ class _LeagueTab(ttk.Frame):
             self._cur_team = first + group.index(sel_team)
         self._build_column(li, first, count, rank_max, li)
         if self._cur_team is not None and first <= self._cur_team < first + count:
+            self._show_team(self._cur_team)
+        if self._on_dirty:
+            self._on_dirty()
+
+    def _on_points_rule_changed(self):
+        if self._cur_team is not None:
+            self._show_team(self._cur_team)
+
+    def _zero_all_stats(self):
+        from tkinter import messagebox as _mb
+        if not _mb.askyesno("ZERO STATS",
+                            "Puts all the stats of all 64 teams, to zero?\n(CTF, POINTS, GOALS and RANK)",
+                            parent=self):
+            return
+        for t in self._parsed["teams"]:
+            t["ctf"] = [0, 0, 0]
+            t["pts"] = [0, 0]
+            t["gls"] = [0, 0]
+            t["rank"] = 0
+        for ti, fe in self._rank_entries.items():
+            fe.set_int(0)
+        if self._cur_team is not None:
             self._show_team(self._cur_team)
         if self._on_dirty:
             self._on_dirty()
@@ -524,16 +597,28 @@ class _LeagueTab(ttk.Frame):
         w["rank"] = rank_fe
         ttk.Label(rows_f, text="POINTS", width=LABEL_W, anchor="e", foreground=MUTED, font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="e", padx=(0, 4), pady=3)
         w["pts"] = []
-        pts_max_fe = _FixedEntry(rows_f, 0, 254, width=4, on_change=lambda: self._writeback(ti))
+        def _pts_conc_from_scored(scored: int) -> int:
+            total = self._pts_total_for_rule()
+            return 0 if scored == 0 else max(0, total - scored)
+        def _update_pts_conc(*_, _ti=ti):
+            scored = w["pts"][0].get_int() if w.get("pts") else 0
+            w["pts_conc_var"].set(str(_pts_conc_from_scored(scored)))
+            self._writeback(_ti)
+        pts_max_fe = _FixedEntry(rows_f, 0, self._pts_max_for_rule(), width=4, on_change=lambda: _update_pts_conc())
         pts_max_fe.set_int(t["pts"][0])
         ttk.Label(rows_f, text="scored", foreground=MUTED, font=("Segoe UI", 7)).grid(row=1, column=1, sticky="e", padx=(0, 2), pady=3)
         pts_max_fe.grid(row=1, column=2, sticky="w", pady=3)
         w["pts"].append(pts_max_fe)
-        pts_min_fe = _FixedEntry(rows_f, 0, 254, width=4, on_change=lambda: self._writeback(ti))
-        pts_min_fe.set_int(t["pts"][1])
+        pts_conc_var = tk.StringVar(value=str(_pts_conc_from_scored(t["pts"][0])))
+        w["pts_conc_var"] = pts_conc_var
         ttk.Label(rows_f, text="conc.", foreground=MUTED, font=("Segoe UI", 7)).grid(row=1, column=3, sticky="e", padx=(4, 2), pady=3)
-        pts_min_fe.grid(row=1, column=4, sticky="w", pady=3)
-        w["pts"].append(pts_min_fe)
+        pts_conc_lbl = ttk.Label(rows_f, textvariable=pts_conc_var, width=4, font=("Consolas", 9), foreground="#4a5568", anchor="center", relief="flat", background="#e8ecf0")
+        pts_conc_lbl.grid(row=1, column=4, sticky="w", pady=3)
+        class _ReadOnlyPts:
+            def __init__(self, var): self._var = var
+            def get_int(self): return int(self._var.get()) if self._var.get().isdigit() else 0
+            def set_int(self, v): self._var.set(str(v))
+        w["pts"].append(_ReadOnlyPts(pts_conc_var))
         ttk.Label(rows_f, text="GOALS", width=LABEL_W, anchor="e", foreground=MUTED, font=("Segoe UI", 9, "bold")).grid(row=2, column=0, sticky="e", padx=(0, 4), pady=3)
         w["gls"] = []
         gls_max_fe = _FixedEntry(rows_f, 0, 254, width=4, on_change=lambda: self._writeback(ti))
@@ -582,8 +667,10 @@ class _LeagueTab(ttk.Frame):
         t["name"] = w["name"].get()[:20].upper()
         t["rank"] = w["rank"].get_int()
         t["ctf"] = [fe.get_int() for fe in w["ctf"]]
-        p0, p1 = w["pts"][0].get_int(), w["pts"][1].get_int()
-        t["pts"] = [max(p0, p1), min(p0, p1)]
+        p0 = w["pts"][0].get_int()
+        total = self._pts_total_for_rule()
+        p1 = 0 if p0 == 0 else max(0, total - p0)
+        t["pts"] = [p0, p1]
         g0, g1 = w["gls"][0].get_int(), w["gls"][1].get_int()
         t["gls"] = [max(g0, g1), min(g0, g1)]
         t["logo"] = w["logo"].get_int()
