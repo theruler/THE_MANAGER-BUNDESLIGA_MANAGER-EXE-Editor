@@ -308,20 +308,36 @@ class _LeagueTab(ttk.Frame):
     def _build_tools_frame(self):
         if hasattr(self, '_tools_frame') and self._tools_frame.winfo_exists():
             self._tools_frame.destroy()
+            
         tools_f = ttk.LabelFrame(self._grid_frame, text="Tools", padding=(6, 4))
         self._tools_frame = tools_f
         rule_f = ttk.Frame(tools_f)
         rule_f.pack(fill="x", pady=(0, 6))
         ttk.Label(rule_f, text="points rule", font=("Segoe UI", 8, "bold"), foreground=FG).pack(side="left", padx=(0, 6))
+        style = ttk.Style()
+        bg_color = style.lookup("TFrame", "background")
+        style.configure("Tool.TRadiobutton", background=bg_color)
+        
         for val in (2, 3):
             rb = ttk.Radiobutton(rule_f, text=str(val), variable=self._points_rule, value=val,
+                                 style="Tool.TRadiobutton",
                                  command=self._on_points_rule_changed)
             rb.pack(side="left", padx=(0, 4))
-        zero_btn = tk.Button(tools_f, text="ZERO STATS", bg="#8B0000", fg="white",
-                             activebackground="#c0392b", activeforeground="white",
+        zero_btn = tk.Button(tools_f, text="RESET STATS", bg="#D35400", fg="white",
+                             activebackground="#E67E22", activeforeground="white",
                              font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,
                              cursor="hand2", command=self._zero_all_stats)
         zero_btn.pack(fill="x", pady=(0, 2))
+        pos_btn = tk.Button(tools_f, text="SHUFFLE TEAMS", bg="#D35400", fg="white",
+                            activebackground="#E67E22", activeforeground="white",
+                            font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,
+                            cursor="hand2", command=self._random_positions)
+        pos_btn.pack(fill="x", pady=(0, 2))
+        rand_btn = tk.Button(tools_f, text="RANDOMIZE STATS", bg="#D35400", fg="white",
+                             activebackground="#E67E22", activeforeground="white",
+                             font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,
+                             cursor="hand2", command=self._random_all_stats)
+        rand_btn.pack(fill="x", pady=(0, 2))
         self._grid_frame.after(50, self._place_tools_frame)
 
     def _place_tools_frame(self):
@@ -413,7 +429,7 @@ class _LeagueTab(ttk.Frame):
 
     def _zero_all_stats(self):
         from tkinter import messagebox as _mb
-        if not _mb.askyesno("ZERO STATS",
+        if not _mb.askyesno("RESET STATS",
                             "Puts all the stats of all 64 teams, to zero?\n(CTF, POINTS, GOALS and RANK)",
                             parent=self):
             return
@@ -424,6 +440,139 @@ class _LeagueTab(ttk.Frame):
             t["rank"] = 0
         for ti, fe in self._rank_entries.items():
             fe.set_int(0)
+        if self._cur_team is not None:
+            self._show_team(self._cur_team)
+        if self._on_dirty:
+            self._on_dirty()
+
+    def _random_positions(self):
+        from tkinter import messagebox as _mb
+        if not _mb.askyesno("SHUFFLE TEAMS",
+                            "Shuffle team positions within each league?\n"
+                            "(All stats and player names follow the team)",
+                            parent=self):
+            return
+        teams = self._parsed["teams"]
+        for first, count, _ in LEAGUE_BOUNDS:
+            group = teams[first:first + count]
+            random.shuffle(group)
+            teams[first:first + count] = group
+        self._cur_team = None
+        self._build_grid()
+        if self._on_dirty:
+            self._on_dirty()
+
+    def _random_all_stats(self):
+        from tkinter import messagebox as _mb
+        if not _mb.askyesno("RANDOMIZE STATS",
+                            "Assign random stats (CTF, POINTS, GOALS and RANK)\n"
+                            "to all 64 teams based on their current position?",
+                            parent=self):
+            return
+
+        pts_rule    = self._points_rule.get()
+        pts_max_ui  = self._pts_max_for_rule()   # 114 (3pt) or 76 (2pt)
+        CTF_BOUNDS = [
+            (70, 95),   # League 1
+            (40, 75),   # League 2
+            (25, 45),   # League 3
+            (20, 30),   # League 4
+        ]
+        teams = self._parsed["teams"]
+        for li, (first, count, rank_max) in enumerate(LEAGUE_BOUNDS):
+            ctf_lo, ctf_hi = CTF_BOUNDS[li]
+            n_sim = 20
+            games        = 2 * (n_sim - 1)
+            pts_max_team = games * pts_rule
+            top_pts = round(pts_max_team * random.uniform(0.68, 0.78))
+            bot_pts = round(pts_max_team * random.uniform(0.08, 0.18))
+            pts_list = []
+            for i in range(n_sim):
+                frac  = i / (n_sim - 1) if n_sim > 1 else 0.0
+                base  = top_pts + (bot_pts - top_pts) * (frac ** 0.90)
+                noise = random.gauss(0, max(1.0, pts_max_team * 0.03))
+                pts_list.append(max(0, min(pts_max_team, round(base + noise))))
+            pts_list.sort(reverse=True)
+            for i in range(1, n_sim):
+                if pts_list[i] >= pts_list[i - 1]:
+                    pts_list[i] = max(0, pts_list[i - 1] - random.randint(1, 3))
+            goals_per_game = random.uniform(2.10, 2.37)
+            total_goals    = round(n_sim * (n_sim - 1) * goals_per_game)
+            scale    = games / 38.0
+            top_gls  = round(random.uniform(60, 80) * scale)
+            bot_gls  = round(random.uniform(20, 30) * scale)
+            top_conc = round(random.uniform(20, 35) * scale)
+            bot_conc = round(random.uniform(50, 70) * scale)
+            gls_scored = []
+            for i in range(n_sim):
+                frac  = i / (n_sim - 1) if n_sim > 1 else 0.0
+                base  = top_gls + (bot_gls - top_gls) * (frac ** 0.80)
+                noise = random.gauss(0, max(1.0, top_gls * 0.05))
+                gls_scored.append(max(1, round(base + noise)))
+            gls_conceded = []
+            for i in range(n_sim):
+                frac  = i / (n_sim - 1) if n_sim > 1 else 0.0
+                base  = top_conc + (bot_conc - top_conc) * (frac ** 0.80)
+                noise = random.gauss(0, max(1.0, top_conc * 0.08))
+                gls_conceded.append(max(1, round(base + noise)))
+            cur = sum(gls_scored)
+            if cur:
+                gls_scored = [max(1, round(g * total_goals / cur)) for g in gls_scored]
+            diff, step, i_iter = total_goals - sum(gls_scored), 0, 0
+            step = 1 if diff > 0 else -1
+            while diff != 0:
+                idx = i_iter % n_sim
+                if step == -1 and gls_scored[idx] <= 1:
+                    i_iter += 1; continue
+                gls_scored[idx] += step
+                diff -= step
+                i_iter += 1
+            total_scored = sum(gls_scored)
+            cur = sum(gls_conceded)
+            if cur:
+                gls_conceded = [max(1, round(c * total_scored / cur)) for c in gls_conceded]
+            diff, step, i_iter = total_scored - sum(gls_conceded), 0, 0
+            step = 1 if diff > 0 else -1
+            while diff != 0:
+                idx = i_iter % n_sim
+                if step == -1 and gls_conceded[idx] <= 1:
+                    i_iter += 1; continue
+                gls_conceded[idx] += step
+                diff -= step
+                i_iter += 1
+            ctf_list = []
+            for i in range(n_sim):
+                frac     = i / (n_sim - 1) if n_sim > 1 else 0.0
+                ctf_base = round(ctf_hi - (ctf_hi - ctf_lo) * frac)
+                trio = [max(ctf_lo, min(ctf_hi, ctf_base + random.randint(-2, 2)))
+                        for _ in range(3)]
+                ctf_list.append(trio)
+            if n_sim > count:
+                pts_list     = pts_list[:count]
+                gls_scored   = gls_scored[:count]
+                gls_conceded = gls_conceded[:count]
+                ctf_list     = ctf_list[:count]
+                total_scored = sum(gls_scored)
+                cur = sum(gls_conceded)
+                if cur:
+                    gls_conceded = [max(1, round(c * total_scored / cur)) for c in gls_conceded]
+                diff, step, i_iter = total_scored - sum(gls_conceded), 0, 0
+                step = 1 if diff > 0 else -1
+                while diff != 0:
+                    idx = i_iter % count
+                    if step == -1 and gls_conceded[idx] <= 1:
+                        i_iter += 1; continue
+                    gls_conceded[idx] += step
+                    diff -= step
+                    i_iter += 1
+            group = teams[first:first + count]
+            for i, t in enumerate(group):
+                t["pts"]  = [pts_list[i], max(0, pts_max_ui - pts_list[i])]
+                t["gls"]  = [gls_scored[i], gls_conceded[i]]
+                t["rank"] = i + 1
+                t["ctf"]  = list(ctf_list[i])
+        for ti, fe in self._rank_entries.items():
+            fe.set_int(teams[ti]["rank"])
         if self._cur_team is not None:
             self._show_team(self._cur_team)
         if self._on_dirty:
@@ -755,6 +904,7 @@ class _UefaTab(ttk.Frame):
             except Exception:
                 pass
         return {}, []
+
     @staticmethod
     def _normalise_list(lst) -> list:
         if lst and isinstance(lst[0], dict):
@@ -793,9 +943,11 @@ class _UefaTab(ttk.Frame):
         e["ctf"] = [fe.get_int() for fe in ctf_fes]
         if self._on_dirty:
             self._on_dirty()
+
     def _build(self):
         tb = ttk.Frame(self, padding=(6, 4))
         tb.pack(fill="x", side="top")
+        
         if self._years:
             ttk.Label(tb, text="Year:", foreground=MUTED, font=("Segoe UI", 9)).pack(side="left")
             cmb = ttk.Combobox(tb, textvariable=self._selected_year, values=self._years, width=8, state="readonly", font=("Segoe UI", 9))
@@ -806,7 +958,8 @@ class _UefaTab(ttk.Frame):
             ttk.Button(tb, text="Load year", command=lambda: self._load_year(self._selected_year.get())).pack(side="left", padx=(0, 12))
         else:
             ttk.Label(tb, text="⚠ data/uefa_clubs.json not found — year menu unavailable", foreground=RED, font=("Segoe UI", 8)).pack(side="left", padx=(0, 12))
-        ttk.Label(tb, text="Range:", foreground=MUTED, font=("Segoe UI", 9)).pack(side="left", padx=(12, 2))
+            
+        ttk.Label(tb, text="Stats range:", foreground=MUTED, font=("Segoe UI", 9)).pack(side="left", padx=(12, 2))
         self._rnd_max = _FixedEntry(tb, 0, 99, width=4)
         self._rnd_max.set_int(99)
         self._rnd_max.pack(side="left")
@@ -814,7 +967,7 @@ class _UefaTab(ttk.Frame):
         self._rnd_min = _FixedEntry(tb, 0, 99, width=4)
         self._rnd_min.set_int(40)
         self._rnd_min.pack(side="left", padx=(0, 6))
-        ttk.Button(tb, text="🎲 RANDOMIZE CTF", command=self._randomize_all).pack(side="left")
+        ttk.Button(tb, text="RANDOMIZE", command=self._randomize_all).pack(side="left")
         sep_canvas = tk.Canvas(self, height=3, bg="#aab4be", highlightthickness=0)
         sep_canvas.pack(fill="x")
         outer = ttk.Frame(self, padding=(4, 4))
@@ -839,19 +992,20 @@ class _UefaTab(ttk.Frame):
             row = row_off + 2
             bc = col * 6
             e = europe[i]
+            field_bg = "#ffffff" if row_off % 2 == 0 else "#e6f2ff"
             ttk.Label(outer, text=f"{i+1}", width=3, anchor="e", foreground=MUTED, font=("Consolas", 8)).grid(row=row, column=bc, padx=(2, 1), pady=0)
             name_var = tk.StringVar(value=e["name"])
             def _limit_uefa_name(*_, nv=name_var):
                 v = nv.get()
                 if len(v) > 20:
                     nv.set(v[:20])
-            ent = ttk.Entry(outer, textvariable=name_var, width=20, font=("Consolas", 8))
+            ent = tk.Entry(outer, textvariable=name_var, width=20, font=("Consolas", 8), bg=field_bg)
             ent.grid(row=row, column=bc+1, padx=(0, 2), pady=0, sticky="w")
             name_var.trace_add("write", _limit_uefa_name)
             name_var.trace_add("write", lambda *_, idx=i: self._wb(idx))
             ctf_fes = []
             for j in range(3):
-                fe = _FixedEntry(outer, 0, 99, width=3, on_change=lambda idx=i: self._wb(idx))
+                fe = _FixedEntry(outer, 0, 99, width=3, on_change=lambda idx=i: self._wb(idx), bg=field_bg)
                 fe.set_int(e["ctf"][j])
                 fe.grid(row=row, column=bc+2+j, padx=1, pady=0)
                 ctf_fes.append(fe)
@@ -861,7 +1015,7 @@ class ManaEditorWindow(tk.Toplevel):
     def __init__(self, parent=None, filepath: str = ""):
         super().__init__(parent)
         self.title("MANA.DAT Editor - By TheRuler76")
-        self.geometry("1240x720")
+        self.geometry("1230x690")
         self.minsize(1000, 600)
         self.configure(bg=BG)
         self._filepath = filepath
