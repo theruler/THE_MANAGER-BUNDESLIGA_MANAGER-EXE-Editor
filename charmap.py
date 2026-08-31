@@ -1,8 +1,5 @@
-from i18n import tr
-
-
 class CharmapEncodeError(ValueError):
-    pass
+    """Raised when display text cannot be represented without data loss."""
 
 
 def _validated_inverse(charmap: dict) -> dict[str, int]:
@@ -11,13 +8,13 @@ def _validated_inverse(charmap: dict) -> dict[str, int]:
         try:
             raw = bytes.fromhex(raw_key)
         except (TypeError, ValueError) as exc:
-            raise CharmapEncodeError(tr("charmap.err.invalid_key", key=raw_key)) from exc
+            raise CharmapEncodeError(f"Invalid CharMap byte key: {raw_key!r}") from exc
         if len(raw) != 1:
-            raise CharmapEncodeError(tr("charmap.err.key_not_one_byte", key=raw_key))
+            raise CharmapEncodeError(f"CharMap key must identify one byte: {raw_key!r}")
         if not isinstance(display_char, str) or len(display_char) != 1:
-            raise CharmapEncodeError(tr("charmap.err.value_not_char", value=display_char))
+            raise CharmapEncodeError(f"CharMap value must be one character: {display_char!r}")
         if display_char in inverse and inverse[display_char] != raw[0]:
-            raise CharmapEncodeError(tr("charmap.err.ambiguous", char=display_char))
+            raise CharmapEncodeError(f"Ambiguous CharMap character: {display_char!r}")
         inverse[display_char] = raw[0]
     return inverse
 
@@ -31,6 +28,13 @@ def charmap_decode(raw_bytes: bytes, charmap: dict) -> str:
 
 
 def charmap_encode(text: str, charmap: dict, *, allowed_bytes=None, preserve_bytes=()) -> bytes:
+    """Encode display text without replacement or invented glyph mappings.
+
+    ``allowed_bytes`` is the active font's glyph-code set. Bytes outside that
+    set are accepted only when they already occur in the source entry via
+    ``preserve_bytes``. This keeps unknown legacy/control bytes byte-exact while
+    rejecting newly introduced, unconfirmed characters.
+    """
     inverse = _validated_inverse(charmap)
     allowed = None if allowed_bytes is None else set(allowed_bytes)
     preserved = {}
@@ -42,7 +46,7 @@ def charmap_encode(text: str, charmap: dict, *, allowed_bytes=None, preserve_byt
         if allowed is not None and byte_value not in allowed:
             if preserved.get(byte_value, 0) <= 0:
                 raise CharmapEncodeError(
-                    tr("charmap.err.outside_font", byte=byte_value, char=char)
+                    f"Byte 0x{byte_value:02X} for {char!r} is outside the active font"
                 )
             preserved[byte_value] -= 1
         out.append(byte_value)
@@ -55,13 +59,13 @@ def charmap_encode(text: str, charmap: dict, *, allowed_bytes=None, preserve_byt
         codepoint = ord(char)
         if codepoint > 0xFF:
             raise CharmapEncodeError(
-                tr("charmap.err.no_codepoint", cp=codepoint, pos=index)
+                f"Character U+{codepoint:04X} at position {index} has no CharMap entry"
             )
 
         key = format(codepoint, "02x")
         if key in charmap and charmap[key] != char:
             raise CharmapEncodeError(
-                tr("charmap.err.conflict", char=char, pos=index, glyph=charmap[key])
+                f"Character {char!r} at position {index} conflicts with glyph {charmap[key]!r}"
             )
         accept_byte(codepoint, char, index)
 

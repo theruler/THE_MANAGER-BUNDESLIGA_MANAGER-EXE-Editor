@@ -1,6 +1,5 @@
 import copy
 import struct
-from i18n import tr
 
 
 def _strict_text_bytes(entry):
@@ -8,7 +7,7 @@ def _strict_text_bytes(entry):
         return entry["text"].encode("latin-1")
     except UnicodeEncodeError as exc:
         string_id = entry.get("string_id", f"address {entry.get('str_addr', -1):#x}")
-        raise ValueError(tr("repack.err.encoding", sid=string_id)) from exc
+        raise ValueError(f"String {string_id} contains a character that cannot be encoded") from exc
 
 
 def _text_encoding_errors(entries):
@@ -48,10 +47,11 @@ def build_reference_inventory(data, profile, relocation_sites):
     normal, code, errors = {}, {}, []
     base_const = profile["base_const"]
     ds_start = profile["ds_start"]
+    relocation_site_set = set(relocation_sites)
 
-    for site in sorted(set(relocation_sites)):
+    for site in sorted(relocation_site_set):
         if site < 0 or site + 2 > len(data):
-            errors.append(tr("repack.err.site_outside", addr=site))
+            errors.append(f"Relocation site outside file: {site:#x}")
             continue
         if bytes(data[site:site + 2]) != base_const:
             continue
@@ -72,6 +72,8 @@ def build_reference_inventory(data, profile, relocation_sites):
         ptr_source = site - 2
         if ptr_source < 0 or ptr_source + 4 > len(data):
             continue
+        if ptr_source in relocation_site_set:
+            continue
         target = ds_start + struct.unpack_from("<H", data, ptr_source)[0]
         if _inside_ranges(profile, target):
             normal[ptr_source] = target
@@ -83,14 +85,11 @@ def build_reference_inventory(data, profile, relocation_sites):
         mismatched = sorted(source for source in set(code) & set(expected_code)
                             if code[source] != expected_code[source])
         if missing:
-            addrs = ", ".join(f"{x:#x}" for x in missing)
-            errors.append(tr("repack.err.missing_code_ptrs", addrs=addrs))
+            errors.append("Missing code pointers: " + ", ".join(f"{x:#x}" for x in missing))
         if extra:
-            addrs = ", ".join(f"{x:#x}" for x in extra)
-            errors.append(tr("repack.err.extra_code_ptrs", addrs=addrs))
+            errors.append("Unexpected code pointers: " + ", ".join(f"{x:#x}" for x in extra))
         if mismatched:
-            addrs = ", ".join(f"{x:#x}" for x in mismatched)
-            errors.append(tr("repack.err.mismatched_ptrs", addrs=addrs))
+            errors.append("Mismatched code pointers: " + ", ".join(f"{x:#x}" for x in mismatched))
 
     return {
         "normal": normal,
@@ -108,44 +107,44 @@ def _validate_reference_ownership(entries, inventory):
     for entry in entries:
         string_id = entry.get("string_id")
         if not string_id:
-            errors.append(tr("repack.err.no_sid", addr=entry.get('str_addr', -1)))
+            errors.append(f"Entry at {entry.get('str_addr', -1):#x} has no string_id")
         elif string_id in ids:
-            errors.append(tr("repack.err.dup_sid", sid=string_id))
+            errors.append(f"Duplicate string_id: {string_id}")
         else:
             ids.add(string_id)
 
         if entry.get("fixed"):
             if entry.get("ptr_addrs") or entry.get("code_ptr_addrs"):
-                errors.append(tr("repack.err.fixed_has_ptrs", sid=string_id))
+                errors.append(f"Fixed entry {string_id} unexpectedly has pointers")
             continue
 
         target = entry["str_addr"]
         for source in entry.get("ptr_addrs", []):
             if source in normal_owner:
-                errors.append(tr("repack.err.dup_normal_src", addr=source))
+                errors.append(f"Duplicate normal pointer source: {source:#x}")
             normal_owner[source] = string_id
             expected = inventory["normal"].get(source)
             if expected is None:
-                errors.append(tr("repack.err.uninv_normal_src", addr=source))
+                errors.append(f"Uninventoried normal pointer source: {source:#x}")
             elif expected != target:
-                errors.append(tr("repack.err.normal_target", src=source, expected=expected, actual=target))
+                errors.append(f"Normal pointer {source:#x} targets {expected:#x}, entry is {target:#x}")
 
         for source in entry.get("code_ptr_addrs", []):
             if source in code_owner:
-                errors.append(tr("repack.err.dup_code_src", addr=source))
+                errors.append(f"Duplicate code pointer source: {source:#x}")
             code_owner[source] = string_id
             expected = inventory["code"].get(source)
             if expected is None:
-                errors.append(tr("repack.err.uninv_code_src", addr=source))
+                errors.append(f"Uninventoried code pointer source: {source:#x}")
             elif expected != target:
-                errors.append(tr("repack.err.code_target", src=source, expected=expected, actual=target))
+                errors.append(f"Code pointer {source:#x} targets {expected:#x}, entry is {target:#x}")
 
     missing_normal = sorted(set(inventory["normal"]) - set(normal_owner))
     missing_code = sorted(set(inventory["code"]) - set(code_owner))
     if missing_normal:
-        errors.append(tr("repack.err.unowned_normal", n=len(missing_normal)))
+        errors.append(f"{len(missing_normal)} relocation-backed normal pointers are not owned")
     if missing_code:
-        errors.append(tr("repack.err.unowned_code", n=len(missing_code)))
+        errors.append(f"{len(missing_code)} relocation-backed code pointers are not owned")
     return errors
 
 
@@ -166,26 +165,26 @@ def _validate_layout(data, profile, entries):
         if entry.get("fixed"):
             max_len = fixed_by_addr.get(address)
             if max_len is None:
-                errors.append(tr("repack.err.unknown_fixed", addr=address))
+                errors.append(f"Unknown fixed string: {address:#x}")
                 continue
             if len(expected) > max_len:
-                errors.append(tr("repack.err.fixed_slot_size", addr=address))
+                errors.append(f"Fixed string exceeds slot at {address:#x}")
                 continue
             if bytes(data[address:address + len(expected)]) != expected:
-                errors.append(tr("repack.err.fixed_mismatch", addr=address))
+                errors.append(f"Fixed string bytes mismatch at {address:#x}")
             continue
 
         range_index = _range_index(profile, address)
         if range_index is None:
-            errors.append(tr("repack.err.outside_ranges", addr=address))
+            errors.append(f"String outside valid ranges: {address:#x}")
             continue
         range_start, range_end = profile["valid_ranges"][range_index]
         end = address + len(expected)
         if end > range_end:
-            errors.append(tr("repack.err.crosses_range", start=address, end=end))
+            errors.append(f"String crosses range end: {address:#x}-{end:#x}")
             continue
         if bytes(data[address:end]) != expected:
-            errors.append(tr("repack.err.bytes_mismatch", addr=address))
+            errors.append(f"String bytes/NUL mismatch at {address:#x}")
             continue
         intervals.append((address, end, entry, range_index))
 
@@ -203,7 +202,7 @@ def _validate_layout(data, profile, entries):
                     == encoded_by_entry[id(p_entry)][c_start - p_start:]
             )
             if not allowed_suffix:
-                errors.append(tr("repack.err.illegal_overlap", a_start=p_start, a_end=p_end, b_start=c_start, b_end=c_end))
+                errors.append(f"Illegal string overlap: {p_start:#x}-{p_end:#x} / {c_start:#x}-{c_end:#x}")
 
     for range_index, (range_start, range_end) in enumerate(profile["valid_ranges"]):
         covered = bytearray(range_end - range_start)
@@ -214,7 +213,9 @@ def _validate_layout(data, profile, entries):
         unknown = [address for address in range(range_start, range_end)
                    if data[address] != 0 and not covered[address - range_start]]
         if unknown:
-            errors.append(tr("repack.err.unknown_bytes", idx=range_index, n=len(unknown), addr=unknown[0]))
+            errors.append(
+                f"Unknown occupied bytes in range {range_index}: {len(unknown)} bytes, first {unknown[0]:#x}"
+            )
     return errors
 
 
@@ -282,7 +283,7 @@ def repack_transaction(data, profile, entries, relocation_sites):
             continue
         range_index = _range_index(profile, entry["str_addr"])
         if range_index is None:
-            return None, None, {"ok": False, "errors": [tr("repack.err.entry_outside", addr=entry['str_addr'])], "stage": "layout"}
+            return None, None, {"ok": False, "errors": [f"Entry outside valid ranges: {entry['str_addr']:#x}"], "stage": "layout"}
         groups[range_index].append(entry)
 
     for range_index, group in enumerate(groups):
@@ -292,7 +293,7 @@ def repack_transaction(data, profile, entries, relocation_sites):
         if required > range_end - range_start:
             return None, None, {
                 "ok": False,
-                "errors": [tr("repack.err.range_overflow", idx=range_index, required=required, total=range_end - range_start)],
+                "errors": [f"Range {range_index} overflow: {required} > {range_end - range_start}"],
                 "stage": "capacity",
             }
 
@@ -319,7 +320,7 @@ def repack_transaction(data, profile, entries, relocation_sites):
                 unresolved.remove(entry)
                 progress = True
             if not progress:
-                return None, None, {"ok": False, "errors": [tr("repack.err.suffix_chain")], "stage": "layout"}
+                return None, None, {"ok": False, "errors": ["Unresolved suffix-sharing chain"], "stage": "layout"}
 
     base_const = profile["base_const"]
     ds_start = profile["ds_start"]
@@ -328,15 +329,15 @@ def repack_transaction(data, profile, entries, relocation_sites):
             continue
         ptr_value = entry["str_addr"] - ds_start
         if not 0 <= ptr_value <= 0xFFFF:
-            return None, None, {"ok": False, "errors": [tr("repack.err.ptr_value_range", value=ptr_value)], "stage": "pointers"}
+            return None, None, {"ok": False, "errors": [f"Pointer value outside 16-bit range: {ptr_value:#x}"], "stage": "pointers"}
         for source in entry.get("ptr_addrs", []):
             if source < 0 or source + 4 > len(work_data):
-                return None, None, {"ok": False, "errors": [tr("repack.err.normal_src_file", addr=source)], "stage": "pointers"}
+                return None, None, {"ok": False, "errors": [f"Normal pointer source outside file: {source:#x}"], "stage": "pointers"}
             struct.pack_into("<H", work_data, source, ptr_value)
             work_data[source + 2:source + 4] = base_const
         for source in entry.get("code_ptr_addrs", []):
             if source < 1 or source + 5 > len(work_data):
-                return None, None, {"ok": False, "errors": [tr("repack.err.code_src_file", addr=source)], "stage": "pointers"}
+                return None, None, {"ok": False, "errors": [f"Code pointer source outside file: {source:#x}"], "stage": "pointers"}
             struct.pack_into("<H", work_data, source, ptr_value)
             work_data[source + 3:source + 5] = base_const
 
@@ -353,9 +354,11 @@ def repack_transaction(data, profile, entries, relocation_sites):
     extra_diffs = [index for index, (old, new) in enumerate(zip(before, work_data))
                    if old != new and index not in allowed]
     if len(before) != len(work_data):
-        validation["errors"].append(tr("repack.err.file_size_changed"))
+        validation["errors"].append("File size changed")
     if extra_diffs:
-        validation["errors"].append(tr("repack.err.extra_diffs", n=len(extra_diffs), addr=extra_diffs[0]))
+        validation["errors"].append(
+            f"Unexpected changed bytes outside ranges/pointer offsets: {len(extra_diffs)}, first {extra_diffs[0]:#x}"
+        )
     validation["extra_diffs"] = len(extra_diffs)
     validation["ok"] = not validation["errors"]
     return (work_data, work_entries, validation) if validation["ok"] else (None, None, validation)

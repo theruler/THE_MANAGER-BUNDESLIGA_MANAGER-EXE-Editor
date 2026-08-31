@@ -2,7 +2,6 @@ import re
 import json
 import urllib.parse
 import urllib.request
-from i18n import tr
 
 CONTROL_TOKEN_PATTERN = re.compile(
     r"%x[0-9A-Fa-f]{1,2}|%[A-Za-z0-9]|#|\$|\^|%"
@@ -14,8 +13,7 @@ MARKER_PATTERN = re.compile(r"\uE100([0-9A-F]{4})\uE101")
 
 
 class TranslationIntegrityError(RuntimeError):
-    pass
-
+    """Raised when a translator damages a protected token or layout span."""
 
 LINGVA_INSTANCES = [
     "https://lingva.lunar.icu",
@@ -44,16 +42,15 @@ def restore_placeholders(text: str, tokens: list) -> str:
         missing = len(expected_markers - found_markers)
         unexpected = len(found_markers - expected_markers)
         raise TranslationIntegrityError(
-            tr("tr.err.markers_changed", missing=missing, unexpected=unexpected)
+            f"Protected translation markers changed (missing={missing}, unexpected={unexpected})"
         )
     for marker, original in tokens:
         if restored.count(marker) != 1:
-            raise TranslationIntegrityError(tr("tr.err.marker_count", marker=marker))
+            raise TranslationIntegrityError(f"Protected marker count changed: {marker!r}")
         restored = restored.replace(marker, original)
     if MARKER_PATTERN.search(restored):
-        raise TranslationIntegrityError(tr("tr.err.marker_unrestored"))
+        raise TranslationIntegrityError("Unrestored translation marker remains")
     return restored
-
 
 def google_translate(text: str, source_lang: str = "auto", target_lang: str = "it") -> str:
     if not text or text.isspace():
@@ -64,7 +61,6 @@ def google_translate(text: str, source_lang: str = "auto", target_lang: str = "i
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     return "".join(seg[0] for seg in (data[0] or []) if seg and seg[0])
-
 
 def lingva_translate(text: str, source_lang: str = "auto", target_lang: str = "it") -> str:
     if not text or text.isspace():
@@ -82,14 +78,16 @@ def lingva_translate(text: str, source_lang: str = "auto", target_lang: str = "i
         except Exception as exc:
             last_error = exc
     if last_error:
-        raise RuntimeError(tr("tr.err.lingva_unreachable")) from last_error
+        raise RuntimeError(
+            "All servers are inaccessible (403/503). "
+            "Try Google Translate or MyMemory."
+        ) from last_error
     return ""
-
 
 def mymemory_translate(text: str, source_lang: str = "auto", target_lang: str = "it") -> str:
     if not text or text.isspace():
         return text
-    sl = "en" if source_lang == "auto" else source_lang
+    sl = "en" if source_lang == "auto" else source_lang   # MyMemory non supporta "auto"
     params = {"q": text, "langpair": f"{sl}|{target_lang}"}
     url = "https://api.mymemory.translated.net/get?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -97,12 +95,12 @@ def mymemory_translate(text: str, source_lang: str = "auto", target_lang: str = 
         data = json.loads(resp.read().decode("utf-8"))
     if data.get("responseStatus") == 200:
         return data["responseData"]["translatedText"]
-    raise RuntimeError(tr("tr.err.mymemory", status=data.get('responseStatus'), detail=data.get('responseDetails', '')))
+    raise RuntimeError(f"MyMemory error {data.get('responseStatus')}: {data.get('responseDetails', '')}")
 
 
 import os as _os
-from utils import DEEPL_KEY_FILE
 
+from utils import DEEPL_KEY_FILE
 
 def deepl_translate(text: str, source_lang: str = "auto", target_lang: str = "it") -> str:
     if not text or text.isspace():
@@ -115,7 +113,11 @@ def deepl_translate(text: str, source_lang: str = "auto", target_lang: str = "it
             with open(key_file, encoding="utf-8") as f:
                 api_key = f.read().strip()
     if not api_key:
-        raise RuntimeError(tr("tr.err.deepl_no_key"))
+        raise RuntimeError(
+            "DeepL key not found.\n"
+            "Register for free at https://www.deepl.com/pro#developer\n"
+            "Then save the key in deepl_key.txt."
+        )
 
     host = "api-free.deepl.com" if api_key.endswith(":fx") else "api.deepl.com"
     sl   = None if source_lang == "auto" else source_lang.upper()
@@ -148,18 +150,24 @@ def argos_translate(text: str, source_lang: str = "auto", target_lang: str = "it
     try:
         from argostranslate import translate as _at
     except ImportError:
-        raise RuntimeError(tr("tr.err.argos_not_installed"))
+        raise RuntimeError(
+            "Argos Translate not installed.\n"
+            "Execute: pip install argostranslate\n"
+            "and download the language packs."
+        )
     sl = "en" if source_lang == "auto" else source_lang
     installed = _at.get_installed_languages()
     src_lang_obj = next((l for l in installed if l.code == sl), None)
     tgt_lang_obj = next((l for l in installed if l.code == target_lang), None)
     if not src_lang_obj or not tgt_lang_obj:
-        raise RuntimeError(tr("tr.err.argos_no_package", src=sl, tgt=target_lang))
+        raise RuntimeError(
+            f"Argos package '{sl}→{target_lang}' not installed.\n"
+            "Download it with argostranslate.package."
+        )
     translation = src_lang_obj.get_translation(tgt_lang_obj)
     if not translation:
-        raise RuntimeError(tr("tr.err.argos_no_translation", src=sl, tgt=target_lang))
+        raise RuntimeError(f"No Argos translation available for {sl}→{target_lang}.")
     return translation.translate(text)
-
 
 TRANSLATION_ENGINES = {
     "Google Translate": google_translate,
@@ -187,7 +195,7 @@ def translate_string(original_text: str, target_lang: str = "it", source_lang: s
         protected, source_lang=source_lang, target_lang=target_lang
     )
     if not isinstance(translated, str) or not translated:
-        raise TranslationIntegrityError(tr("tr.err.no_text"))
+        raise TranslationIntegrityError("Translator returned no text")
     return leading + restore_placeholders(translated, tokens) + trailing
 
 

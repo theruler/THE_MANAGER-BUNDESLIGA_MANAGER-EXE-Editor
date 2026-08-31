@@ -20,7 +20,7 @@ def find_exepack_vars(data):
     while pos != -1:
         for sig_off in (0x10, 0x0e):
             vs = pos - sig_off
-            if vs < 0 or vs + sig_off + 2 > len(data):
+            if vs < header_para * 16 or vs + sig_off + 2 > len(data):
                 continue
             exepack_size = read_u16(data, vs + 0x06)
             dest_len     = read_u16(data, vs + 0x0c)
@@ -154,12 +154,17 @@ def unpack_in_memory(data: bytearray) -> bytearray:
 
         reloc_entries = [(s, o) for s, o in decode_reloc_table(reloc_data) if s or o]
 
-        return build_mz_exe(unpacked_image, reloc_entries, real_CS, real_IP, real_SS, real_SP, min_alloc, max_alloc)
+        result = build_mz_exe(unpacked_image, reloc_entries, real_CS, real_IP, real_SS, real_SP, min_alloc, max_alloc)
+        if len(result) <= len(data):
+            return data
+        get_mz_relocation_sites(result)
+        return result
     except Exception:
         return data
 
 
 def get_mz_relocation_sites(data) -> list[int]:
+    """Return file offsets of all valid MZ relocation words."""
     if len(data) < 0x1C or data[0:2] != b'MZ':
         raise ValueError("MZ header not found")
 
@@ -183,18 +188,19 @@ def get_mz_relocation_sites(data) -> list[int]:
     return sorted(sites)
 
 GAME_PROFILES = {
-    "THE MANAGER (ITALIAN)": {
+    "THE MANAGER": {
         "ds_start": 0x53CE0,
-        "code_year": 0x12AF2,
         "base_const": bytes.fromhex("F64C"),
         "ptr_ranges": [
             (0x543DC, 0x54474), (0x5511C, 0x55148), (0x5514A, 0x5518A),
             (0x55190, 0x5536C), (0x55370, 0x55438), (0x58526, 0x58686),
             (0x5868E, 0x589A0), (0x58932, 0x58F7E), (0x5D1AC, 0x5D364),
         ],
-        "valid_ranges": [(0x5458C, 0x55088), (0x55443, 0x58525), (0x5890A, 0x58932), (0x59632, 0x5D191)],
+        "valid_ranges": [(0x5456E, 0x55088), (0x55444, 0x58525), (0x5890A, 0x58932), (0x59632, 0x5D191)],
         "code_ptrs":   [(0x2E3BB, 0x5890A), (0x2E402, 0x5891E)],
         "fixed_strings": [(0x55438, 11)],
+        "code_year": 0x12AF2,
+        "region_offset": 0x5508A,
         "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
         "immutable_signature": {
             "header_size": 0x6D80,
@@ -214,15 +220,16 @@ GAME_PROFILES = {
     },
     "BUNDESLIGA MANAGER PROFESSIONAL": {
         "ds_start": 0x537E0,
-        "code_year": 0x12A18,
         "base_const": bytes.fromhex("B34C"),
         "ptr_ranges": [
             (0x53EDC, 0x53F74), (0x55AC0, 0x56174), (0x5617C, 0x56184),
             (0x581F4, 0x58226), (0x58248, 0x58884), (0x5C8B2, 0x5CA6A),
         ],
-        "valid_ranges": [(0x54078, 0x55A2C), (0x5618B, 0x581F3), (0x58226, 0x58247), (0x58D38, 0x5C897)],
+        "valid_ranges": [(0x5406E, 0x55A2C), (0x5618A, 0x581F3), (0x58226, 0x58247), (0x58D38, 0x5C897)],
         "code_ptrs":   [(0x2DEB3, 0x58226), (0x2DEFA, 0x58236)],
         "fixed_strings": [(0x56174, 8)],
+        "code_year": 0x12A18,
+        "region_offset": 0x55A2E,
         "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
         "immutable_signature": {
             "header_size": 0x6CB0,
@@ -242,7 +249,6 @@ GAME_PROFILES = {
     },
     "THE MANAGER (ENGLISH)": {
         "ds_start": 0x52320,
-        "code_year": 0x128A2,
         "base_const": bytes.fromhex("694B"),
         "ptr_ranges": [
             (0x535E0, 0x535FC), (0x535FE, 0x53646), (0x5364C, 0x538F4),
@@ -252,6 +258,8 @@ GAME_PROFILES = {
         "valid_ranges": [(0x52B9A, 0x5354C), (0x538FC, 0x56182), (0x56566, 0x56582), (0x5726E, 0x5ADCD)],
         "code_ptrs": [(0x2E16B, 0x56566), (0x2E1B2, 0x56574)],
         "fixed_strings": [(0x538F4, 8)],
+        "code_year": 0x128A2,
+        "region_offset": 0x5354E,
         "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
         "immutable_signature": {
             "header_size": 0x6C90,
@@ -280,7 +288,7 @@ EXE_FONT_PROFILES = {
             "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3D5DA, "ptr_end": 0x3D698, "glyph_start": 0x3D698, "glyph_end": 0x3D92A, "num_ptrs": 95, "ascii_start": 0x20},
         },
     },
-    "THE MANAGER (ITALIAN)": {
+    "THE MANAGER": {
         "base_addr": 0x3CC80,
         "fonts": {
             "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3D46E, "ptr_end": 0x3D52C, "glyph_start": 0x3D52C, "glyph_end": 0x3DAD8, "num_ptrs": 95, "ascii_start": 0x20},
