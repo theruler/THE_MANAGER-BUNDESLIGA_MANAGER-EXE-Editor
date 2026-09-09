@@ -14,6 +14,7 @@ import i18n
 from font_editor import EXEFontEditor
 from font_safety import FontSafetyError, atomic_save_bytes, paths_equal, validate_all_fonts
 import extended_layout
+from mana_editor import ManaEditorPanel
 import newspaper_csv
 from newspaper_grammar import NewspaperGrammarError
 import newspaper_editor as _ne
@@ -209,7 +210,7 @@ class DOSTranslationEditor:
         self._profile_state = ("header.profile_none", None, "#2980B9")
         self.root.title(APP_TITLE)
         self._apply_window_icon()
-        self.root.geometry("1180x800")
+        self.root.geometry("1230x800")
         self.root.minsize(780, 600)
         self.exe_data              = bytearray()
         self.entries               = []
@@ -710,6 +711,12 @@ class DOSTranslationEditor:
         self.tab_settings = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_settings, text=self.tr("tab.settings"))
         self._reg_tab(self.tab_settings, "tab.settings")
+
+        # MANA.DAT tab (embedded ManaEditorPanel)
+        self.tab_mana = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_mana, text="MANA.DAT")
+        self.mana_editor_panel = ManaEditorPanel(self.tab_mana)
+        self.mana_editor_panel.pack(fill=tk.BOTH, expand=True)
         settings_body = ttk.Frame(self.tab_settings, padding=(15, 12, 15, 10))
         settings_body.pack(fill=tk.BOTH, expand=True)
 
@@ -753,7 +760,7 @@ class DOSTranslationEditor:
             self.save_button.config(state=tk.NORMAL if self._can_save() else tk.DISABLED)
         if hasattr(self, "notebook"):
             for tab in (getattr(self, "tab_strings", None), getattr(self, "tab_fonts", None),
-                        getattr(self, "tab_settings", None)):
+                        getattr(self, "tab_settings", None), getattr(self, "tab_mana", None)):
                 if tab is not None:
                     self.notebook.tab(tab, state=state)
         self._set_menu_state(getattr(self, "supported_menu_entries", []), self.is_supported)
@@ -2764,6 +2771,9 @@ class DOSTranslationEditor:
             self.current_range_label.config(text="")
         if hasattr(self, "font_editor"):
             self.font_editor.reset_state()
+        mana_panel = getattr(self, "mana_editor_panel", None)
+        if mana_panel is not None:
+            mana_panel.show_placeholder()
         self._set_supported_state(False)
 
     def _prepare_load_content(self, data: bytearray, profile: dict):
@@ -3038,6 +3048,24 @@ class DOSTranslationEditor:
         self.update_free_space_label()
 
         font_loaded = self.font_editor.load_from_raw(self.exe_data, detected)
+
+        # Auto-load MANA.DAT from the same directory as the EXE
+        mana_panel = getattr(self, "mana_editor_panel", None)
+        if mana_panel is not None:
+            exe_dir = os.path.dirname(self.source_path)
+            mana_path = None
+            for candidate in ("MANA.DAT", "mana.dat", "Mana.dat"):
+                candidate_path = os.path.join(exe_dir, candidate)
+                if os.path.isfile(candidate_path):
+                    mana_path = candidate_path
+                    break
+            if mana_path:
+                mana_panel.load_file(mana_path)
+            else:
+                mana_panel.show_placeholder(
+                    f"MANA.DAT not found in: {exe_dir}"
+                )
+
         self._set_supported_state(True)
         self._read_year_from_exe()
         self._read_region_from_exe()
@@ -3154,6 +3182,12 @@ class DOSTranslationEditor:
         self._update_save_state()
         self.refresh_table(force=True, refresh_active_fields=True)
         self.update_free_space_label()
+
+        # Save MANA.DAT alongside the EXE, but only if it was modified
+        mana_panel = getattr(self, "mana_editor_panel", None)
+        if mana_panel is not None and mana_panel.is_dirty:
+            mana_panel.save_if_dirty()
+
         backup_note = self.tr("dlg.save.backup", path=backup_path) if backup_path else ""
         messagebox.showinfo(self.tr("dlg.save.done"),
                             self.tr("dlg.save.done_msg", path=filepath, backup=backup_note))

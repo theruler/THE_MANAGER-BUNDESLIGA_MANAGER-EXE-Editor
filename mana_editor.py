@@ -1120,6 +1120,183 @@ class ManaEditorWindow(tk.Toplevel):
             messagebox.showerror("Save error", str(exc), parent=self)
 
 
+class ManaEditorPanel(ttk.Frame):
+    """
+    Embedded panel version of ManaEditorWindow, designed to be placed inside
+    a notebook tab of the main editor.  Save/Load buttons are hidden; the host
+    calls load_file() after opening an EXE and save_if_dirty() before writing
+    the EXE to disk.
+    """
+
+    def __init__(self, parent, **kw):
+        super().__init__(parent, **kw)
+        self._filepath: str = ""
+        self._original: bytes = b""
+        self._parsed: dict = {}
+        self._dirty = False
+        self._league_tab: _LeagueTab | None = None
+        self._uefa_tab: _UefaTab | None = None
+        self._apply_style()
+        self._build_ui()
+
+    # ------------------------------------------------------------------
+    # Style (same palette as the standalone window)
+    # ------------------------------------------------------------------
+    def _apply_style(self):
+        s = ttk.Style(self)
+        try:
+            s.theme_use("clam")
+        except Exception:
+            pass
+        s.configure("TFrame", background=BG)
+        s.configure("TLabel", background=BG, foreground=FG, font=("Segoe UI", 10))
+        s.configure("TLabelframe", background=BG, foreground=FG, font=("Segoe UI", 10, "bold"))
+        s.configure("TLabelframe.Label", background=BG, foreground=FG)
+        s.configure("TButton", font=("Segoe UI", 9, "bold"), padding=5,
+                    background=ACCENT, foreground="white", borderwidth=0)
+        s.map("TButton",
+              background=[("active", "#2980B9"), ("disabled", "#BDC3C7")])
+        s.configure("TNotebook", background=BG, tabmargins=[2, 4, 0, 0])
+        s.configure("TNotebook.Tab", font=("Segoe UI", 8), padding=(8, 3),
+                    foreground="#aaaaaa", background="#d0d4d8")
+        s.map("TNotebook.Tab",
+              font=[("selected", ("Segoe UI", 13, "bold"))],
+              padding=[("selected", (22, 9))],
+              foreground=[("selected", FG)],
+              background=[("selected", "white")])
+        s.configure("TEntry", fieldbackground="white")
+        s.configure("TCombobox", fieldbackground="white")
+
+    # ------------------------------------------------------------------
+    # UI: only the status bar and the inner notebook (no Open/Save buttons)
+    # ------------------------------------------------------------------
+    def _build_ui(self):
+        status_bar = ttk.Frame(self, padding=(12, 4, 12, 2))
+        status_bar.pack(fill="x")
+        self._file_lbl = ttk.Label(status_bar, text="No MANA.DAT loaded",
+                                   foreground=MUTED, font=("Segoe UI", 9, "italic"))
+        self._file_lbl.pack(side="left")
+        self._dirty_lbl = ttk.Label(status_bar, text="",
+                                    foreground=RED, font=("Segoe UI", 9, "bold"))
+        self._dirty_lbl.pack(side="right")
+        ttk.Separator(self, orient="horizontal").pack(fill="x")
+        self._nb = ttk.Notebook(self)
+        self._nb.pack(fill="both", expand=True, padx=6, pady=6)
+        # Placeholder shown when no file is loaded
+        self._placeholder = ttk.Frame(self._nb)
+        self._nb.add(self._placeholder, text="  MANA.DAT  ")
+        ttk.Label(self._placeholder,
+                  text="MANA.DAT will be loaded automatically when a supported EXE is opened.",
+                  foreground=MUTED, font=("Segoe UI", 11, "italic")).pack(expand=True)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def load_file(self, path: str) -> bool:
+        """
+        Load a MANA.DAT file.  Returns True on success, False on failure.
+        On failure the panel keeps showing a placeholder/error message.
+        """
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            parsed = parse_mana(raw)
+        except Exception as exc:
+            self._show_placeholder(str(exc))
+            return False
+        self._filepath = path
+        self._original = raw
+        self._parsed = parsed
+        self._dirty = False
+        self._rebuild_tabs()
+        abspath = os.path.abspath(path)
+        self._file_lbl.config(text=f"{abspath}  ({len(raw):,} bytes)")
+        self._dirty_lbl.config(text="")
+        return True
+
+    def show_placeholder(self, message: str = ""):
+        """Show the placeholder panel (e.g. MANA.DAT not found)."""
+        self._show_placeholder(message)
+
+    def save_if_dirty(self) -> bool:
+        """
+        Write MANA.DAT back to disk only if it has been modified.
+        Returns True if nothing needed saving or saving succeeded,
+        False if saving failed (error dialog already shown).
+        """
+        if not self._dirty:
+            return True
+        if not self._filepath or not self._original:
+            return True
+        return self._do_save(self._filepath)
+
+    @property
+    def is_dirty(self) -> bool:
+        return self._dirty
+
+    @property
+    def filepath(self) -> str:
+        return self._filepath
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _show_placeholder(self, message: str = ""):
+        for tab in self._nb.tabs():
+            self._nb.forget(tab)
+        self._league_tab = None
+        self._uefa_tab = None
+        ph = ttk.Frame(self._nb)
+        self._nb.add(ph, text="  MANA.DAT  ")
+        display = message if message else (
+            "MANA.DAT will be loaded automatically when a supported EXE is opened."
+        )
+        ttk.Label(ph, text=display,
+                  foreground=MUTED if not message else RED,
+                  font=("Segoe UI", 11, "italic")).pack(expand=True)
+        self._file_lbl.config(text="No MANA.DAT loaded")
+        self._dirty_lbl.config(text="")
+        self._filepath = ""
+        self._original = b""
+        self._parsed = {}
+        self._dirty = False
+
+    def _rebuild_tabs(self):
+        for tab in self._nb.tabs():
+            self._nb.forget(tab)
+        self._league_tab = _LeagueTab(
+            self._nb, self._parsed,
+            filepath=self._filepath,
+            on_dirty=self._mark_dirty,
+        )
+        self._nb.add(self._league_tab, text="  LEAGUE  ")
+        self._uefa_tab = _UefaTab(
+            self._nb, self._parsed,
+            on_dirty=self._mark_dirty,
+        )
+        self._nb.add(self._uefa_tab, text="  UEFA  ")
+
+    def _mark_dirty(self):
+        self._dirty = True
+        self._dirty_lbl.config(text="⚠ Unsaved changes")
+
+    def _do_save(self, path: str) -> bool:
+        try:
+            new_bytes = serialize_mana(self._original, self._parsed)
+            with open(path, "wb") as fh:
+                fh.write(new_bytes)
+            self._filepath = path
+            self._original = new_bytes
+            self._dirty = False
+            self._dirty_lbl.config(text="")
+            abspath = os.path.abspath(path)
+            self._file_lbl.config(text=f"{abspath}  ({len(new_bytes):,} bytes)")
+            return True
+        except Exception as exc:
+            messagebox.showerror("MANA.DAT Save error", str(exc))
+            return False
+
+
 if __name__ == "__main__":
     import sys
     root = tk.Tk()
