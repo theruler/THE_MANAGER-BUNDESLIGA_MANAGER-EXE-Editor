@@ -43,6 +43,11 @@ Modified EXEPACK executables are saved unpacked. The editor does not contain an 
 Always keep a backup of the original executable and test modified executables before regular use.
 
 
+## Font Editor
+Fonts can be freely modified and remapped, the string editor will interpret and show the mapped character, while converting the hex value into the string.
+Accented letters can be modified and replaced. Width of the single char can be adjusted.
+<img width="1227" height="844" alt="immagine" src="https://github.com/user-attachments/assets/5ef7655f-6d81-47dc-adab-c9679cf56b33" />
+
 ## Region Changer
 
 The Region Changer uses the original country configuration present in the game executables.
