@@ -45,10 +45,10 @@ Always keep a backup of the original executable and test modified executables be
 
 The Region Changer uses the original country configuration present in the game executables.
 
-1= Germany (starting DM 1.500.000)
-2= Italy (Starting Lire 750.000 Milion)
-3= France (starting Francs 500.000)
-4= England (starting Pounds 375.000)
+1. Germany (starting DM 1.500.000)
+2. Italy (Starting Lire 750.000 Milion)
+3. France (starting Francs 500.000)
+4. England (starting Pounds 375.000)
 
 Only Germany fetaures:
 - Full newspaper, for the other regions only the titles hav been translated, the Body of the article is filled with "XXXX X XX" lines.
