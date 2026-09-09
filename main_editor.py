@@ -507,7 +507,7 @@ class DOSTranslationEditor:
         self.region_combo = ttk.Combobox(top_frame, textvariable=self.region_var, state="readonly",width=8, justify=tk.LEFT, font=("Segoe UI", 9),)
         self.region_combo.pack(side=tk.LEFT)
         self.region_combo.bind("<<ComboboxSelected>>", self._commit_region)
-        self.points_label = self._reg(ttk.Label(top_frame, font=("Segoe UI", 9, "bold")),"header.points")
+        self.points_label = self._reg(ttk.Label(top_frame, font=("Segoe UI", 9, "bold")),"header.point")
         self.points_label.pack(side=tk.LEFT, padx=(18, 4))
         self.points_var = tk.StringVar()
         self.points_combo = ttk.Combobox(
