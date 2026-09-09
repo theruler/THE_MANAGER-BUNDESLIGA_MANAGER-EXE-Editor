@@ -57,7 +57,7 @@ Only Germany fetaures:
 - Developer's birthdays easter egg
 - Figures with no decimals for match ticket price.
 
-Only english feature:
+Only England features:
 - ST, ND, RD, TH added to the date days and match minutes
 
 ## Starting Year
