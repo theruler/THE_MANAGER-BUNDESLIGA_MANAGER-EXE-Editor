@@ -51,11 +51,10 @@ The Region Changer uses the original country configuration present in the game e
 4. England (starting Pounds 375.000)
 
 Only Germany fetaures:
-- Full newspaper, for the other regions only the titles hav been translated, the Body of the article is filled with "XXXX X XX" lines.
+- Full newspaper (the other regions have the Body of the article filled with "XXXX X XX" lines).
 - 1963 Historical start of the Bundesliga
 - German flag screen at the beginning of each match (instead of black screen)
 - Developer's birthdays easter egg
-- Figures with no decimals for match ticket price.
 
 Only England features:
 - ST, ND, RD, TH added to the date days and match minutes
@@ -72,7 +71,7 @@ The points rule can be changed directly from the editor for all supported execut
 
 ## Newspaper built-in visual editor
 
-A visual newspaper editor can be chosen to edit the lines. Tags can be moved, deleted or added.
+A visual newspaper editor can be selected to better edit the lines. Tags can be moved, deleted or added.
 
 
 ## Executable extension option
