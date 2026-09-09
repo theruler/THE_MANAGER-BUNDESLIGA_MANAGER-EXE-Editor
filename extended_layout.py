@@ -13,10 +13,7 @@ BMP_V2_EXTENDED = {
     "header_ss": 0x5CD8,
     "ptr_range_home": {1: 0, 2: 0, 3: 1, 4: 1, 5: 3},
     "newspaper_sources": ((0x58770, 0x58884), (0x5C8B2, 0x5CA6A)),
-    "convertible_from": {
-        "header_minalloc": 0x0381,
-        "header_ss": 0x5709,
-    },
+    "convertible_from": {"header_ss": 0x5709,},
 }
 
 TM_ITA_EXTENDED = {
@@ -30,10 +27,7 @@ TM_ITA_EXTENDED = {
     "header_ss": 0x5D1C,     
     "ptr_range_home": {1: 0, 2: 0, 3: 0, 4: 0, 5: 1, 6: 1, 7: 1, 8: 3},
     "newspaper_sources": ((0x58E6A, 0x58F7E), (0x5D1AC, 0x5D364)),
-    "convertible_from": {
-        "header_minalloc": 0x0388, 
-        "header_ss": 0x578D,   
-    },
+    "convertible_from": {"header_ss": 0x578D,},
 }
 
 TM_ENG_EXTENDED = {
@@ -47,10 +41,7 @@ TM_ENG_EXTENDED = {
     "header_ss": 0x5B1C,
     "ptr_range_home": {1: 0, 2: 0, 3: 1, 4: 1, 5: 1, 6: 1, 7: 3},
     "newspaper_sources": ((0x56CB8, 0x56DCC), (0x5ADE8, 0x5AFA0)),
-    "convertible_from": {
-        "header_minalloc": 0x0B21,
-        "header_ss": 0x555F,
-    },
+    "convertible_from": {"header_ss": 0x555F,},
 }
 
 _LAYOUTS = (BMP_V2_EXTENDED, TM_ITA_EXTENDED, TM_ENG_EXTENDED,)
@@ -186,11 +177,8 @@ def can_convert(data, profile):
             continue
         if bytes(profile.get("base_const") or b"") != descriptor["base_const"]:
             continue
-        if _read_u16(data, 0x0A) != conv["header_minalloc"]:
-            continue
         if _read_u16(data, 0x0E) != conv["header_ss"]:
             continue
-        # Non deve essere già extended
         if detect(data, profile) is not None:
             return None
         return descriptor
