@@ -3,7 +3,7 @@
 
 This file is loaded at runtime from ``data/lang/`` next to the program and may
 be replaced without rebuilding the editor.  All language files must carry the
-identical key space (255 keys) and the identical ``{placeholder}`` names;
+identical key space (266 keys) and the identical ``{placeholder}`` names;
 the editor falls back to English, and then to the raw key, so a mistake here is
 visible rather than silent.  Technical values (profile names, string_id, JSON
 schema fields, font file names, PASS/FAIL/READ-ONLY, charmap bytes, offsets)
@@ -22,6 +22,8 @@ TEXTS_DE = {
     "menu.tools.details": "Änderungen / Details…",
     "menu.tools.export": "Strings exportieren…",
     "menu.tools.import": "Strings importieren…",
+    "menu.tools.news_export": "Zeitungstexte exportieren…",
+    "menu.tools.news_import": "Zeitungstexte importieren…",
     "menu.tools.autotranslate": "Automatische Übersetzung",
     "menu.tools.translate_all": "Alle Strings übersetzen…",
     "menu.view": "Ansicht",
@@ -43,7 +45,8 @@ TEXTS_DE = {
     "region.2": "Italien",
     "region.3": "Frankreich",
     "region.4": "England",
-
+    "header.point": "Punkte:",
+    
     # ---- areas
     "tab.strings": "  📝 Strings  ",
     "tab.fonts": "  🔤 Font-Editor  ",
@@ -67,6 +70,7 @@ TEXTS_DE = {
     # ---- editor
     "edit.frame": " Text bearbeiten (Leerzeichen hervorgehoben) ",
     "edit.apply": "✔ Änderung übernehmen",
+    "edit.discard": "❌ Änderung verwerfen",
     "edit.stats": "Gesamtlänge: {n} Zeichen | Führende Leerzeichen: {lead} | Nachfolgende Leerzeichen: {trail}",
     "edit.encoding_blocked": "Kodierung blockiert: {error}",
     "edit.diff_unavailable": "Diff-Status nicht verfügbar: {error}",
@@ -76,6 +80,7 @@ TEXTS_DE = {
     "edit.range_info": "{kind} | {font} | Bytes {old}→{new} (Δ {delta}) | {status} | {suffix}",
 
     # ---- action bar
+    "action.newspaper_editor": "Zeitungsredakteur",
     "action.translation": "🌐 Übersetzung",
     "action.details": "🔎 Änderungen / Details…",
     "action.export": "📤 Exportieren…",
@@ -147,6 +152,15 @@ TEXTS_DE = {
     "dlg.import.done_msg": "Profil: {profile}\nGeänderte Strings: {n}\n\nDie EXE wurde nicht automatisch gespeichert.",
     "dlg.import.status": "{n} Strings importiert.",
     "fd.import": "Strings importieren",
+    "fd.news_export": "Zeitungstexte exportieren",
+    "fd.news_import": "Zeitungstexte importieren",
+    "dlg.news.unsupported": "Für das Profil {profile} gibt es keine Zeitungstabellen.\n\nDie Zeitungs-CSV steht nur für BMP v2.0 zur Verfügung.",
+    "dlg.news.export_msg": "{n} Zeitungstexte in {rows} Komponentenzeilen exportiert.\n\n{path}",
+    "dlg.news.status_export": "{n} Zeitungstexte nach {file} exportiert.",
+    "dlg.news.none": "Geänderte Zeitungstexte: 0\n\nEs wurde kein Editorzustand geändert.",
+    "dlg.news.confirm": "Zu ändernde Zeitungstexte: {n}\n\nDie vollständige validierte Import-Transaktion anwenden?",
+    "dlg.news.done_msg": "Geänderte Zeitungstexte: {n}\n\nDie EXE wurde nicht automatisch gespeichert.",
+    "dlg.news.status_import": "{n} Zeitungstexte importiert.",
 
     # ---- preview
     "dlg.preview.title": "Änderungen / Vorschau — {profile}",

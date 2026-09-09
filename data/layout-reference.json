@@ -1,9 +1,9 @@
 {
-  "format": "bmh-layout-reference",
+  "format": "bmp-layout-reference",
   "version": 1,
-  "note": "Geschuetzter nachlaufender Leerraum je String, gemessen am englischen Original. Die Preflight fordert: nachlaufend_neu >= min(dieser Wert, nachlaufend_ist). Fehlender string_id bedeutet Minimum 0.",
+  "note": "Protected trailing whitespace per string, measured from the original English version. The preflight requires: new_trailing >= min(this value, current_trailing). A missing string_id means a minimum of 0.",
   "source": {
-    "name": "BMP_english.EXE",
+    "name": "The Manager",
     "sha256": "c6935077ff560574832801d6f8a9da7e03b60a58dbc4532c4648ebce437da2fb"
   },
   "profiles": {

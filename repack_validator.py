@@ -1,6 +1,8 @@
 import copy
 import struct
 
+import extended_layout
+
 
 def _strict_text_bytes(entry):
     try:
@@ -22,6 +24,11 @@ def _text_encoding_errors(entries):
 
 def _inside_ranges(profile, address):
     return any(start <= address < end for start, end in profile["valid_ranges"])
+
+
+def _inside_ptr_ranges(profile, address):
+    ptr_ranges = profile.get("ptr_ranges") or ()
+    return not ptr_ranges or any(start <= address < end for start, end in ptr_ranges)
 
 
 def _range_index(profile, address):
@@ -48,6 +55,7 @@ def build_reference_inventory(data, profile, relocation_sites):
     base_const = profile["base_const"]
     ds_start = profile["ds_start"]
     relocation_site_set = set(relocation_sites)
+    extended = extended_layout.detect(data, profile)
 
     for site in sorted(relocation_site_set):
         if site < 0 or site + 2 > len(data):
@@ -74,8 +82,12 @@ def build_reference_inventory(data, profile, relocation_sites):
             continue
         if ptr_source in relocation_site_set:
             continue
+        if not _inside_ptr_ranges(profile, ptr_source):
+            continue
         target = ds_start + struct.unpack_from("<H", data, ptr_source)[0]
         if _inside_ranges(profile, target):
+            normal[ptr_source] = target
+        elif extended is not None and extended.in_pool(target):
             normal[ptr_source] = target
 
     expected_code = dict(profile.get("code_ptrs", []))
@@ -151,6 +163,8 @@ def _validate_reference_ownership(entries, inventory):
 def _validate_layout(data, profile, entries):
     errors, intervals, encoded_by_entry = [], [], {}
     fixed_by_addr = {address: max_len for address, max_len in profile.get("fixed_strings", [])}
+    extended = extended_layout.detect(data, profile)
+    pool_region = len(profile["valid_ranges"])
 
     for entry in entries:
         address = entry["str_addr"]
@@ -176,7 +190,17 @@ def _validate_layout(data, profile, entries):
 
         range_index = _range_index(profile, address)
         if range_index is None:
-            errors.append(f"String outside valid ranges: {address:#x}")
+            if extended is None or not extended.in_pool(address):
+                errors.append(f"String outside valid ranges: {address:#x}")
+                continue
+            end = address + len(expected)
+            if end > extended.pool_end:
+                errors.append(f"String crosses pool end: {address:#x}-{end:#x}")
+                continue
+            if bytes(data[address:end]) != expected:
+                errors.append(f"String bytes/NUL mismatch at {address:#x}")
+                continue
+            intervals.append((address, end, entry, pool_region))
             continue
         range_start, range_end = profile["valid_ranges"][range_index]
         end = address + len(expected)
@@ -204,25 +228,103 @@ def _validate_layout(data, profile, entries):
             if not allowed_suffix:
                 errors.append(f"Illegal string overlap: {p_start:#x}-{p_end:#x} / {c_start:#x}-{c_end:#x}")
 
-    for range_index, (range_start, range_end) in enumerate(profile["valid_ranges"]):
-        covered = bytearray(range_end - range_start)
-        for start, end, _entry, entry_range in intervals:
-            if entry_range != range_index:
+    regions = [(index, start, end, 0)
+               for index, (start, end) in enumerate(profile["valid_ranges"])]
+    if extended is not None:
+        regions.append((pool_region, extended.pool_start, extended.pool_end, extended.fill))
+    for region_index, region_start, region_end, fill in regions:
+        covered = bytearray(region_end - region_start)
+        for start, end, _entry, entry_region in intervals:
+            if entry_region != region_index:
                 continue
-            covered[start - range_start:end - range_start] = b"\x01" * (end - start)
-        unknown = [address for address in range(range_start, range_end)
-                   if data[address] != 0 and not covered[address - range_start]]
+            covered[start - region_start:end - region_start] = b"\x01" * (end - start)
+        unknown = [address for address in range(region_start, region_end)
+                   if data[address] != fill and not covered[address - region_start]]
         if unknown:
+            label = "pool" if region_index == pool_region else f"range {region_index}"
             errors.append(
-                f"Unknown occupied bytes in range {range_index}: {len(unknown)} bytes, first {unknown[0]:#x}"
+                f"Unknown occupied bytes in {label}: {len(unknown)} bytes, first {unknown[0]:#x}"
             )
     return errors
+
+
+def find_unknown_gaps(data, profile, entries, relocation_sites):
+    extended = extended_layout.detect(data, profile)
+    pool_region = len(profile["valid_ranges"])
+    fixed_by_addr = {address: max_len for address, max_len in profile.get("fixed_strings", [])}
+    intervals = []
+    for entry in entries:
+        address = entry["str_addr"]
+        try:
+            encoded = _strict_text_bytes(entry)
+        except ValueError:
+            continue
+        expected = encoded + b"\x00"
+        if entry.get("fixed"):
+            max_len = fixed_by_addr.get(address)
+            if max_len and len(expected) <= max_len:
+                intervals.append((address, address + max_len, entry,
+                                  _range_index(profile, address) or 0))
+            continue
+        range_index = _range_index(profile, address)
+        if range_index is None:
+            if extended is not None and extended.in_pool(address):
+                end = address + len(expected)
+                if end <= extended.pool_end:
+                    intervals.append((address, end, entry, pool_region))
+        else:
+            _, range_end = profile["valid_ranges"][range_index]
+            end = address + len(expected)
+            if end <= range_end:
+                intervals.append((address, end, entry, range_index))
+
+    regions = [(index, start, end, 0)
+               for index, (start, end) in enumerate(profile["valid_ranges"])]
+    if extended is not None:
+        regions.append((pool_region, extended.pool_start, extended.pool_end, extended.fill))
+
+    gaps = []
+    for region_index, region_start, region_end, fill in regions:
+        covered = bytearray(region_end - region_start)
+        for start, end, _entry, entry_region in intervals:
+            if entry_region != region_index:
+                continue
+            covered[start - region_start:end - region_start] = b"\x01" * (end - start)
+
+        label = "pool" if region_index == pool_region else f"range {region_index}"
+        addr = region_start
+        while addr < region_end:
+            if data[addr] == fill or covered[addr - region_start]:
+                addr += 1
+                continue
+            block_start = addr
+            while addr < region_end and not (data[addr] == fill and not covered[addr - region_start] is False) and not covered[addr - region_start]:
+                addr += 1
+            block_end = addr 
+            raw_end = block_end
+            while raw_end < region_end and not covered[raw_end - region_start]:
+                raw_end += 1
+
+            gaps.append({
+                "label": label,
+                "region_index": region_index,
+                "region_start": region_start,
+                "region_end": region_end,
+                "gap_start": block_start,
+                "gap_end": block_end,
+                "raw_end": raw_end,
+                "raw_bytes": bytes(data[block_start:raw_end]),
+            })
+    return gaps
 
 
 def validate_image(data, profile, entries, relocation_sites):
     inventory = build_reference_inventory(data, profile, relocation_sites)
     errors = _validate_reference_ownership(entries, inventory)
     errors.extend(_validate_layout(data, profile, entries))
+    extended = extended_layout.detect(data, profile)
+    if extended is not None:
+        errors.extend(extended.home_map_errors(inventory))
     return {
         "ok": not errors,
         "errors": errors,
@@ -273,30 +375,66 @@ def repack_transaction(data, profile, entries, relocation_sites):
     if source_errors:
         return None, None, {"ok": False, "errors": source_errors, "stage": "source-inventory"}
 
+    extended = extended_layout.detect(before, profile)
     work_data = bytearray(before)
     work_entries = copy.deepcopy(entries)
     _mark_suffix_sharing(work_entries, profile)
 
     groups = [[] for _ in profile["valid_ranges"]]
+    pool_group = []
     for entry in work_entries:
         if entry.get("fixed"):
             continue
         range_index = _range_index(profile, entry["str_addr"])
-        if range_index is None:
+        if range_index is not None:
+            groups[range_index].append(entry)
+        elif extended is not None and extended.in_pool(entry["str_addr"]):
+            pool_group.append(entry)
+        else:
             return None, None, {"ok": False, "errors": [f"Entry outside valid ranges: {entry['str_addr']:#x}"], "stage": "layout"}
-        groups[range_index].append(entry)
 
+    suffix_parents = {id(entry["_shared_parent"]) for entry in work_entries
+                      if entry.get("_shared_parent")}
+    plans, spilled = [], []
     for range_index, group in enumerate(groups):
         range_start, range_end = profile["valid_ranges"][range_index]
+        capacity = range_end - range_start
         writable = [entry for entry in group if not entry.get("_shared_parent")]
         required = sum(len(_strict_text_bytes(entry)) + 1 for entry in writable)
-        if required > range_end - range_start:
+        if required > capacity and extended is not None:
+            candidates = [entry for entry in writable
+                          if extended.is_spillable(entry) and id(entry) not in suffix_parents]
+            candidates.sort(key=lambda item: item.get("original_str_addr", item["str_addr"]),
+                            reverse=True)
+            for entry in candidates:
+                if required <= capacity:
+                    break
+                required -= len(_strict_text_bytes(entry)) + 1
+                writable.remove(entry)
+                spilled.append(entry)
+        if required > capacity:
             return None, None, {
                 "ok": False,
-                "errors": [f"Range {range_index} overflow: {required} > {range_end - range_start}"],
+                "errors": [f"Range {range_index} overflow: {required} > {capacity}"],
                 "stage": "capacity",
             }
+        plans.append((range_start, range_end, writable, group))
 
+    pool_plan = None
+    if extended is not None:
+        all_pool = list(pool_group) + list(spilled)
+        required = sum(len(_strict_text_bytes(entry)) + 1 for entry in all_pool)
+        if required > extended.pool_size:
+            return None, None, {
+                "ok": False,
+                "errors": [f"Extended pool overflow: {required} > {extended.pool_size}"],
+                "stage": "capacity",
+            }
+        pool_plan = all_pool
+    elif spilled:
+        return None, None, {"ok": False, "errors": ["Spill without an extended layout"], "stage": "capacity"}
+
+    for range_start, range_end, writable, group in plans:
         work_data[range_start:range_end] = b"\x00" * (range_end - range_start)
         write_ptr = range_start
         for entry in sorted(writable, key=lambda item: item["str_addr"]):
@@ -321,6 +459,23 @@ def repack_transaction(data, profile, entries, relocation_sites):
                 progress = True
             if not progress:
                 return None, None, {"ok": False, "errors": ["Unresolved suffix-sharing chain"], "stage": "layout"}
+
+    if pool_plan is not None:
+        pool_bytes = bytearray([extended.fill]) * extended.pool_size
+        write_ptr = 0
+        for entry in sorted(pool_plan,
+                            key=lambda item: (
+                                _range_index(profile, item.get("original_str_addr", item["str_addr"])) or 0,
+                                item.get("original_str_addr", item["str_addr"]),
+                                item["str_addr"],
+                            )):
+            encoded = _strict_text_bytes(entry) + b"\x00"
+            pool_bytes[write_ptr:write_ptr + len(encoded)] = encoded
+            entry["str_addr"] = extended.pool_start + write_ptr
+            entry["slot_len"] = len(encoded)
+            entry["_placed"] = True
+            write_ptr += len(encoded)
+        work_data[extended.pool_start:extended.pool_end] = pool_bytes
 
     base_const = profile["base_const"]
     ds_start = profile["ds_start"]
@@ -347,6 +502,8 @@ def repack_transaction(data, profile, entries, relocation_sites):
     allowed = set()
     for start, end in profile["valid_ranges"]:
         allowed.update(range(start, end))
+    if extended is not None:
+        allowed.update(range(extended.pool_start, extended.pool_end))
     for source in before_inventory["normal"]:
         allowed.update((source, source + 1))
     for source in before_inventory["code"]:
@@ -366,6 +523,7 @@ def repack_transaction(data, profile, entries, relocation_sites):
 
 __all__ = [
     "build_reference_inventory",
+    "find_unknown_gaps",
     "make_string_id",
     "repack_transaction",
     "validate_image",

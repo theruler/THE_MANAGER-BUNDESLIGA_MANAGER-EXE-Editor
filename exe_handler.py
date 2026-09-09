@@ -164,7 +164,6 @@ def unpack_in_memory(data: bytearray) -> bytearray:
 
 
 def get_mz_relocation_sites(data) -> list[int]:
-    """Return file offsets of all valid MZ relocation words."""
     if len(data) < 0x1C or data[0:2] != b'MZ':
         raise ValueError("MZ header not found")
 
@@ -188,7 +187,7 @@ def get_mz_relocation_sites(data) -> list[int]:
     return sorted(sites)
 
 GAME_PROFILES = {
-    "THE MANAGER": {
+    "THE MANAGER (ITALIAN)": {
         "ds_start": 0x53CE0,
         "base_const": bytes.fromhex("F64C"),
         "ptr_ranges": [
@@ -206,7 +205,10 @@ GAME_PROFILES = {
             "header_size": 0x6D80,
             "relocation_table_offset": 0x1C,
             "relocation_count": 7000,
-            "relocation_topology_sha256": "95235ED9EEB658148E86843DC0381D846BB8FFD91C0515850EE23D590588ED15",
+            "relocation_topology_sha256": [
+                "95235ED9EEB658148E86843DC0381D846BB8FFD91C0515850EE23D590588ED15",  # original MZ
+                "BD94929F6723F899244CB19BDF077AB36E8693126F311F64091468D6DECD5DC3",  # decompressed by EXEPACK
+            ],
             "entry_cs": 0x3A45,
             "entry_ip": 0x0018,
             "diagnostic_stack_ss": 0x578D,
@@ -288,7 +290,7 @@ EXE_FONT_PROFILES = {
             "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3D5DA, "ptr_end": 0x3D698, "glyph_start": 0x3D698, "glyph_end": 0x3D92A, "num_ptrs": 95, "ascii_start": 0x20},
         },
     },
-    "THE MANAGER": {
+    "THE MANAGER (ITALIAN)": {
         "base_addr": 0x3CC80,
         "fonts": {
             "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3D46E, "ptr_end": 0x3D52C, "glyph_start": 0x3D52C, "glyph_end": 0x3DAD8, "num_ptrs": 95, "ascii_start": 0x20},

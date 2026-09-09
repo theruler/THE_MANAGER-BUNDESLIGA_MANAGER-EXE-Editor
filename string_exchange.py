@@ -1,16 +1,13 @@
-"""Deterministic, fail-closed string exchange for supported EXE profiles."""
-
 from __future__ import annotations
-
 import copy
 import hashlib
 import json
 import re
 from collections import Counter
 from typing import Callable
-
 from charmap import CharmapEncodeError, charmap_encode
 from font_safety import FontSafetyError, validate_all_fonts
+import extended_layout
 from repack_validator import repack_transaction
 from translator import CONTROL_TOKEN_PATTERN
 
@@ -57,7 +54,7 @@ READ_ONLY_ENTRY_FIELDS = ENTRY_FIELDS - {
 
 
 class StringExchangeError(ValueError):
-    """Raised before live state can be touched when exchange data is unsafe."""
+    pass
 
 
 def _canonical_bytes(value) -> bytes:
@@ -96,6 +93,13 @@ def _range_index(profile: dict, address: int):
         if start <= address < end:
             return index
     return None
+
+
+def _extended_home_block(profile: dict, entry: dict):
+    extended = extended_layout.layout_for_profile(profile)
+    if extended is None or not extended.in_pool(int(entry["str_addr"])):
+        return None
+    return extended.home_range_index(entry)
 
 
 def _entry_kind(entry: dict) -> str:
@@ -153,7 +157,6 @@ def _escape_visible_char(display_char: str) -> str:
 
 
 def raw_to_exchange_text(raw_bytes: bytes, charmap: dict) -> str:
-    """Decode raw bytes while preserving control tokens and unknown bytes."""
     cmap = _validated_charmap(charmap)
     raw_text = raw_bytes.decode("latin-1")
     parts = []
@@ -247,7 +250,6 @@ def exchange_text_to_raw(
     escape_limits: Counter | None = None,
     preserve_bytes: bytes = b"",
 ) -> tuple[bytes, str, Counter]:
-    """Strictly encode exchange text without replacement or invented bytes."""
     cmap = _validated_charmap(charmap)
     display_text, escape_counts = _unescape_exchange_text(
         exchange_text, cmap, escape_limits=escape_limits
@@ -297,6 +299,8 @@ def exchange_text_to_raw(
 
 def _suffix_links(entries: list[dict], profile: dict) -> dict[str, list[dict]]:
     links = {entry["string_id"]: [] for entry in entries}
+    extended = extended_layout.layout_for_profile(profile)
+    groups = []
     for range_index, _range in enumerate(profile["valid_ranges"]):
         group = sorted(
             (
@@ -306,6 +310,20 @@ def _suffix_links(entries: list[dict], profile: dict) -> dict[str, list[dict]]:
             ),
             key=lambda entry: entry["str_addr"],
         )
+        groups.append(group)
+
+    if extended is not None:
+        pool_group = sorted(
+            (
+                entry for entry in entries
+                if not entry.get("fixed")
+                and extended.in_pool(entry["str_addr"])
+            ),
+            key=lambda entry: entry["str_addr"],
+        )
+        groups.append(pool_group)
+
+    for group in groups:
         for child in group:
             child_raw = _entry_raw_bytes(child)
             candidates = []
@@ -327,17 +345,13 @@ def _suffix_links(entries: list[dict], profile: dict) -> dict[str, list[dict]]:
                 "other_id": parent["string_id"],
                 "byte_offset": offset,
             })
+
     for value in links.values():
         value.sort(key=lambda link: (link["role"], link["other_id"], link["byte_offset"]))
     return links
 
 
 def _protected_trailing(string_id, raw, charmap, layout_reference) -> int:
-    """Geschuetzter nachlaufender Leerraum eines Eintrags.
-
-    min(englisches Original, heutiger Stand). Das Minimum verhindert, dass
-    Eintraege, deren Leerlauf schon heute unter dem englischen liegt, den
-    Ist-Zustand ungueltig machen und einen unveraenderten Rundlauf blockieren."""
     current = _trailing_spaces(raw_to_exchange_text(raw, charmap))
     if not layout_reference:
         return current
@@ -379,6 +393,8 @@ def _build_context(
             raise StringExchangeError(f"No confirmed CharMap/font codes for {font}")
         raw = _entry_raw_bytes(entry)
         block = None if kind == "fixed" else _range_index(profile, entry["str_addr"])
+        if kind != "fixed" and block is None:
+            block = _extended_home_block(profile, entry)
         if kind != "fixed" and block is None:
             raise StringExchangeError(f"Entry {string_id} is outside all Repack blocks")
         if kind == "fixed":
@@ -617,22 +633,12 @@ def _token_signature(exchange_text: str) -> Counter:
 
 
 def _trailing_spaces(display_text: str) -> int:
-    """Nachlaufender Leerraum.
-
-    Ein String, der nur aus Leerzeichen besteht, zaehlt vollstaendig als
-    nachlaufend. Wuerde man ihn als fuehrenden Leerraum verbuchen, gaelte
-    freier Platz faelschlich als geschuetzt."""
     if display_text and not display_text.strip(" \t"):
         return len(display_text)
     return len(re.search(r"[ \t]*\Z", display_text).group(0))
 
 
 def _layout_signature(display_text: str):
-    """Fuehrender Leerraum, innere Mehrfach-Leerraeume, Tabulatoren.
-
-    Der nachlaufende Leerraum ist bewusst NICHT Teil der Signatur. Er ist die
-    Platzreserve fuer den 1:1-Nachbau und wird getrennt gegen das englische
-    Original geprueft, siehe docs/patchplan/LAYOUT_REFERENCE_PATCHPLAN.md."""
     if display_text and not display_text.strip(" \t"):
         return "", (), 0
     leading = re.match(r"[ \t]*", display_text).group(0)
@@ -653,7 +659,6 @@ def preflight_import_json(
     font_codes: dict[str, set[int]],
     layout_reference: dict | None = None,
 ) -> dict:
-    """Validate an import completely and return raw replacements only."""
     document = parse_json_document(raw_document)
     _validate_schema(document)
     contexts, fingerprints = _build_context(
@@ -763,7 +768,6 @@ def stage_import_transaction(
     repack_func=repack_transaction,
     font_validator=validate_all_fonts,
 ):
-    """Apply replacements only to copies, then Repack and validate them."""
     source_suffix_links = _suffix_links(entries, profile)
     staged_data = bytearray(exe_data)
     staged_entries = copy.deepcopy(entries)

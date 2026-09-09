@@ -3,7 +3,7 @@
 
 This file is loaded at runtime from ``data/lang/`` next to the program and may
 be replaced without rebuilding the editor.  All language files must carry the
-identical key space (255 keys) and the identical ``{placeholder}`` names;
+identical key space (266 keys) and the identical ``{placeholder}`` names;
 the editor falls back to English, and then to the raw key, so a mistake here is
 visible rather than silent.  Technical values (profile names, string_id, JSON
 schema fields, font file names, PASS/FAIL/READ-ONLY, charmap bytes, offsets)
@@ -22,6 +22,8 @@ TEXTS_EN = {
     "menu.tools.details": "Changes / Details…",
     "menu.tools.export": "Export strings…",
     "menu.tools.import": "Import strings…",
+    "menu.tools.news_export": "Export newspaper texts…",
+    "menu.tools.news_import": "Import newspaper texts…",
     "menu.tools.autotranslate": "Automatic translation",
     "menu.tools.translate_all": "Translate all strings…",
     "menu.view": "View",
@@ -43,7 +45,8 @@ TEXTS_EN = {
     "region.2": "Italy",
     "region.3": "France",
     "region.4": "England",
-
+    "header.point": "Points:",
+    
     # ---- areas
     "tab.strings": "  📝 Strings  ",
     "tab.fonts": "  🔤 Font Editor  ",
@@ -66,7 +69,8 @@ TEXTS_EN = {
 
     # ---- editor
     "edit.frame": " Edit text (spaces highlighted) ",
-    "edit.apply": "✔ Apply change",
+    "edit.apply": "✔ Apply",
+    "edit.discard": "❌ Discard",
     "edit.stats": "Total length: {n} chars | Leading spaces: {lead} | Trailing spaces: {trail}",
     "edit.encoding_blocked": "Encoding blocked: {error}",
     "edit.diff_unavailable": "Diff status unavailable: {error}",
@@ -76,6 +80,7 @@ TEXTS_EN = {
     "edit.range_info": "{kind} | {font} | bytes {old}→{new} (Δ {delta}) | {status} | {suffix}",
 
     # ---- action bar
+    "action.newspaper_editor": "Newspaper editor",
     "action.translation": "🌐 Translation",
     "action.details": "🔎 Changes / Details…",
     "action.export": "📤 Export…",
@@ -147,6 +152,15 @@ TEXTS_EN = {
     "dlg.import.done_msg": "Profile: {profile}\nChanged strings: {n}\n\nThe EXE was not saved automatically.",
     "dlg.import.status": "Imported {n} strings.",
     "fd.import": "Import Strings",
+    "fd.news_export": "Export newspaper texts",
+    "fd.news_import": "Import newspaper texts",
+    "dlg.news.unsupported": "Profile {profile} has no newspaper tables.\n\nThe newspaper CSV is available for BMP v2.0 only.",
+    "dlg.news.export_msg": "{n} newspaper texts exported as {rows} component rows.\n\n{path}",
+    "dlg.news.status_export": "{n} newspaper texts exported to {file}.",
+    "dlg.news.none": "Changed newspaper texts: 0\n\nNo editor state was changed.",
+    "dlg.news.confirm": "Newspaper texts to change: {n}\n\nApply the complete validated import transaction?",
+    "dlg.news.done_msg": "Changed newspaper texts: {n}\n\nThe EXE was not saved automatically.",
+    "dlg.news.status_import": "{n} newspaper texts imported.",
 
     # ---- preview
     "dlg.preview.title": "Changes / Preview — {profile}",

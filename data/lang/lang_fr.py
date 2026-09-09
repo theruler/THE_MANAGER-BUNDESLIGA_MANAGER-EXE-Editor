@@ -3,7 +3,7 @@
 
 This file is loaded at runtime from ``data/lang/`` next to the program and may
 be replaced without rebuilding the editor.  All language files must carry the
-identical key space (255 keys) and the identical ``{placeholder}`` names;
+identical key space (266 keys) and the identical ``{placeholder}`` names;
 the editor falls back to English, and then to the raw key, so a mistake here is
 visible rather than silent.  Technical values (profile names, string_id, JSON
 schema fields, font file names, PASS/FAIL/READ-ONLY, charmap bytes, offsets)
@@ -22,6 +22,8 @@ TEXTS_FR = {
     "menu.tools.details": "Modifications / Détails…",
     "menu.tools.export": "Exporter les chaînes…",
     "menu.tools.import": "Importer les chaînes…",
+    "menu.tools.news_export": "Exporter les textes du journal…",
+    "menu.tools.news_import": "Importer les textes du journal…",
     "menu.tools.autotranslate": "Traduction automatique",
     "menu.tools.translate_all": "Traduire toutes les chaînes…",
     "menu.view": "Affichage",
@@ -43,7 +45,8 @@ TEXTS_FR = {
     "region.2": "Italie",
     "region.3": "France",
     "region.4": "Angleterre",
-
+    "header.point": "Points:",
+    
     # ---- areas
     "tab.strings": "  📝 Chaînes  ",
     "tab.fonts": "  🔤 Éditeur de polices  ",
@@ -66,7 +69,8 @@ TEXTS_FR = {
 
     # ---- editor
     "edit.frame": " Modifier le texte (espaces surlignés) ",
-    "edit.apply": "✔ Appliquer la modification",
+    "edit.apply": "✔ Appliquer",
+    "edit.discard": "❌ Annuler",
     "edit.stats": "Longueur totale : {n} caractères | Espaces initiaux : {lead} | Espaces finaux : {trail}",
     "edit.encoding_blocked": "Encodage bloqué : {error}",
     "edit.diff_unavailable": "État des différences indisponible : {error}",
@@ -76,6 +80,7 @@ TEXTS_FR = {
     "edit.range_info": "{kind} | {font} | octets {old}→{new} (Δ {delta}) | {status} | {suffix}",
 
     # ---- action bar
+    "action.newspaper_editor": "Rédacteur de journal",
     "action.translation": "🌐 Traduction",
     "action.details": "🔎 Modifications / Détails…",
     "action.export": "📤 Exporter…",
@@ -147,6 +152,15 @@ TEXTS_FR = {
     "dlg.import.done_msg": "Profil : {profile}\nChaînes modifiées : {n}\n\nL’EXE n’a pas été enregistré automatiquement.",
     "dlg.import.status": "{n} chaînes importées.",
     "fd.import": "Importer les chaînes",
+    "fd.news_export": "Exporter les textes du journal",
+    "fd.news_import": "Importer les textes du journal",
+    "dlg.news.unsupported": "Le profil {profile} n'a pas de tables de journal.\n\nLe CSV du journal n'est disponible que pour BMP v2.0.",
+    "dlg.news.export_msg": "{n} textes de journal exportés en {rows} lignes de composants.\n\n{path}",
+    "dlg.news.status_export": "{n} textes de journal exportés vers {file}.",
+    "dlg.news.none": "Textes de journal modifiés : 0\n\nAucun état de l'éditeur n'a été modifié.",
+    "dlg.news.confirm": "Textes de journal à modifier : {n}\n\nAppliquer la transaction d'importation complète et validée ?",
+    "dlg.news.done_msg": "Textes de journal modifiés : {n}\n\nL'EXE n'a pas été enregistré automatiquement.",
+    "dlg.news.status_import": "{n} textes de journal importés.",
 
     # ---- preview
     "dlg.preview.title": "Modifications / Aperçu — {profile}",

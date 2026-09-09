@@ -3,7 +3,7 @@
 
 This file is loaded at runtime from ``data/lang/`` next to the program and may
 be replaced without rebuilding the editor.  All language files must carry the
-identical key space (255 keys) and the identical ``{placeholder}`` names;
+identical key space (266 keys) and the identical ``{placeholder}`` names;
 the editor falls back to English, and then to the raw key, so a mistake here is
 visible rather than silent.  Technical values (profile names, string_id, JSON
 schema fields, font file names, PASS/FAIL/READ-ONLY, charmap bytes, offsets)
@@ -22,6 +22,8 @@ TEXTS_IT = {
     "menu.tools.details": "Modifiche / Dettagli…",
     "menu.tools.export": "Esporta stringhe…",
     "menu.tools.import": "Importa stringhe…",
+    "menu.tools.news_export": "Esporta testi del giornale…",
+    "menu.tools.news_import": "Importa testi del giornale…",
     "menu.tools.autotranslate": "Traduzione automatica",
     "menu.tools.translate_all": "Traduci tutte le stringhe…",
     "menu.view": "Visualizza",
@@ -43,6 +45,7 @@ TEXTS_IT = {
     "region.2": "Italia",
     "region.3": "Francia",
     "region.4": "Inghilterra",
+    "header.point": "Punti:",
 
     # ---- areas
     "tab.strings": "  📝 Stringhe  ",
@@ -66,7 +69,8 @@ TEXTS_IT = {
 
     # ---- editor
     "edit.frame": " Modifica testo (spazi evidenziati) ",
-    "edit.apply": "✔ Applica modifica",
+    "edit.apply": "✔ Applica",
+    "edit.discard": "❌ Scarta",
     "edit.stats": "Lunghezza totale: {n} caratteri | Spazi iniziali: {lead} | Spazi finali: {trail}",
     "edit.encoding_blocked": "Codifica bloccata: {error}",
     "edit.diff_unavailable": "Stato differenze non disponibile: {error}",
@@ -76,6 +80,7 @@ TEXTS_IT = {
     "edit.range_info": "{kind} | {font} | byte {old}→{new} (Δ {delta}) | {status} | {suffix}",
 
     # ---- action bar
+    "action.newspaper_editor": "Editor di giornale",
     "action.translation": "🌐 Traduzione",
     "action.details": "🔎 Modifiche / Dettagli…",
     "action.export": "📤 Esporta…",
@@ -147,6 +152,15 @@ TEXTS_IT = {
     "dlg.import.done_msg": "Profilo: {profile}\nStringhe modificate: {n}\n\nL'EXE non è stato salvato automaticamente.",
     "dlg.import.status": "Importate {n} stringhe.",
     "fd.import": "Importa stringhe",
+    "fd.news_export": "Esporta testi del giornale",
+    "fd.news_import": "Importa testi del giornale",
+    "dlg.news.unsupported": "Il profilo {profile} non ha tabelle del giornale.\n\nIl CSV del giornale è disponibile solo per BMP v2.0.",
+    "dlg.news.export_msg": "{n} testi del giornale esportati in {rows} righe di componenti.\n\n{path}",
+    "dlg.news.status_export": "{n} testi del giornale esportati in {file}.",
+    "dlg.news.none": "Testi del giornale modificati: 0\n\nNessuno stato dell'editor è stato modificato.",
+    "dlg.news.confirm": "Testi del giornale da modificare: {n}\n\nApplicare la transazione di importazione completa e convalidata?",
+    "dlg.news.done_msg": "Testi del giornale modificati: {n}\n\nL'EXE non è stato salvato automaticamente.",
+    "dlg.news.status_import": "{n} testi del giornale importati.",
 
     # ---- preview
     "dlg.preview.title": "Modifiche / Anteprima — {profile}",

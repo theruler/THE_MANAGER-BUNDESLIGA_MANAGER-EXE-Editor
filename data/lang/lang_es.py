@@ -3,7 +3,7 @@
 
 This file is loaded at runtime from ``data/lang/`` next to the program and may
 be replaced without rebuilding the editor.  All language files must carry the
-identical key space (255 keys) and the identical ``{placeholder}`` names;
+identical key space (266 keys) and the identical ``{placeholder}`` names;
 the editor falls back to English, and then to the raw key, so a mistake here is
 visible rather than silent.  Technical values (profile names, string_id, JSON
 schema fields, font file names, PASS/FAIL/READ-ONLY, charmap bytes, offsets)
@@ -22,6 +22,8 @@ TEXTS_ES = {
     "menu.tools.details": "Cambios / Detalles…",
     "menu.tools.export": "Exportar cadenas…",
     "menu.tools.import": "Importar cadenas…",
+    "menu.tools.news_export": "Exportar textos del periódico…",
+    "menu.tools.news_import": "Importar textos del periódico…",
     "menu.tools.autotranslate": "Traducción automática",
     "menu.tools.translate_all": "Traducir todas las cadenas…",
     "menu.view": "Ver",
@@ -43,7 +45,8 @@ TEXTS_ES = {
     "region.2": "Italia",
     "region.3": "Francia",
     "region.4": "Inglaterra",
-
+    "header.point": "Puntaje:",
+    
     # ---- areas
     "tab.strings": "  📝 Cadenas  ",
     "tab.fonts": "  🔤 Editor de fuentes  ",
@@ -67,6 +70,7 @@ TEXTS_ES = {
     # ---- editor
     "edit.frame": " Editar texto (espacios resaltados) ",
     "edit.apply": "✔ Aplicar cambio",
+    "edit.discard": "❌ Descartar cambio",
     "edit.stats": "Longitud total: {n} caracteres | Espacios iniciales: {lead} | Espacios finales: {trail}",
     "edit.encoding_blocked": "Codificación bloqueada: {error}",
     "edit.diff_unavailable": "Estado de diferencias no disponible: {error}",
@@ -76,6 +80,7 @@ TEXTS_ES = {
     "edit.range_info": "{kind} | {font} | bytes {old}→{new} (Δ {delta}) | {status} | {suffix}",
 
     # ---- action bar
+    "action.newspaper_editor": "Editor de periódico",
     "action.translation": "🌐 Traducción",
     "action.details": "🔎 Cambios / Detalles…",
     "action.export": "📤 Exportar…",
@@ -147,6 +152,15 @@ TEXTS_ES = {
     "dlg.import.done_msg": "Perfil: {profile}\nCadenas modificadas: {n}\n\nEl EXE no se ha guardado automáticamente.",
     "dlg.import.status": "Se han importado {n} cadenas.",
     "fd.import": "Importar cadenas",
+    "fd.news_export": "Exportar textos del periódico",
+    "fd.news_import": "Importar textos del periódico",
+    "dlg.news.unsupported": "El perfil {profile} no tiene tablas de periódico.\n\nEl CSV del periódico solo está disponible para BMP v2.0.",
+    "dlg.news.export_msg": "{n} textos del periódico exportados en {rows} filas de componentes.\n\n{path}",
+    "dlg.news.status_export": "{n} textos del periódico exportados a {file}.",
+    "dlg.news.none": "Textos del periódico modificados: 0\n\nNo se modificó ningún estado del editor.",
+    "dlg.news.confirm": "Textos del periódico que se cambiarán: {n}\n\n¿Aplicar la transacción de importación completa y validada?",
+    "dlg.news.done_msg": "Textos del periódico modificados: {n}\n\nEl EXE no se guardó automáticamente.",
+    "dlg.news.status_import": "{n} textos del periódico importados.",
 
     # ---- preview
     "dlg.preview.title": "Cambios / Vista previa — {profile}",

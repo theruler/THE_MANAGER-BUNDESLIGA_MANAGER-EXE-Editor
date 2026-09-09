@@ -1,13 +1,9 @@
-"""Read-only logical diff and capacity preview for the EXE editor."""
-
 from __future__ import annotations
-
 import copy
 import re
 import struct
 from dataclasses import dataclass
 from typing import Callable
-
 from font_safety import (
     FontSafetyError,
     load_font_model,
@@ -15,21 +11,19 @@ from font_safety import (
     unique_glyphs,
     validate_all_fonts,
 )
+import extended_layout
 from repack_validator import repack_transaction, validate_image
 from string_exchange import StringExchangeError, build_export_document
 
 
 class DiffPreviewError(ValueError):
-    """Raised when a trustworthy read-only preview cannot be produced."""
-
+    pass
 
 _CAPACITY_ERROR = re.compile(r"Range (\d+) overflow: (\d+) > (\d+)\Z")
 
 
 @dataclass
 class PreviewCache:
-    """Small explicitly invalidated cache for one immutable preview snapshot."""
-
     generation: int = 0
     snapshot: dict | None = None
     invalidation_reason: str = "initial"
@@ -64,6 +58,27 @@ def _range_index(profile: dict, address: int) -> int | None:
     for index, (start, end) in enumerate(profile["valid_ranges"]):
         if start <= address < end:
             return index
+    return None
+
+
+def _region_end(data: bytes | bytearray, profile: dict, address: int) -> int | None:
+    index = _range_index(profile, address)
+    if index is not None:
+        return int(profile["valid_ranges"][index][1])
+    extended = extended_layout.detect(data, profile)
+    if extended is not None and extended.in_pool(address):
+        return int(extended.pool_end)
+    return None
+
+
+def _block_for_entry(data: bytes | bytearray, profile: dict, entry: dict) -> int | None:
+    address = int(entry["str_addr"])
+    index = _range_index(profile, address)
+    if index is not None:
+        return index
+    extended = extended_layout.detect(data, profile)
+    if extended is not None and extended.in_pool(address):
+        return len(profile["valid_ranges"])
     return None
 
 
@@ -109,7 +124,7 @@ def _pointer_target(
         )
     low = struct.unpack_from("<H", data, source)[0]
     target = int(profile["ds_start"]) + low
-    if _range_index(profile, target) is None:
+    if _region_end(data, profile, target) is None:
         raise DiffPreviewError(f"Pointer {source:#x} targets outside Repack ranges: {target:#x}")
     return target
 
@@ -120,7 +135,6 @@ def reconstruct_baseline_entries(
     profile: dict,
     relocation_sites: list[int],
 ) -> list[dict]:
-    """Rebuild baseline text and targets from stable pointer sources/string_ids."""
     fixed_slots = {int(address): int(size) for address, size in profile.get("fixed_strings", [])}
     rebuilt = []
     seen_ids = set()
@@ -170,8 +184,9 @@ def reconstruct_baseline_entries(
                 f"Baseline pointer sources for {string_id} have {len(targets)} targets"
             )
         address = targets.pop()
-        range_index = _range_index(profile, address)
-        range_end = int(profile["valid_ranges"][range_index][1])
+        range_end = _region_end(baseline_data, profile, address)
+        if range_end is None:
+            raise DiffPreviewError(f"Baseline target outside all regions for {string_id}")
         raw = _read_c_string(baseline_data, address, range_end, string_id)
         rebuilt.append({
             "ptr_addrs": ptr_addrs,
@@ -210,7 +225,6 @@ def _repack_read_only(
 
 
 def _merged_used(entries: list[dict], start: int, end: int) -> int:
-    """Measure the validated Repacker result; this does not predict placement."""
     intervals = []
     for entry in entries:
         if entry.get("fixed") or not start <= int(entry["str_addr"]) < end:
@@ -230,15 +244,18 @@ def _merged_used(entries: list[dict], start: int, end: int) -> int:
     return sum(right - left for left, right in merged)
 
 
-def _capacity_rows(profile: dict, repacked_entries: list[dict]) -> list[dict]:
+def _capacity_rows(profile: dict, repacked_entries: list[dict], extended=None) -> list[dict]:
     rows = []
-    for index, (start, end) in enumerate(profile["valid_ranges"]):
-        total = int(end) - int(start)
-        used = _merged_used(repacked_entries, int(start), int(end))
+    regions = [(int(start), int(end)) for start, end in profile["valid_ranges"]]
+    if extended is not None:
+        regions.append((int(extended.pool_start), int(extended.pool_end)))
+    for index, (start, end) in enumerate(regions):
+        total = end - start
+        used = _merged_used(repacked_entries, start, end)
         rows.append({
             "block": index,
-            "start": int(start),
-            "end": int(end),
+            "start": start,
+            "end": end,
             "total": total,
             "used": used,
             "free": total - used,
@@ -514,8 +531,9 @@ def _baseline_raw_for_entry(
     if len(targets) != 1:
         raise DiffPreviewError(f"Baseline target is ambiguous for {string_id}")
     address = targets.pop()
-    range_index = _range_index(profile, address)
-    limit = int(profile["valid_ranges"][range_index][1])
+    limit = _region_end(baseline_data, profile, address)
+    if limit is None:
+        raise DiffPreviewError(f"Baseline target outside all regions for {string_id}")
     return _read_c_string(baseline_data, address, limit, string_id)
 
 
@@ -532,7 +550,7 @@ def selected_string_status(
     new_raw = pending_raw if pending_raw is not None else _raw(entry)
     string_id = entry["string_id"]
     kind = _kind(entry)
-    block = None if kind == "fixed" else _range_index(profile, int(entry["str_addr"]))
+    block = None if kind == "fixed" else _block_for_entry(baseline_data, profile, entry)
     status = "PENDING" if pending_raw is not None else (
         "PASS" if old_raw != new_raw else "UNCHANGED"
     )
@@ -597,7 +615,6 @@ def build_diff_preview(
     pending_font_model: list[dict] | None = None,
     pending_error: str | None = None,
 ) -> dict:
-    """Build a complete preview without mutating any supplied object."""
     baseline_before = bytes(baseline_data)
     current_before = bytes(current_data)
     entries_before = copy.deepcopy(current_entries)
@@ -610,6 +627,7 @@ def build_diff_preview(
     if not font_valid:
         errors.extend(str(value) for value in (font_errors_state or []))
 
+    extended = extended_layout.detect(current_data, profile)
     baseline_entries = reconstruct_baseline_entries(
         baseline_data, current_entries, profile, relocation_sites
     )
@@ -620,24 +638,27 @@ def build_diff_preview(
         detail = baseline_validation.get("errors", ["Unknown baseline Repack failure"])[0]
         raise DiffPreviewError(f"Baseline Repack failed: {detail}")
     del baseline_work
-    baseline_capacity = _capacity_rows(profile, baseline_capacity_entries)
+    baseline_capacity = _capacity_rows(profile, baseline_capacity_entries, extended)
 
     current_work, current_capacity_entries, current_capacity_validation = _repack_read_only(
         current_data, profile, current_entries, relocation_sites
     )
     if current_capacity_validation.get("ok"):
-        current_capacity = _capacity_rows(profile, current_capacity_entries)
+        current_capacity = _capacity_rows(profile, current_capacity_entries, extended)
     else:
+        fallback_regions = [(int(start), int(end)) for start, end in profile["valid_ranges"]]
+        if extended is not None:
+            fallback_regions.append((int(extended.pool_start), int(extended.pool_end)))
         current_capacity = [
             {
                 "block": index,
-                "start": int(start),
-                "end": int(end),
-                "total": int(end) - int(start),
+                "start": start,
+                "end": end,
+                "total": end - start,
                 "used": None,
                 "free": None,
             }
-            for index, (start, end) in enumerate(profile["valid_ranges"])
+            for index, (start, end) in enumerate(fallback_regions)
         ]
         errors.extend(current_capacity_validation.get("errors", []))
     del current_work
@@ -666,10 +687,7 @@ def build_diff_preview(
         else:
             preview_data = staged_data
             if dynamic_pending:
-                # _stage_pending_text already returned the authoritative,
-                # validated Repacker output. Measuring it again would only
-                # repeat the same transaction.
-                preview_capacity = _capacity_rows(profile, preview_entries)
+                preview_capacity = _capacity_rows(profile, preview_entries, extended)
 
     if pending_font_model is not None:
         if not pending_font_key:
