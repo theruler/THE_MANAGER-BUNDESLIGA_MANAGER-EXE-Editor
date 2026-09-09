@@ -29,6 +29,9 @@ Executable profiles are detected automatically. File names do not matter.
 - MANA.DAT editor
 - Executable extension option
 
+<img width="1177" height="849" alt="immagine" src="https://github.com/user-attachments/assets/24e366be-eae2-48d2-8d3c-06d7b69e9662" />
+
+
 ## Usage
 
 1. Open a supported EXE.
@@ -38,7 +41,6 @@ Executable profiles are detected automatically. File names do not matter.
 
 Modified EXEPACK executables are saved unpacked. The editor does not contain an EXEPACK compressor.
 Always keep a backup of the original executable and test modified executables before regular use.
-
 
 
 ## Region Changer
@@ -73,6 +75,8 @@ The points rule can be changed directly from the editor for all supported execut
 
 A visual newspaper editor can be selected to better edit the lines. Tags can be moved, deleted or added.
 
+<img width="1177" height="973" alt="immagine" src="https://github.com/user-attachments/assets/a94d8583-b036-484b-b420-5fddad49dd67" />
+
 
 ## Executable extension option
 
@@ -87,9 +91,13 @@ LEGAUE TAB
 - SHUFFLE shuffles the teams within each league
 - RANDOMIZE randomizes all the stats based on current team position in each league, according to an algorithm that take sin account actual statistic distributions of POINTS a GOALS made in a real championship, adapted to the limits and features of the in-game mechanics.
 
+<img width="1229" height="719" alt="immagine" src="https://github.com/user-attachments/assets/f9f46d47-1993-49db-98bd-9341f1bdccff" />
+
 UEFA TAB
 - Actual participant teams can be selected by year (source https://kassiesa.net/uefa/data/)
 - Stats can be randomized within a given range or directly edited
+
+<img width="1226" height="717" alt="immagine" src="https://github.com/user-attachments/assets/fe6f69a7-fa20-4a29-8909-4c6f8b2e9a0b" />
 
 
 
