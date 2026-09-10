@@ -2381,7 +2381,8 @@ class DOSTranslationEditor:
             pending_replacements=pending["replacements"],
             pending_string_ids=pending["pending_ids"],
             pending_font_key=pending["pending_font_key"],
-            pending_font_model=pending
+            pending_font_model=pending["pending_font_model"],
+            pending_error=pending["pending_error"],
         )
         return snapshot
 
