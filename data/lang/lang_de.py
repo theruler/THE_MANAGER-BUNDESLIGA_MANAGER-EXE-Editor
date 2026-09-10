@@ -104,7 +104,7 @@ TEXTS_DE = {
     "settings.font_auto": "Die Zuordnung erfolgt automatisch.\nEine abweichende Auswahl gilt nur für den\naktuell gewählten String.",
     "settings.font_label": "Zugeordneter Font:",
     "settings.hint_group": " Speicherverhalten ",
-    "settings.hint_text": "CharMap- und Font-Zuordnungen werden sofort\nund automatisch gespeichert.\n\nDie EXE selbst wird erst über\n„Datei → Speichern unter…“ geschrieben.",
+    "settings.hint_text": "Zuordnungen und Einstellungen werden sofort gespeichert. SCHRIFTARTEN werden nur über „Speichern unter“ in die EXE geschrieben.",
 
     # ---- counter / status row
     "status.counter": "{shown} von {total} Strings",

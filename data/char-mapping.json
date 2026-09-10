@@ -6,7 +6,8 @@
       "ptr:0x55AF0": "FLOW.FON",
       "ptr:0x55B2C": "FLOW.FON",
       "ptr:0x55B68": "FLOW.FON",
-      "ptr:0x5CA66": "MICRO4.FON"
+      "ptr:0x5CA66": "MICRO4.FON",
+      "ptr:0x55AC0": "FLOW.FON"
     },
     "charmaps": {
       "NORMAL.FON": {

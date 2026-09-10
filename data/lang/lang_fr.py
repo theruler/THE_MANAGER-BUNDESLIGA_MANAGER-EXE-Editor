@@ -104,7 +104,7 @@ TEXTS_FR = {
     "settings.font_auto": "L’affectation est automatique.\nUn autre choix s’applique uniquement à la\nchaîne actuellement sélectionnée.",
     "settings.font_label": "Police affectée :",
     "settings.hint_group": " Comportement de l’enregistrement ",
-    "settings.hint_text": "Les affectations CharMap et de police sont enregistrées\nimédiatement et automatiquement.\n\nL’EXE lui-même n’est écrit que via\n« Fichier → Enregistrer sous… ».",
+    "settings.hint_text": "Les mappages et les affectations sont enregistrés immédiatement. Les polices ne sont intégrées au fichier EXE que via l'option «Enregistrer sous».",
 
     # ---- counter / status row
     "status.counter": "{shown} sur {total} chaînes",

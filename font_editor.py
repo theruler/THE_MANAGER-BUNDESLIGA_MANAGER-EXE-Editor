@@ -30,6 +30,7 @@ class EXEFontEditor:
         on_font_state_changed=None,
         can_change_charmap=None,
         on_open_charmap=None,
+        on_string_font_change=None,
         translate=None,
     ):
         self.parent             = parent
@@ -38,6 +39,7 @@ class EXEFontEditor:
         self.on_font_state_changed = on_font_state_changed
         self.can_change_charmap = can_change_charmap
         self.on_open_charmap    = on_open_charmap
+        self.on_string_font_change = on_string_font_change
         # Injected by the main editor; font_editor never imports main_editor.
         self.translate          = translate
         self._i18n              = []
@@ -105,6 +107,9 @@ class EXEFontEditor:
         self.font_status = ttk.Label(bar, text=self.tr("font.load_first"),
                                      font=("Segoe UI", 9, "italic"), foreground="#7F8C8D")
         self.font_status.pack(side=tk.LEFT, padx=12)
+        self._reg(ttk.Label(bar, font=("Segoe UI", 9, "italic"), foreground="#566573",
+                            justify=tk.RIGHT),
+                  "settings.hint_text").pack(side=tk.RIGHT, padx=(8, 0))
         body = ttk.Frame(parent, padding=(12, 0, 12, 8))
         body.pack(fill=tk.BOTH, expand=True)
         lf = ttk.LabelFrame(body, padding=6)
@@ -129,11 +134,26 @@ class EXEFontEditor:
         prop_group = ttk.LabelFrame(rf, padding=8)
         self._reg(prop_group, "font.props")
         prop_group.pack(fill=tk.X)
-        self._reg(ttk.Label(prop_group), "font.width").pack(anchor=tk.W)
+        props_inner = ttk.Frame(prop_group)
+        props_inner.pack(fill=tk.X)
+        width_col = ttk.Frame(props_inner)
+        width_col.pack(side=tk.LEFT, padx=(0, 12))
+        self._reg(ttk.Label(width_col), "font.width").pack(anchor=tk.W)
         self.width_var  = tk.IntVar(value=8)
-        self.width_spin = ttk.Spinbox(prop_group, from_=1, to=24, textvariable=self.width_var, width=5, command=self._on_width_change)
+        self.width_spin = ttk.Spinbox(width_col, from_=1, to=24, textvariable=self.width_var, width=5, command=self._on_width_change)
         self.width_spin.pack(anchor=tk.W, pady=(2, 0))
         self.width_spin.bind("<KeyRelease>", self._on_width_change)
+        font_assign_col = ttk.Frame(props_inner)
+        font_assign_col.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.string_font_label_widget = self._reg(ttk.Label(font_assign_col), "settings.font_label")
+        self.string_font_label_widget.pack(anchor=tk.W)
+        self.string_font_var = tk.StringVar(value="FLOW.FON")
+        self.string_font_combo = ttk.Combobox(
+            font_assign_col, textvariable=self.string_font_var, state="readonly",
+            width=14, values=["FLOW.FON", "NORMAL.FON", "MICRO4.FON"],
+        )
+        self.string_font_combo.pack(anchor=tk.W, pady=(2, 0))
+        self.string_font_combo.bind("<<ComboboxSelected>>", self._on_string_font_change_internal)
 
         tools_group = ttk.LabelFrame(rf, padding=8)
         self._reg(tools_group, "font.tools")
@@ -166,38 +186,42 @@ class EXEFontEditor:
         self._reg(ttk.Button(import_export_frame, command=self._export_font),
                   "font.export").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
 
-        self.open_charmap_button = ttk.Button(rf, command=self._open_charmap_area)
-        self._reg(self.open_charmap_button, "font.edit_charmap")
-        self.open_charmap_button.pack(fill=tk.X, pady=(8, 0))
+        charmap_group = ttk.LabelFrame(rf, padding=8)
+        self._reg(charmap_group, "settings.charmap_group")
+        charmap_group.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        self._build_charmap_inline(charmap_group)
 
         self.alias_label = ttk.Label(rf, text="", font=("Segoe UI", 8, "italic"), foreground="#E67E22", wraplength=150)
-        self.alias_label.pack(anchor=tk.W, pady=(10, 0))
+        self.alias_label.pack(anchor=tk.W, pady=(6, 0))
+
+    def _build_charmap_inline(self, parent):
+        """Build the CharMap controls inside the given frame (called by _build_ui)."""
+        self.charmap_title_label = ttk.Label(parent, text=self.tr("font.charmap_title"),
+                                             font=("Segoe UI", 9, "bold"))
+        self.charmap_title_label.pack(anchor=tk.W, pady=(0, 4))
+        map_row = ttk.Frame(parent)
+        map_row.pack(fill=tk.X, pady=(0, 2))
+        self.map_byte_label = ttk.Label(map_row, text="0x00 →", font=("Consolas", 9))
+        self.map_byte_label.pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(map_row, textvariable=self.map_char_var, width=4, font=("Consolas", 9)).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(map_row, text="+", width=2, command=self._add_charmap_entry).pack(side=tk.LEFT)
+        self.charmap_list = tk.Listbox(parent, width=20, height=8, font=("Consolas", 9), exportselection=False)
+        self.charmap_list.pack(fill=tk.BOTH, expand=True, pady=(2, 2))
+        self.charmap_list.bind("<<ListboxSelect>>", self._on_charmap_select)
+        self._reg(ttk.Button(parent, command=self._remove_charmap_entry),
+                  "font.remove").pack(fill=tk.X, pady=1)
+        self._refresh_charmap_list()
 
     def build_charmap_panel(self, parent):
-        """Build the CharMap controls in an arbitrary parent frame.
+        """Build the CharMap controls in an arbitrary external parent frame.
 
-        Only the parent changes; every callback, guard and config path stays in
-        this class.  The container is registered so set_enabled() keeps covering
-        it after the reparenting.
+        Kept for backwards compatibility; the charmap is now built inline
+        in the right column of the Font Editor tab via _build_charmap_inline.
         """
         panel = ttk.Frame(parent)
         panel.pack(fill=tk.BOTH, expand=True)
         self._external_panels.append(panel)
-        self.charmap_title_label = ttk.Label(panel, text=self.tr("font.charmap_title"),
-                                             font=("Segoe UI", 10, "bold"))
-        self.charmap_title_label.pack(anchor=tk.W, pady=(0, 4))
-        map_row = ttk.Frame(panel)
-        map_row.pack(fill=tk.X, pady=(4, 2))
-        self.map_byte_label = ttk.Label(map_row, text="0x00 →", font=("Consolas", 10))
-        self.map_byte_label.pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Entry(map_row, textvariable=self.map_char_var, width=4, font=("Consolas", 10)).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(map_row, text="+", width=2, command=self._add_charmap_entry).pack(side=tk.LEFT)
-        self.charmap_list = tk.Listbox(panel, width=22, height=14, font=("Consolas", 9), exportselection=False)
-        self.charmap_list.pack(fill=tk.BOTH, expand=True, pady=(2, 2))
-        self.charmap_list.bind("<<ListboxSelect>>", self._on_charmap_select)
-        self._reg(ttk.Button(panel, command=self._remove_charmap_entry),
-                  "font.remove").pack(fill=tk.X, pady=1)
-        self._refresh_charmap_list()
+        self._build_charmap_inline(panel)
         return panel
 
     def _open_charmap_area(self):
@@ -206,6 +230,15 @@ class EXEFontEditor:
 
     def sync_cfg(self, cfg: dict):
         self.cfg = cfg
+
+    def set_font_names(self, names: list):
+        """Update the string-font assignment combo with available font names."""
+        if hasattr(self, "string_font_combo"):
+            self.string_font_combo.config(values=names)
+
+    def _on_string_font_change_internal(self, event=None):
+        if callable(self.on_string_font_change):
+            self.on_string_font_change(event)
 
     def set_enabled(self, enabled: bool):
         state = tk.NORMAL if enabled else tk.DISABLED

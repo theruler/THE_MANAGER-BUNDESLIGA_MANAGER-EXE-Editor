@@ -104,7 +104,7 @@ TEXTS_ES = {
     "settings.font_auto": "La asignación es automática.\nUna elección diferente solo se aplica a la\ncadena seleccionada actualmente.",
     "settings.font_label": "Fuente asignada:",
     "settings.hint_group": " Comportamiento del guardado ",
-    "settings.hint_text": "Las asignaciones de CharMap y fuente se guardan\ninmediatamente y de forma automática.\n\nEl EXE solo se escribe mediante\n«Archivo → Guardar como…».",
+    "settings.hint_text": "Las configuraciones y las asignaciones se guardan al instante. Las fuentes solo se escriben en el archivo EXE mediante la opción «Guardar como».",
 
     # ---- counter / status row
     "status.counter": "{shown} de {total} cadenas",

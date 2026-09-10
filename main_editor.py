@@ -210,7 +210,7 @@ class DOSTranslationEditor:
         self._profile_state = ("header.profile_none", None, "#2980B9")
         self.root.title(APP_TITLE)
         self._apply_window_icon()
-        self.root.geometry("1230x800")
+        self.root.geometry("1280x800")
         self.root.minsize(780, 600)
         self.exe_data              = bytearray()
         self.entries               = []
@@ -317,12 +317,8 @@ class DOSTranslationEditor:
         self.menubar.add_cascade(label=self.tr("menu.tools"), menu=tools_menu)
         self.tools_menu = tools_menu
         view_menu = tk.Menu(self.menubar, tearoff=0)
-        view_menu.add_command(label=self.tr("menu.view.strings"),
-                              command=lambda: self._select_tab("tab_strings"))
-        view_menu.add_command(label=self.tr("menu.view.fonts"),
-                              command=lambda: self._select_tab("tab_fonts"))
-        view_menu.add_command(label=self.tr("menu.view.settings"),
-                              command=lambda: self._select_tab("tab_settings"))
+        view_menu.add_command(label=self.tr("menu.view.strings"),command=lambda: self._select_tab("tab_strings"))
+        view_menu.add_command(label=self.tr("menu.view.fonts"),command=lambda: self._select_tab("tab_fonts"))
         view_menu.add_separator()
         lang_menu = tk.Menu(view_menu, tearoff=0)
         self.language_var = tk.StringVar(value=self.language)
@@ -340,7 +336,7 @@ class DOSTranslationEditor:
                                       (tools_menu, 5), (tools_menu, 6)]
         self.supported_menu_entries = [
             (tools_menu, 0), (tools_menu, 8), (tools_menu, 9),
-            (view_menu, 0), (view_menu, 1), (view_menu, 2),
+            (view_menu, 0), (view_menu, 1),
         ]
         self.root.config(menu=self.menubar)
 
@@ -358,7 +354,7 @@ class DOSTranslationEditor:
                                (6, "menu.tools.news_import"), (8, "menu.tools.autotranslate"),
                                (9, "menu.tools.translate_all"))),
             (self.view_menu, ((0, "menu.view.strings"), (1, "menu.view.fonts"),
-                              (2, "menu.view.settings"), (4, "menu.view.language"))),
+                              (3, "menu.view.language"))),
         ):
             for index, key in items:
                 try:
@@ -524,7 +520,11 @@ class DOSTranslationEditor:
         self.status_label   = ttk.Label(top_frame, font=("Segoe UI", 9, "italic"))
         self.status_label.pack(side=tk.RIGHT)
         self._render_header()
-        ttk.Style().configure("TNotebook.Tab", font=("Segoe UI", 10, "bold"), padding=(12, 5))
+        style = ttk.Style()
+        style.configure("TNotebook.Tab", font=("Segoe UI", 9), padding=(10, 3))
+        style.map("TNotebook.Tab",
+                  font=[("selected", ("Segoe UI", 9, "bold"))],
+                  padding=[("selected", (10, 4))])
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 8))
         self.tab_strings = ttk.Frame(self.notebook)
@@ -604,7 +604,6 @@ class DOSTranslationEditor:
         v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
-
         edit_frame = ttk.LabelFrame(self.tab_strings, padding=15)
         self._reg(edit_frame, "edit.frame")
         edit_frame.pack(fill=tk.X, padx=15, pady=(5, 12))
@@ -618,7 +617,6 @@ class DOSTranslationEditor:
         self.current_range_label.pack(side=tk.LEFT)
         self.space_stats_label = ttk.Label(info_frame, text="", font=("Segoe UI", 9, "italic"), foreground="#2980B9")
         self.space_stats_label.pack(side=tk.RIGHT)
-
         ctrl_row = ttk.Frame(edit_frame)
         ctrl_row.pack(fill=tk.X, pady=(10, 0))
         self.apply_edit_button = ttk.Button(ctrl_row, command=self.apply_edit)
@@ -628,7 +626,6 @@ class DOSTranslationEditor:
         self._reg(self.discard_edit_button, "edit.discard")
         self.discard_edit_button.pack(side=tk.RIGHT, padx=(0, 6))
         self.supported_controls.extend((self.apply_edit_button, self.discard_edit_button))
-
         self.newspaper_editor_var = tk.BooleanVar(value=True)
         self.newspaper_editor_check = ttk.Checkbutton(ctrl_row, variable=self.newspaper_editor_var,command=self.on_newspaper_editor_toggle)
         self._reg(self.newspaper_editor_check, "action.newspaper_editor")
@@ -645,7 +642,7 @@ class DOSTranslationEditor:
         self.import_strings_button = ttk.Button(ctrl_row, command=self.import_strings)
         self._reg(self.import_strings_button, "action.import")
         self.import_strings_button.pack(side=tk.LEFT, padx=(6, 0))
-        self.font_assign_button = ttk.Button(ctrl_row, command=lambda: self._select_tab("tab_settings"))
+        self.font_assign_button = ttk.Button(ctrl_row, command=self._goto_font_assign)
         self._reg(self.font_assign_button, "action.font_assign")
         self.font_assign_button.pack(side=tk.LEFT, padx=(6, 0))
         self.supported_controls.extend((
@@ -682,11 +679,9 @@ class DOSTranslationEditor:
         self.supported_controls.append(self.translate_all_button)
         self.translate_status_label = ttk.Label(translation_options_row, text="", font=("Segoe UI", 9, "italic"), foreground="#7F8C8D")
         self.translate_status_label.pack(side=tk.LEFT, padx=(4, 0))
-
         translate_header = ttk.Frame(self.translate_section)
         translate_header.pack(fill=tk.X, pady=(6, 4))
-        self._reg(ttk.Label(translate_header, font=("Segoe UI", 9, "bold")),
-                  "tr.translated").pack(side=tk.LEFT)
+        self._reg(ttk.Label(translate_header, font=("Segoe UI", 9, "bold")),"tr.translated").pack(side=tk.LEFT)
         self.apply_translation_button = ttk.Button(translate_header, command=self.apply_translation)
         self._reg(self.apply_translation_button, "tr.apply")
         self.apply_translation_button.pack(side=tk.RIGHT)
@@ -705,51 +700,13 @@ class DOSTranslationEditor:
             on_charmap_changed=self._on_charmap_changed,
             on_font_state_changed=self._on_font_state_changed,
             can_change_charmap=self._can_change_charmap,
-            on_open_charmap=lambda: self._select_tab("tab_settings"),
+            on_string_font_change=self._on_string_font_change,
             translate=self.tr,
         )
-        self.tab_settings = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_settings, text=self.tr("tab.settings"))
-        self._reg_tab(self.tab_settings, "tab.settings")
-
-        # MANA.DAT tab (embedded ManaEditorPanel)
         self.tab_mana = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_mana, text="MANA.DAT")
         self.mana_editor_panel = ManaEditorPanel(self.tab_mana)
         self.mana_editor_panel.pack(fill=tk.BOTH, expand=True)
-        settings_body = ttk.Frame(self.tab_settings, padding=(15, 12, 15, 10))
-        settings_body.pack(fill=tk.BOTH, expand=True)
-
-        charmap_group = ttk.LabelFrame(settings_body, padding=10)
-        self._reg(charmap_group, "settings.charmap_group")
-        charmap_group.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 12))
-        self.font_editor.build_charmap_panel(charmap_group)
-
-        settings_right = ttk.Frame(settings_body)
-        settings_right.pack(side=tk.LEFT, fill=tk.Y)
-        font_group = ttk.LabelFrame(settings_right, padding=10)
-        self._reg(font_group, "settings.font_group")
-        font_group.pack(fill=tk.X)
-        self._reg(ttk.Label(font_group, font=("Segoe UI", 9), justify=tk.LEFT),
-                  "settings.font_auto").pack(anchor=tk.W, pady=(0, 8))
-        self._reg(ttk.Label(font_group, font=("Segoe UI", 9, "bold")),
-                  "settings.font_label").pack(anchor=tk.W)
-        self.string_font_var = tk.StringVar(value="FLOW.FON")
-        self.string_font_combo = ttk.Combobox(
-            font_group, textvariable=self.string_font_var, state="readonly",
-            width=16, values=["FLOW.FON", "NORMAL.FON", "MICRO4.FON"],
-        )
-        self.string_font_combo.pack(anchor=tk.W, pady=(2, 0))
-        self.string_font_combo.bind("<<ComboboxSelected>>", self._on_string_font_change)
-        self.supported_controls.append(self.string_font_combo)
-
-        hint_group = ttk.LabelFrame(settings_right, padding=10)
-        self._reg(hint_group, "settings.hint_group")
-        hint_group.pack(fill=tk.X, pady=(12, 0))
-        self._reg(ttk.Label(hint_group, font=("Segoe UI", 9, "italic"),
-                            foreground="#566573", justify=tk.LEFT),
-                  "settings.hint_text").pack(anchor=tk.W)
-
         self._set_supported_state(False)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_request)
 
@@ -760,7 +717,7 @@ class DOSTranslationEditor:
             self.save_button.config(state=tk.NORMAL if self._can_save() else tk.DISABLED)
         if hasattr(self, "notebook"):
             for tab in (getattr(self, "tab_strings", None), getattr(self, "tab_fonts", None),
-                        getattr(self, "tab_settings", None), getattr(self, "tab_mana", None)):
+                        getattr(self, "tab_mana", None)):
                 if tab is not None:
                     self.notebook.tab(tab, state=state)
         self._set_menu_state(getattr(self, "supported_menu_entries", []), self.is_supported)
@@ -1475,16 +1432,25 @@ class DOSTranslationEditor:
         if changed:
             save_config(self.cfg)
 
+    def _goto_font_assign(self):
+        if self.current_index is not None:
+            entry = self.entries[self.current_index]
+            font_key = self._get_font_for_entry(entry)
+            string_combo = self.font_editor.string_font_combo
+            if font_key in string_combo["values"]:
+                self.font_editor.string_font_var.set(font_key)
+            font_combo = self.font_editor.font_combo
+            if font_key in font_combo["values"]:
+                self.font_editor.font_var.set(font_key)
+                self.font_editor._on_font_select()
+        self._select_tab("tab_fonts")
+
     def _on_string_font_change(self, event=None):
         if not self._supported_loaded() or self.current_index is None: return
         entry = self.entries[self.current_index]
-        if self._has_pending_filter_edit():
-            self.string_font_var.set(self._get_font_for_entry(entry))
-            messagebox.showwarning(self.tr("dlg.pending_text.title"),
-                                   self.tr("dlg.pending_font.msg"))
-            return
+        string_font_var = self.font_editor.string_font_var
         self.cfg = load_config()
-        self._game_cfg()["string_fonts"][entry["string_id"]] = self.string_font_var.get()
+        self._game_cfg()["string_fonts"][entry["string_id"]] = string_font_var.get()
         save_config(self.cfg)
         if hasattr(self, "font_editor"):
             self.font_editor.sync_cfg(self.cfg)
@@ -3029,8 +2995,8 @@ class DOSTranslationEditor:
             gcfg["range_font_defaults"].setdefault(str(key), value)
 
         font_names = list(EXE_FONT_PROFILES[detected]["fonts"].keys())
-        self.string_font_combo.config(values=font_names)
-        self.string_font_var.set(gcfg["range_font_defaults"].get("0", "FLOW.FON"))
+        self.font_editor.set_font_names(font_names)
+        self.font_editor.string_font_var.set(gcfg["range_font_defaults"].get("0", "FLOW.FON"))
         self.filter_combos[1].config(values=("All", *font_names))
         self.font_filter_var.set("All")
 
@@ -3049,7 +3015,6 @@ class DOSTranslationEditor:
 
         font_loaded = self.font_editor.load_from_raw(self.exe_data, detected)
 
-        # Auto-load MANA.DAT from the same directory as the EXE
         mana_panel = getattr(self, "mana_editor_panel", None)
         if mana_panel is not None:
             exe_dir = os.path.dirname(self.source_path)
@@ -3072,7 +3037,7 @@ class DOSTranslationEditor:
         self._read_points_from_exe()
         self.notebook.select(self.tab_strings)
         self._update_save_state()
-        self._set_status("header.loaded", n=len(self.entries))
+        self.status_label.config(text="")
         if not font_loaded:
             self._set_status("dlg.load.font_failed")
             return
@@ -3096,7 +3061,7 @@ class DOSTranslationEditor:
                         self.initial_unpacked_data = bytearray(self.exe_data)
                         self.last_saved_exe_data   = bytearray(self.exe_data)
                         self._migrate_legacy_font_mappings()
-                        self._set_status("header.loaded", n=len(self.entries))
+                        self.status_label.config(text="")
                     else:
                         self._set_status("dlg.load.integrity_status",
                                          error=new_validation["errors"][0])
@@ -3183,7 +3148,6 @@ class DOSTranslationEditor:
         self.refresh_table(force=True, refresh_active_fields=True)
         self.update_free_space_label()
 
-        # Save MANA.DAT alongside the EXE, but only if it was modified
         mana_panel = getattr(self, "mana_editor_panel", None)
         if mana_panel is not None and mana_panel.is_dirty:
             mana_panel.save_if_dirty()

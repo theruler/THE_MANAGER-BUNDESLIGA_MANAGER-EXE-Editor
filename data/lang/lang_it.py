@@ -104,7 +104,7 @@ TEXTS_IT = {
     "settings.font_auto": "L'assegnazione è automatica.\nUna scelta diversa si applica solo alla\nstringa attualmente selezionata.",
     "settings.font_label": "Font assegnato:",
     "settings.hint_group": " Comportamento del salvataggio ",
-    "settings.hint_text": "Le assegnazioni CharMap e font vengono salvate\nimmediatamente e automaticamente.\n\nL'EXE viene scritto solo tramite\n„File → Salva con nome…“.",
+    "settings.hint_text": "Mappatura e assegnazione sono salvate immediatamente. I FONTS scritti nell'EXE solo tramite l'opzione “Salva con nome”.",
 
     # ---- counter / status row
     "status.counter": "{shown} di {total} stringhe",

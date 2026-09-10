@@ -104,7 +104,7 @@ TEXTS_EN = {
     "settings.font_auto": "The assignment is automatic.\nA different choice applies only to the\ncurrently selected string.",
     "settings.font_label": "Assigned font:",
     "settings.hint_group": " Saving behaviour ",
-    "settings.hint_text": "CharMap and font assignments are saved\nimmediately and automatically.\n\nThe EXE itself is only written via\n„File → Save As…“.",
+    "settings.hint_text": "Mapping and Assignments are saved immediately. FONTS are only written to the EXE via 'Save As'.",
 
     # ---- counter / status row
     "status.counter": "{shown} of {total} strings",
