@@ -46,7 +46,7 @@ Always keep a backup of the original executable and test modified executables be
 ## Font Editor
 Fonts can be freely modified and remapped, the string editor will interpret and show the mapped character, while converting the hex value into the string.
 Accented letters can be modified and replaced. Width of the single char can be adjusted.
-<img width="1227" height="844" alt="immagine" src="https://github.com/user-attachments/assets/5ef7655f-6d81-47dc-adab-c9679cf56b33" />
+<img width="1280" height="851" alt="image" src="https://github.com/user-attachments/assets/12317ce8-f358-49d2-b196-69476d404c69" />
 
 ## Region Changer
 
@@ -66,14 +66,9 @@ Only Germany fetaures:
 Only England features:
 - ST, ND, RD, TH added to the date days and match minutes
 
-## Starting Year
+## Starting Year and Points per victory rule
 
-The starting year can be changed directly from the editor for all supported executable profiles.
-
-
-## Points per victory rule
-
-The points rule can be changed directly from the editor for all supported executable profiles.
+The starting year and the points rule can be changed directly from the editor for all supported executable profiles.
 
 
 ## Newspaper built-in visual editor
