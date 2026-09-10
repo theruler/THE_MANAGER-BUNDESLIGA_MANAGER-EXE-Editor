@@ -1,4 +1,4 @@
-# THE MANAGER / Bundesliga Manager Professional String-Editor
+# THE MANAGER / Bundesliga Manager Professional Editor
 
 Editor for supported THE MANAGER / Bundesliga Manager Professional DOS executables.
 By Theruler and Nobody
