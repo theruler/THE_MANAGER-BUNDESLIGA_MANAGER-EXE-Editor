@@ -68,7 +68,7 @@ Only England features:
 
 ## Starting Year and Points per victory rule
 
-The starting year and the points rule can be changed directly from the editor for all supported executable profiles.
+The starting year and the points rule can be changed directly from the top bar of the editor for all supported executable profiles.
 
 
 ## Newspaper built-in visual editor
@@ -80,7 +80,7 @@ A visual newspaper editor can be selected to better edit the lines. Tags can be 
 
 ## Executable extension option
 
-To make more room for the text strings an option to enlarge the original executables has been added for all the supported versions.
+To make more room for the strings and newspaper, an option to enlarge the original executables has been added for all the supported versions.
 
 
 ## MANA.DAT editor
