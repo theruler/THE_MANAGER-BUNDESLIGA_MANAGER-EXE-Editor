@@ -177,6 +177,7 @@ TEXTS_ES = {
     # ---- load / save
     "fd.open_exe": "Abrir ejecutable",
     "fd.save_exe": "Guardar ejecutable como",
+    "dlg.load.extended": "El perfil “{detected}” admite el diseño ampliado.\n\nAl ampliar el archivo, ganarás ~{pool_kb} KB de espacio adicional.\n\n¿Quieres ampliarlo?",
     "dlg.load.failed": "Carga fallida",
     "dlg.load.failed_msg": "El nuevo EXE no se ha cargado. El estado anterior del editor no ha cambiado.\n\n{error}",
     "dlg.load.unsupported_status": "Ejecutable no compatible. La edición y el guardado están deshabilitados.",

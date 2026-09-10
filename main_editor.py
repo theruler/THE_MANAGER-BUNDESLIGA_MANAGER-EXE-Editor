@@ -2953,12 +2953,7 @@ class DOSTranslationEditor:
                 if descriptor is not None:
                     pool_start, pool_end = descriptor["pool"]
                     pool_kb = (pool_end - pool_start) // 1024
-                    if messagebox.askyesno(
-                        "Extended Layout",
-                        f"Il profilo '{detected}' supporta l'extended layout.\n\n"
-                        f"Estendendo il file guadagni ~{pool_kb} KB di spazio aggiuntivo.\n\n"
-                        "Vuoi estendere?"
-                    ):
+                    if messagebox.askyesno("Extended Layout",self.tr("dlg.load.extended", detected=detected, pool_kb=pool_kb)):
                         unpacked_data, _ = extended_layout.convert_to_extended(unpacked_data, profile)
                         self._converted_to_extended = True
 

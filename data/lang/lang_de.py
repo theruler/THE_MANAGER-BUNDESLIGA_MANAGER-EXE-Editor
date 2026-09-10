@@ -177,6 +177,7 @@ TEXTS_DE = {
     # ---- load / save
     "fd.open_exe": "Ausführbare Datei öffnen",
     "fd.save_exe": "Ausführbare Datei speichern unter",
+    "dlg.load.extended": "Das Profil '{detected}' unterstützt das erweiterte Layout.\n\nDurch das Erweitern der Datei gewinnen Sie ~{pool_kb} KB zusätzlichen Speicherplatz.\n\nMöchten Sie die Datei erweitern?",
     "dlg.load.failed": "Laden fehlgeschlagen",
     "dlg.load.failed_msg": "Die neue EXE wurde nicht geladen. Der bisherige Editorzustand bleibt unverändert.\n\n{error}",
     "dlg.load.unsupported_status": "Nicht unterstützte EXE. Bearbeiten und Speichern sind deaktiviert.",

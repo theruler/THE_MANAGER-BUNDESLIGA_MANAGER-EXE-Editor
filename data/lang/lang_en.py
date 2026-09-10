@@ -177,6 +177,7 @@ TEXTS_EN = {
     # ---- load / save
     "fd.open_exe": "Open executable",
     "fd.save_exe": "Save executable as",
+    "dlg.load.extended": "The ‘{detected}’ profile supports the extended layout.\n\nBy expanding the file, you'll gain ~{pool_kb} KB of additional space.\n\nDo you want to expand it?",
     "dlg.load.failed": "Load Failed",
     "dlg.load.failed_msg": "The new EXE was not loaded. The previous editor state is unchanged.\n\n{error}",
     "dlg.load.unsupported_status": "Unsupported executable. Editing and saving are disabled.",

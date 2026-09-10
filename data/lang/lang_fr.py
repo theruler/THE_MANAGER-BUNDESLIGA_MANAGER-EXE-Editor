@@ -177,6 +177,7 @@ TEXTS_FR = {
     # ---- load / save
     "fd.open_exe": "Ouvrir l’exécutable",
     "fd.save_exe": "Enregistrer l’exécutable sous",
+    "dlg.load.extended": "Le profil «{detected}» prend en charge la mise en page étendue.\n\nEn étendant le fichier, vous gagnerez environ {pool_kb} Ko d'espace supplémentaire.\n\nVoulez-vous l'étendre ?",
     "dlg.load.failed": "Échec du chargement",
     "dlg.load.failed_msg": "Le nouvel EXE n’a pas été chargé. L’état précédent de l’éditeur est inchangé.\n\n{error}",
     "dlg.load.unsupported_status": "Exécutable non pris en charge. La modification et l’enregistrement sont désactivés.",

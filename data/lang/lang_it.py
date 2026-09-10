@@ -177,6 +177,7 @@ TEXTS_IT = {
     # ---- load / save
     "fd.open_exe": "Apri eseguibile",
     "fd.save_exe": "Salva eseguibile con nome",
+    "dlg.load.extended": "Il profilo '{detected}' supporta l'extended layout.\n\nEstendendo il file guadagni ~{pool_kb} KB di spazio aggiuntivo.\n\nVuoi estendere?",
     "dlg.load.failed": "Caricamento non riuscito",
     "dlg.load.failed_msg": "Il nuovo EXE non è stato caricato. Lo stato precedente dell'editor è invariato.\n\n{error}",
     "dlg.load.unsupported_status": "Eseguibile non supportato. Modifica e salvataggio sono disabilitati.",
