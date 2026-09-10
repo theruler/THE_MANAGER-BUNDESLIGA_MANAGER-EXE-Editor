@@ -8,8 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 from exe_handler import unpack_in_memory, get_mz_relocation_sites, GAME_PROFILES, EXE_FONT_PROFILES
 from charmap import CharmapEncodeError, charmap_decode, charmap_encode
 from translator import CONTROL_TOKEN_PATTERN, translate_string, TRANSLATION_ENGINES
-from utils import (load_config, save_config, get_game_config, DATA_DIR,
-                   set_translator as _set_utils_translator)
+from utils import (load_config, save_config, get_game_config, DATA_DIR, set_translator as _set_utils_translator)
 import i18n
 from font_editor import EXEFontEditor
 from font_safety import FontSafetyError, atomic_save_bytes, paths_equal, validate_all_fonts
@@ -43,12 +42,8 @@ from search_filter import (
     filter_string_ids,
 )
 
-
-APP_TITLE = (
-    "THE MANAGER / Bundesliga Manager Professional String-Editor "
-    "v2.8 — by TheRuler76 & Nobody"
-)
-
+APP_VERSION = "2.8.1"
+APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
 
