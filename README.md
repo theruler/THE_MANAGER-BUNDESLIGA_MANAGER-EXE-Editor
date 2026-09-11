@@ -28,7 +28,8 @@ Executable profiles are detected automatically. File names do not matter.
 - Newspaper built-in visual editor
 - MANA.DAT editor
 - Executable extension option
-
+- VGA/CP editor
+  
 <img width="1177" height="849" alt="immagine" src="https://github.com/user-attachments/assets/24e366be-eae2-48d2-8d3c-06d7b69e9662" />
 
 
@@ -85,6 +86,8 @@ To make more room for the strings and newspaper, an option to enlarge the origin
 
 ## MANA.DAT editor
 
+Usable as standalone or a built-in main editor TAB 
+
 LEGAUE TAB
 - Teams can be swapped by dragging the buttons to new position
 - RESET puts every stat to zero
@@ -99,6 +102,11 @@ UEFA TAB
 
 <img width="1226" height="717" alt="immagine" src="https://github.com/user-attachments/assets/fe6f69a7-fa20-4a29-8909-4c6f8b2e9a0b" />
 
+## VGA/CP editor
+
+Usable as standalone or a built-in main editor TAB, it supports all graphic formats and compression.
+
+<img width="1065" height="839" alt="immagine" src="https://github.com/user-attachments/assets/ecc3c0bb-70c7-4800-a526-480ca29ea440" />
 
 
 ## Release
