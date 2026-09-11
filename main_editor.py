@@ -14,6 +14,7 @@ from font_editor import EXEFontEditor
 from font_safety import FontSafetyError, atomic_save_bytes, paths_equal, validate_all_fonts
 import extended_layout
 from mana_editor import ManaEditorPanel
+from vga_editor import PicEditorPanel
 import newspaper_csv
 from newspaper_grammar import NewspaperGrammarError
 import newspaper_editor as _ne
@@ -42,7 +43,7 @@ from search_filter import (
     filter_string_ids,
 )
 
-APP_VERSION = "2.8.1"
+APP_VERSION = "2.8.2"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -254,8 +255,7 @@ class DOSTranslationEditor:
         self._language_codes = {code for code, _ in self._languages}
         problems = i18n.take_problems()
         if problems:
-            messagebox.showwarning(self.tr("menu.view.language"),
-                                   "\n".join(problems))
+            messagebox.showwarning(self.tr("menu.view.language"),"\n".join(problems))
 
     def tr(self, key, **fmt):
         return i18n.tr(key, **fmt)
@@ -314,6 +314,8 @@ class DOSTranslationEditor:
         view_menu = tk.Menu(self.menubar, tearoff=0)
         view_menu.add_command(label=self.tr("menu.view.strings"),command=lambda: self._select_tab("tab_strings"))
         view_menu.add_command(label=self.tr("menu.view.fonts"),command=lambda: self._select_tab("tab_fonts"))
+        view_menu.add_command(label="MANA.DAT Editor", command=lambda: self._select_tab("tab_mana"))
+        view_menu.add_command(label="VGA Editor", command=lambda: self._select_tab("tab_vga"))
         view_menu.add_separator()
         lang_menu = tk.Menu(view_menu, tearoff=0)
         self.language_var = tk.StringVar(value=self.language)
@@ -331,7 +333,7 @@ class DOSTranslationEditor:
                                       (tools_menu, 5), (tools_menu, 6)]
         self.supported_menu_entries = [
             (tools_menu, 0), (tools_menu, 8), (tools_menu, 9),
-            (view_menu, 0), (view_menu, 1),
+            (view_menu, 0), (view_menu, 1), (view_menu, 2), (view_menu, 3) 
         ]
         self.root.config(menu=self.menubar)
 
@@ -571,18 +573,11 @@ class DOSTranslationEditor:
         self._reg(self.clear_filters_button, "filter.reset")
         self.clear_filters_button.pack(side=tk.RIGHT)
         self.search_var.trace_add("write", self.on_search_change)
-        self.supported_controls.extend(
-            (self.search_entry, self.clear_filters_button, self.filter_toggle_button,
-             *self.filter_combos)
-        )
-
+        self.supported_controls.extend((self.search_entry, self.clear_filters_button, self.filter_toggle_button,*self.filter_combos))
         status_frame = ttk.Frame(self.tab_strings, padding=(15, 0, 15, 4))
         status_frame.pack(fill=tk.X)
-        self.filter_status_label = ttk.Label(
-            status_frame, text="", font=("Segoe UI", 9, "bold"), foreground="#B9770E"
-        )
+        self.filter_status_label = ttk.Label(status_frame, text="", font=("Segoe UI", 9, "bold"), foreground="#B9770E")
         self.filter_status_label.pack(side=tk.LEFT)
-
         main_frame = ttk.Frame(self.tab_strings, padding=(15, 0, 15, 8))
         main_frame.pack(fill=tk.BOTH, expand=True)
         table_container = ttk.Frame(main_frame)
@@ -648,7 +643,6 @@ class DOSTranslationEditor:
             self.import_strings_button,
             self.font_assign_button,
         ))
-
         self.translate_section = ttk.Frame(edit_frame)
         translation_options_row = ttk.Frame(self.translate_section)
         translation_options_row.pack(fill=tk.X, pady=(8, 0))
@@ -702,7 +696,12 @@ class DOSTranslationEditor:
         self.notebook.add(self.tab_mana, text="MANA.DAT")
         self.mana_editor_panel = ManaEditorPanel(self.tab_mana)
         self.mana_editor_panel.pack(fill=tk.BOTH, expand=True)
+        self.tab_vga = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_vga, text="VGA Editor")
+        self.vga_editor = PicEditorPanel(self.tab_vga, standalone=False)
+        self.vga_editor.pack(fill=tk.BOTH, expand=True)
         self._set_supported_state(False)
+        self.notebook.select(self.tab_strings)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_request)
 
     def _set_supported_state(self, supported: bool):
@@ -712,7 +711,7 @@ class DOSTranslationEditor:
             self.save_button.config(state=tk.NORMAL if self._can_save() else tk.DISABLED)
         if hasattr(self, "notebook"):
             for tab in (getattr(self, "tab_strings", None), getattr(self, "tab_fonts", None),
-                        getattr(self, "tab_mana", None)):
+                        getattr(self, "tab_mana", None), getattr(self, "tab_vga", None)):
                 if tab is not None:
                     self.notebook.tab(tab, state=state)
         self._set_menu_state(getattr(self, "supported_menu_entries", []), self.is_supported)
@@ -2962,6 +2961,15 @@ class DOSTranslationEditor:
 
         self._reset_state()
         self.source_path = os.path.abspath(filepath)
+        exe_dir = os.path.dirname(os.path.abspath(self.source_path))
+        pic_folder = os.path.join(exe_dir, "PIC")
+        if os.path.isdir(pic_folder):
+            self.vga_editor.set_pic_dir(pic_folder)
+        else:
+            self.vga_editor._pic_dir = ""
+            self.vga_editor._pic_files = []
+            self.vga_editor._file_combo.config(values=[])
+            self.vga_editor._set_status("Nessuna cartella PIC trovata in questa directory.")
         self.original_source_data = bytearray(original_data)
         self.initial_unpacked_data = bytearray(unpacked_data)
         self.last_saved_exe_data = bytearray(unpacked_data)
