@@ -29,25 +29,21 @@ Executable profiles are detected automatically. File names do not matter.
 - MANA.DAT editor
 - Executable extension option
 - VGA/CP editor
-  
+
+
+
+## String editor
+
+Strings can be modified and enlarged at will.
+
 <img width="1177" height="849" alt="immagine" src="https://github.com/user-attachments/assets/24e366be-eae2-48d2-8d3c-06d7b69e9662" />
-
-
-## Usage
-
-1. Open a supported EXE.
-2. Make the required changes.
-3. Review them with **Changes / Details**.
-4. Save the modified executable with **Save As**.
-
-Modified EXEPACK executables are saved unpacked. The editor does not contain an EXEPACK compressor.
-Always keep a backup of the original executable and test modified executables before regular use.
 
 
 ## Font Editor
 Fonts can be freely modified and remapped, the string editor will interpret and show the mapped character, while converting the hex value into the string.
 Accented letters can be modified and replaced. Width of the single char can be adjusted.
 <img width="1280" height="851" alt="image" src="https://github.com/user-attachments/assets/12317ce8-f358-49d2-b196-69476d404c69" />
+
 
 ## Region Changer
 
@@ -108,7 +104,17 @@ Usable as standalone or a built-in main editor TAB, it supports all graphic form
 
 <img width="1065" height="839" alt="immagine" src="https://github.com/user-attachments/assets/ecc3c0bb-70c7-4800-a526-480ca29ea440" />
 
+## Usage
+
+1. Open a supported EXE.
+2. Make the required changes.
+3. Review them with **Changes / Details**.
+4. Save the modified executable with **Save As**.
+
+Modified EXEPACK executables are saved unpacked. The editor does not contain an EXEPACK compressor.
+Always keep a backup of the original executable and test modified executables before regular use.
+
 
 ## Release
 
-A standalone Windows executable is included. Python is not required for normal use.
+Standalone Windows executables included. Python is not required for normal use.
