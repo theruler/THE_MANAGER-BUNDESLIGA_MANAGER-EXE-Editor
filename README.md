@@ -117,4 +117,8 @@ Always keep a backup of the original executable and test modified executables be
 
 ## Release
 
-Standalone Windows executables included. Python is not required for normal use.
+Python is not required for normal use.
+Standalone Windows executables included for:
+- Main String editor
+- MANA.DAT editor
+- Graphic (VGA/CP) editor
