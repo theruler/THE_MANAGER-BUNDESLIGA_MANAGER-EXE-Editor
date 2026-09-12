@@ -250,6 +250,11 @@ class _ImageCanvas(tk.Frame):
         self._paste_pos: tuple[int, int] = (0, 0)
         self._paste_drag_start: tuple[int, int] | None = None
         self._paste_drag_origin: tuple[int, int] = (0, 0)
+        self._paste_src: Image.Image | None = None
+        self._paste_resize_corner: str | None = None
+        self._paste_resize_anchor: tuple[int, int] = (0, 0)
+        self._paste_resize_filter: int = Image.NEAREST
+        self._paste_aspect_lock: bool = False
         self._pan_start: tuple[int, int] | None = None
         self._drawing_stroke: bool = False
         self._last_draw_pt: tuple[int, int] | None = None
@@ -367,6 +372,14 @@ class _ImageCanvas(tk.Frame):
         elif self._tool == TOOL_PICK:
             cursor = "target"
         elif self._tool == TOOL_MOVE_PASTE:
+            if event is not None:
+                corner = self._paste_corner_at(event.x, event.y)
+                if corner in ("nw", "se"):
+                    self._canvas.config(cursor="size_nw_se")
+                    return
+                if corner in ("ne", "sw"):
+                    self._canvas.config(cursor="size_ne_sw")
+                    return
             cursor = "fleur" if (event is not None and self._paste_hit(event.x, event.y)) else "crosshair"
         else:
             cursor = "crosshair"
@@ -394,13 +407,14 @@ class _ImageCanvas(tk.Frame):
             return False
         self._commit_paste()
         self._paste_buf = self._clipboard.copy()
+        self._paste_src = self._paste_buf.copy()
+        self._paste_resize_corner = None
         pw, ph = self._paste_buf.size
         if self._sel is not None:
             x0, y0, _, _ = self._normalised_sel()
         else:
             x0, y0 = 0, 0
-        iw, ih = self._img.size
-        self._paste_pos = (max(0, min(iw - pw, x0)), max(0, min(ih - ph, y0)))
+        self._paste_pos = (x0, y0)
         self._sel = (
             self._paste_pos[0], self._paste_pos[1],
             self._paste_pos[0] + pw - 1, self._paste_pos[1] + ph - 1,
@@ -421,6 +435,8 @@ class _ImageCanvas(tk.Frame):
     def delete_selection(self):
         if self._paste_buf is not None:
             self._paste_buf = None
+            self._paste_src = None
+            self._paste_resize_corner = None
             self._sel = None
             self._paste_drag_start = None
             self._tool = TOOL_SELECT
@@ -475,17 +491,40 @@ class _ImageCanvas(tk.Frame):
         if self._paste_buf is None or self._img is None:
             return
         self._notify_stroke_start()
-        self._img.paste(self._paste_buf, self._paste_pos)
+        iw, ih = self._img.size
+        px, py = self._paste_pos
+        pw, ph = self._paste_buf.size
+        src_x0 = max(0, -px)
+        src_y0 = max(0, -py)
+        src_x1 = min(pw, iw - px)
+        src_y1 = min(ph, ih - py)
+        dst_x = max(0, px)
+        dst_y = max(0, py)
+        if src_x1 > src_x0 and src_y1 > src_y0:
+            region = self._paste_buf.crop((src_x0, src_y0, src_x1, src_y1))
+            self._img.paste(region, (dst_x, dst_y))
         self._paste_buf = None
+        self._paste_src = None
+        self._paste_resize_corner = None
         self._notify_modified()
 
     def _display_image(self) -> Image.Image:
         img = self._img.copy()
         img.putpalette(_palette_to_flat_rgb(self._palette))
         if self._paste_buf is not None:
-            paste = self._paste_buf.copy()
-            paste.putpalette(_palette_to_flat_rgb(self._palette))
-            img.paste(paste, self._paste_pos)
+            iw, ih = img.size
+            px, py = self._paste_pos
+            pw, ph = self._paste_buf.size
+            src_x0 = max(0, -px)
+            src_y0 = max(0, -py)
+            src_x1 = min(pw, iw - px)
+            src_y1 = min(ph, ih - py)
+            dst_x = max(0, px)
+            dst_y = max(0, py)
+            if src_x1 > src_x0 and src_y1 > src_y0:
+                paste = self._paste_buf.crop((src_x0, src_y0, src_x1, src_y1))
+                paste.putpalette(_palette_to_flat_rgb(self._palette))
+                img.paste(paste, (dst_x, dst_y))
         return img
 
     def _redraw(self):
@@ -532,6 +571,17 @@ class _ImageCanvas(tk.Frame):
                 px0 * z, py0 * z, (px0 + pw) * z, (py0 + ph) * z,
                 outline="#FFD700", width=2, dash=(4, 2), tags="paste"
             )
+            r = self._HANDLE_R
+            for hx, hy in (
+                (px0 * z,        py0 * z),
+                ((px0 + pw) * z, py0 * z),
+                (px0 * z,        (py0 + ph) * z),
+                ((px0 + pw) * z, (py0 + ph) * z),
+            ):
+                c.create_rectangle(
+                    hx - r, hy - r, hx + r, hy + r,
+                    fill="#FFD700", outline="#000", width=1, tags="paste"
+                )
 
         c.configure(scrollregion=(0, 0, dw + 2, dh + 2))
         self._update_scrollbars(dw, dh)
@@ -571,6 +621,28 @@ class _ImageCanvas(tk.Frame):
             xscrollcommand=self._hbar.set if show_h else lambda *args: None,
             yscrollcommand=self._vbar.set if show_v else lambda *args: None,
         )
+
+    _HANDLE_R = 5
+
+    def _paste_corner_at(self, cx: int, cy: int) -> "str | None":
+        if self._paste_buf is None:
+            return None
+        z = self._zoom
+        px, py = self._paste_pos
+        pw, ph = self._paste_buf.size
+        r = self._HANDLE_R
+        sx = self._canvas.canvasx(cx)
+        sy = self._canvas.canvasy(cy)
+        corners = {
+            "nw": (px * z,        py * z),
+            "ne": ((px + pw) * z, py * z),
+            "sw": (px * z,        (py + ph) * z),
+            "se": ((px + pw) * z, (py + ph) * z),
+        }
+        for name, (hx, hy) in corners.items():
+            if abs(sx - hx) <= r and abs(sy - hy) <= r:
+                return name
+        return None
 
     def _paste_hit(self, cx: int, cy: int) -> bool:
         if self._paste_buf is None:
@@ -621,9 +693,25 @@ class _ImageCanvas(tk.Frame):
             return
 
         if self._tool == TOOL_MOVE_PASTE and self._paste_buf is not None:
+            corner = self._paste_corner_at(event.x, event.y)
+            if corner is not None and self._paste_src is not None:
+                self._paste_resize_corner = corner
+                px, py = self._paste_pos
+                pw, ph = self._paste_buf.size
+                if corner == "nw":
+                    self._paste_resize_anchor = (px + pw, py + ph)
+                elif corner == "ne":
+                    self._paste_resize_anchor = (px, py + ph)
+                elif corner == "sw":
+                    self._paste_resize_anchor = (px + pw, py)
+                else:
+                    self._paste_resize_anchor = (px, py)
+                self._paste_drag_start = None 
+                return
             if self._paste_hit(event.x, event.y):
                 pt = self._canvas_to_pixel(event.x, event.y)
                 if pt is not None:
+                    self._paste_resize_corner = None
                     self._paste_drag_start = pt
                     self._paste_drag_origin = self._paste_pos
             return
@@ -659,14 +747,40 @@ class _ImageCanvas(tk.Frame):
 
         pt = self._canvas_to_pixel(event.x, event.y)
         if self._tool == TOOL_MOVE_PASTE:
+            if self._paste_resize_corner is not None and self._paste_src is not None:
+                z = self._zoom
+                ax, ay = self._paste_resize_anchor
+                cx_raw = int(self._canvas.canvasx(event.x))
+                cy_raw = int(self._canvas.canvasy(event.y))
+                drag_x = max(0, cx_raw) // z
+                drag_y = max(0, cy_raw) // z
+                new_x0 = min(ax, drag_x)
+                new_y0 = min(ay, drag_y)
+                new_x1 = max(ax, drag_x)
+                new_y1 = max(ay, drag_y)
+                new_w = max(1, new_x1 - new_x0)
+                new_h = max(1, new_y1 - new_y0)
+                if (event.state & 0x0001) or self._paste_aspect_lock:
+                    src_w, src_h = self._paste_src.size
+                    scale = min(new_w / src_w, new_h / src_h)
+                    new_w = max(1, int(src_w * scale))
+                    new_h = max(1, int(src_h * scale))
+                flat = _palette_to_flat_rgb(self._palette)
+                pal_img = Image.new("P", (1, 1))
+                pal_img.putpalette(flat)
+                resized = self._paste_src.convert("RGB").resize((new_w, new_h), Image.NEAREST)
+                self._paste_buf = resized.quantize(palette=pal_img, dither=0)
+                self._paste_pos = (new_x0, new_y0)
+                self._sel = (new_x0, new_y0, new_x0 + new_w - 1, new_y0 + new_h - 1)
+                self._redraw()
+                return
             if self._paste_drag_start is not None and self._paste_buf is not None and pt is not None:
                 dx = pt[0] - self._paste_drag_start[0]
                 dy = pt[1] - self._paste_drag_start[1]
                 ox0, oy0 = self._paste_drag_origin
-                iw, ih = self._img.size
                 pw, ph = self._paste_buf.size
-                nx = max(0, min(iw - pw, ox0 + dx))
-                ny = max(0, min(ih - ph, oy0 + dy))
+                nx = ox0 + dx
+                ny = oy0 + dy
                 self._paste_pos = (nx, ny)
                 self._sel = (nx, ny, nx + pw - 1, ny + ph - 1)
                 self._redraw()
@@ -687,12 +801,23 @@ class _ImageCanvas(tk.Frame):
             self._sel = (x0, y0, pt[0], pt[1])
             self._redraw()
 
-    def _on_b1_release(self, _event):
+    def _on_b1_release(self, event):
         self._dragging = False
-        self._paste_drag_start = None
         self._pan_start = None
         self._drawing_stroke = False
         self._last_draw_pt = None
+        if self._paste_resize_corner is not None and self._paste_src is not None and self._paste_buf is not None:
+            pw, ph = self._paste_buf.size
+            flat = _palette_to_flat_rgb(self._palette)
+            pal_img = Image.new("P", (1, 1))
+            pal_img.putpalette(flat)
+            flt = self._paste_resize_filter
+            if flt != Image.NEAREST:
+                resized = self._paste_src.convert("RGB").resize((pw, ph), flt)
+                self._paste_buf = resized.quantize(palette=pal_img, dither=0)
+                self._redraw()
+            self._paste_resize_corner = None
+        self._paste_drag_start = None
 
     def _on_b3_press(self, event):
         pt = self._canvas_to_pixel(event.x, event.y)
@@ -821,7 +946,16 @@ class PicEditorPanel(ttk.Frame):
         f_file.pack(fill=tk.X, pady=(0, 6))
         if self._standalone:
             ttk.Button(f_file, text="📁 PIC Folder…", command=self._browse_dir).pack(fill=tk.X, pady=(0, 4))
-        ttk.Button(f_file, text="Save As…", command=self._save_as).pack(fill=tk.X, pady=2)
+        self._btn_save = ttk.Button(f_file, text="Save As…", command=self._save_as, state="disabled")
+        self._btn_save.pack(fill=tk.X, pady=2)
+        io_row = ttk.Frame(f_file)
+        io_row.pack(fill=tk.X, pady=2)
+        io_row.columnconfigure(0, weight=1)
+        io_row.columnconfigure(1, weight=1)
+        self._btn_import = ttk.Button(io_row, text="⬆ Import…", command=self._import_image, state="disabled")
+        self._btn_import.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        self._btn_export = ttk.Button(io_row, text="⬇ Export…", command=self._export_image, state="disabled")
+        self._btn_export.grid(row=0, column=1, sticky="ew", padx=(2, 0))
         self._file_var = tk.StringVar()
         self._file_combo = ttk.Combobox(f_file, textvariable=self._file_var, values=[], state="readonly", width=18)
         self._file_combo.pack(fill=tk.X, pady=(4, 4))
@@ -836,8 +970,8 @@ class PicEditorPanel(ttk.Frame):
         self._dirty_lbl = ttk.Label(info_row, text="", foreground=RED, font=("Segoe UI", 9, "bold"))
         self._dirty_lbl.pack(side=tk.RIGHT, anchor="e")
         
-        f_tools = ttk.LabelFrame(parent, text="Tools", padding=(4, 4))
-        f_tools.pack(fill=tk.X, pady=6)
+        f_tools = ttk.LabelFrame(parent, text="Tools", padding=(4, 2))
+        f_tools.pack(fill=tk.X, pady=3)
         f_tools.columnconfigure(0, weight=1)
         f_tools.columnconfigure(1, weight=1)
         ttk.Radiobutton(f_tools, text="✏ Pencil", variable=self._tool_var, value=TOOL_DRAW, command=self._on_tool_change, style="Toolbutton").grid(row=0, column=0, sticky="ew", padx=1, pady=1)
@@ -845,33 +979,65 @@ class PicEditorPanel(ttk.Frame):
         ttk.Radiobutton(f_tools, text="🎯 Pick", variable=self._tool_var, value=TOOL_PICK, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=0, sticky="ew", padx=1, pady=1)
         ttk.Radiobutton(f_tools, text="✋ Hand", variable=self._tool_var, value=TOOL_HAND, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=1, sticky="ew", padx=1, pady=1)
 
-        f_sel = ttk.LabelFrame(parent, text="Pasted selection", padding=(4, 4))
-        f_sel.pack(fill=tk.X, pady=6)
+        f_sel = ttk.LabelFrame(parent, text="Pasted selection", padding=(4, 2))
+        f_sel.pack(fill=tk.X, pady=3)
         sel_grid = ttk.Frame(f_sel)
         sel_grid.pack(fill=tk.X)
         sel_grid.columnconfigure(0, weight=1)
         sel_grid.columnconfigure(1, weight=1)
+        sel_grid.columnconfigure(2, weight=0)
         self._btn_rotate = ttk.Button(sel_grid, text="⟳ Rotate", command=self._rotate_sel, state="disabled")
         self._btn_rotate.grid(row=0, column=0, sticky="ew", padx=1, pady=1)
         self._btn_mirror = ttk.Button(sel_grid, text="⇹ Mirror", command=self._mirror_sel, state="disabled")
-        self._btn_mirror.grid(row=0, column=1, sticky="ew", padx=1, pady=1)
+        self._btn_mirror.grid(row=0, column=1, columnspan=2, sticky="ew", padx=1, pady=1)
         self._btn_delete = ttk.Button(sel_grid, text="🗑 Delete", command=self._delete_sel, state="disabled")
-        self._btn_delete.grid(row=1, column=0, columnspan=2, sticky="ew", padx=1, pady=1)
+        self._btn_delete.grid(row=1, column=0, sticky="ew", padx=1, pady=1)
+        self._aspect_lock = tk.BooleanVar(value=False)
+        lock_cell = ttk.Frame(sel_grid)
+        lock_cell.grid(row=1, column=1, columnspan=2, sticky="ew", padx=1, pady=1)
+        lock_cell.columnconfigure(0, weight=0)
+        lock_cell.columnconfigure(1, weight=1)
+        self._lock_bg_off = "#c0392b"
+        self._lock_bg_off_dim = "#7f2a1e"
+        self._btn_lock = tk.Button(lock_cell, text="🔓", width=2,
+                                    command=self._toggle_aspect_lock, state="disabled",
+                                    relief="flat", bg=self._lock_bg_off_dim, fg="white",
+                                    disabledforeground="white",
+                                    activebackground="#e74c3c", activeforeground="white",
+                                    font=("", 9), cursor="hand2", bd=0, padx=4)
+        self._btn_lock.grid(row=0, column=0, sticky="ns", ipady=1)
+        self._lbl_lock = tk.Label(lock_cell, text="Aspect Ratio", font=("", 8),
+                                   bg=self._lock_bg_off_dim, fg="#aaaaaa", cursor="arrow")
+        self._lbl_lock.bind("<Button-1>", lambda _e: self._toggle_aspect_lock() if self._btn_lock["state"] == "normal" else None)
+        self._lbl_lock.grid(row=0, column=1, sticky="nsew", ipady=1)
+        flt_row = ttk.Frame(f_sel)
+        flt_row.pack(fill=tk.X, pady=(3, 1))
+        ttk.Label(flt_row, text="Filter:", foreground=MUTED).pack(side=tk.LEFT)
+        self._resize_filter_var = tk.StringVar(value="Nearest (pixel-perfect)")
+        self._resize_filter_combo = ttk.Combobox(
+            flt_row,
+            textvariable=self._resize_filter_var,
+            values=[label for label, _ in self._RESIZE_FILTERS],
+            state="readonly",
+            width=14,
+        )
+        self._resize_filter_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
+        self._resize_filter_combo.bind("<<ComboboxSelected>>", self._on_resize_filter_changed)
 
-        f_colors = ttk.LabelFrame(parent, text="Colors", padding=(4, 4))
-        f_colors.pack(fill=tk.X, pady=6)
+        f_colors = ttk.LabelFrame(parent, text="Colors", padding=(4, 2))
+        f_colors.pack(fill=tk.X, pady=3)
         crow = ttk.Frame(f_colors)
         crow.pack(fill=tk.X, pady=(0, 4))
-        self._color_canvas = tk.Canvas(crow, width=28, height=28, highlightthickness=1, highlightbackground="#888", cursor="hand2")
+        self._color_canvas = tk.Canvas(crow, width=22, height=22, highlightthickness=1, highlightbackground="#888", cursor="hand2")
         self._color_canvas.pack(side=tk.LEFT)
         self._color_canvas.bind("<Button-1>", self._pick_color_dialog)
         self._color_hex = ttk.Label(crow, text="#FFFFFF", font=("Consolas", 9), foreground=MUTED)
         self._color_hex.pack(side=tk.LEFT, padx=6)
         self._update_color_display((255, 255, 255, 255))
-        ttk.Label(f_colors, text="Palette:", foreground=MUTED).pack(anchor="w", pady=(2, 0))
+        ttk.Label(f_colors, text="Palette:", foreground=MUTED).pack(anchor="w", pady=(1, 0))
         self._swatch_frame = tk.Frame(f_colors, bg=BG)
-        self._swatch_frame.pack(fill=tk.X, pady=(2, 4))
-        self._swatch_canvas = tk.Canvas(self._swatch_frame, width=160, height=80, highlightthickness=0, bd=0, bg=BG, yscrollincrement=1)
+        self._swatch_frame.pack(fill=tk.X, pady=(1, 2))
+        self._swatch_canvas = tk.Canvas(self._swatch_frame, width=160, height=64, highlightthickness=0, bd=0, bg=BG, yscrollincrement=1)
         self._swatch_canvas.pack(side=tk.LEFT, anchor="center")
         self._swatch_canvas.bind("<Button-1>", self._on_swatch_click)
         self._swatch_canvas.bind("<MouseWheel>", lambda e: self._swatch_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
@@ -884,8 +1050,8 @@ class PicEditorPanel(ttk.Frame):
         self._pal_combo.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(4, 0))
         self._pal_combo.bind("<<ComboboxSelected>>", self._on_palette_changed)
 
-        f_view = ttk.LabelFrame(parent, text="View", padding=(4, 4))
-        f_view.pack(fill=tk.X, pady=6)
+        f_view = ttk.LabelFrame(parent, text="View", padding=(4, 2))
+        f_view.pack(fill=tk.X, pady=3)
         zrow = ttk.Frame(f_view)
         zrow.pack(fill=tk.X)
         ttk.Label(zrow, text="Zoom:", foreground=MUTED).pack(side=tk.LEFT)
@@ -897,7 +1063,8 @@ class PicEditorPanel(ttk.Frame):
         self._grid_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(zrow, text="Show grid", variable=self._grid_var, command=self._on_grid_toggle).pack(side=tk.RIGHT, padx=(10, 0))
 
-        ttk.Button(parent, text="↩ Undo (Ctrl+Z)", command=self._undo).pack(fill=tk.X, pady=(10, 2))
+        self._btn_undo = ttk.Button(parent, text="↩ Undo (Ctrl+Z)", command=self._undo, state="disabled")
+        self._btn_undo.pack(fill=tk.X, pady=(6, 2))
 
         cmd_key = "Command" if sys.platform == "darwin" else "Control"
         self.bind_all(f"<{cmd_key}-c>",  lambda _e: self._copy())
@@ -913,11 +1080,45 @@ class PicEditorPanel(ttk.Frame):
         
         self._draw_swatch()
 
+    def _on_resize_filter_changed(self, _event=None):
+        label = self._resize_filter_var.get()
+        for lbl, flt in self._RESIZE_FILTERS:
+            if lbl == label:
+                self._canvas_frame._paste_resize_filter = flt
+                break
+
+    def _set_lock_appearance(self, locked: bool | None = None, enabled: bool = True):
+        if locked is None:
+            locked = self._aspect_lock.get()
+        if not enabled:
+            btn_kw  = dict(text="🔓", bg=self._lock_bg_off_dim,
+                           activebackground="#e74c3c", state="disabled", fg="white")
+            lbl_kw  = dict(bg=self._lock_bg_off_dim, fg="#888888", cursor="arrow")
+        elif locked:
+            btn_kw  = dict(text="🔒", bg="#27ae60",
+                           activebackground="#2ecc71", state="normal", fg="white")
+            lbl_kw  = dict(bg="#27ae60", fg="white", cursor="hand2")
+        else:
+            btn_kw  = dict(text="🔓", bg=self._lock_bg_off,
+                           activebackground="#e74c3c", state="normal", fg="white")
+            lbl_kw  = dict(bg=self._lock_bg_off, fg="white", cursor="hand2")
+        self._btn_lock.config(**btn_kw)
+        self._lbl_lock.config(**lbl_kw)
+
+    def _toggle_aspect_lock(self):
+        locked = not self._aspect_lock.get()
+        self._aspect_lock.set(locked)
+        self._canvas_frame._paste_aspect_lock = locked
+        self._set_lock_appearance(locked)
+
     def _update_selection_buttons(self, enabled: bool):
         state = "normal" if enabled else "disabled"
-        self._btn_rotate.config(state=state)
-        self._btn_mirror.config(state=state)
-        self._btn_delete.config(state=state)
+        for btn in (self._btn_rotate, self._btn_mirror, self._btn_delete):
+            btn.config(state=state)
+        if not enabled:
+            self._aspect_lock.set(False)
+            self._canvas_frame._paste_aspect_lock = False
+        self._set_lock_appearance(enabled=enabled)
     
     def _escape_action(self):
         if self._canvas_frame._paste_buf is not None:
@@ -971,6 +1172,7 @@ class PicEditorPanel(ttk.Frame):
         self._info_lbl.config(
             text=f"{w}×{h}  ({os.path.getsize(fpath):,} B)")
         self._set_dirty(False)
+        self._enable_file_buttons(True)
         self._set_status(f"Loaded: {fpath}  [displayed palette: {self._active_palette_name}]")
 
     def _on_file_selected(self, _event=None):
@@ -1030,6 +1232,200 @@ class PicEditorPanel(ttk.Frame):
         except Exception as exc:
             messagebox.showerror("Unexpected Error", str(exc))
             self._set_status("Save failed.")
+
+    def _enable_file_buttons(self, enabled: bool):
+        state = "normal" if enabled else "disabled"
+        self._btn_save.config(state=state)
+        self._btn_import.config(state=state)
+        self._btn_export.config(state=state)
+        self._btn_undo.config(state=state)
+
+    _RESIZE_FILTERS = [
+        ("Nearest (pixel-perfect)",  Image.NEAREST),
+        ("Box (average)",            Image.BOX),
+        ("Bilinear",                 Image.BILINEAR),
+        ("Hamming",                  Image.HAMMING),
+        ("Bicubic",                  Image.BICUBIC),
+        ("Lanczos (best quality)",   Image.LANCZOS),
+    ]
+
+    _PREVIEW_W = 200
+    _PREVIEW_H = 160
+
+    def _ask_resize_filter(
+        self,
+        src_rgb: "Image.Image",
+        target_size: "tuple[int,int]",
+    ) -> "Image.Resampling | None":
+        result: list = [None]
+        tw, th = target_size
+        flat = _palette_to_flat_rgb(self._active_palette)
+        pal_img = Image.new("P", (1, 1))
+        pal_img.putpalette(flat)
+        pw, ph = self._PREVIEW_W, self._PREVIEW_H
+        scale = min(pw / tw, ph / th)
+        prev_w = max(1, int(tw * scale))
+        prev_h = max(1, int(th * scale))
+
+        def make_preview(flt):
+            resized = src_rgb.resize((tw, th), flt)
+            q = resized.quantize(palette=pal_img, dither=0)
+            rgb = q.convert("RGB")
+            thumb = rgb.resize((prev_w, prev_h), Image.NEAREST)
+            canvas = Image.new("RGB", (pw, ph), (30, 30, 30))
+            ox = (pw - prev_w) // 2
+            oy = (ph - prev_h) // 2
+            canvas.paste(thumb, (ox, oy))
+            return ImageTk.PhotoImage(canvas)
+
+        previews = {label: make_preview(flt) for label, flt in self._RESIZE_FILTERS}
+        dlg = tk.Toplevel(self)
+        dlg.title("Resize filter")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+        dlg.transient(self)
+        body = ttk.Frame(dlg, padding=10)
+        body.pack(fill=tk.BOTH)
+        left = ttk.Frame(body)
+        left.pack(side=tk.LEFT, anchor="n", padx=(0, 12))
+        ttk.Label(left, text="Algorithm:", font=("", 9, "bold")).pack(anchor="w", pady=(0, 6))
+        current_label = self._resize_filter_var.get()
+        filter_var = tk.StringVar(value=current_label if current_label else self._RESIZE_FILTERS[0][0])
+        right = ttk.LabelFrame(body, text=f"Preview  ({tw}×{th} → quantised)", padding=4)
+        right.pack(side=tk.LEFT, anchor="n")
+        preview_label = ttk.Label(right)
+        preview_label.pack()
+        size_lbl = ttk.Label(right, text="", foreground="#888888")
+        size_lbl.pack()
+
+        def update_preview(*_):
+            lbl = filter_var.get()
+            preview_label.configure(image=previews[lbl])
+            preview_label.image = previews[lbl]
+
+        for label, _ in self._RESIZE_FILTERS:
+            ttk.Radiobutton(
+                left, text=label, variable=filter_var, value=label,
+                command=update_preview,
+            ).pack(anchor="w", pady=2)
+        update_preview()
+        btn_row = ttk.Frame(dlg, padding=(10, 4, 10, 10))
+        btn_row.pack(fill=tk.X)
+
+        def on_ok():
+            chosen_label = filter_var.get()
+            for label, flt in self._RESIZE_FILTERS:
+                if label == chosen_label:
+                    result[0] = flt
+                    break
+            self._resize_filter_var.set(chosen_label)
+            self._on_resize_filter_changed()
+            dlg.destroy()
+
+        def on_cancel():
+            dlg.destroy()
+        ttk.Button(btn_row, text="OK",     command=on_ok).pack(side=tk.RIGHT, padx=(4, 0))
+        ttk.Button(btn_row, text="Cancel", command=on_cancel).pack(side=tk.RIGHT)
+        dlg.bind("<Return>", lambda _e: on_ok())
+        dlg.bind("<Escape>", lambda _e: on_cancel())
+        self.update_idletasks()
+        dlg.update_idletasks()
+        px = self.winfo_rootx() + self.winfo_width()  // 2
+        py = self.winfo_rooty() + self.winfo_height() // 2
+        dlg.geometry(f"+{px - dlg.winfo_width() // 2}+{py - dlg.winfo_height() // 2}")
+        self.wait_window(dlg)
+        return result[0]
+
+    def _import_image(self):
+        if self._canvas_frame._img is None:
+            return
+        path = filedialog.askopenfilename(
+            title="Import Image…",
+            filetypes=[
+                ("Image files", "*.png *.PNG *.bmp *.BMP *.jpg *.JPG *.jpeg *.JPEG"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            src = Image.open(path).convert("RGB")
+        except Exception as exc:
+            messagebox.showerror("Import Error", f"Cannot open image:\n{exc}")
+            return
+
+        iw, ih = self._canvas_frame._img.size
+        sw, sh = src.size
+
+        if sw > iw or sh > ih:
+            answer = messagebox.askyesnocancel(
+                "Image too large",
+                f"The imported image ({sw}×{sh}) is larger than the canvas ({iw}×{ih}).\n\n"
+                "• Yes   – resize to fit (aspect ratio preserved)\n"
+                "• No    – keep original size (drag to position, cropped on commit)\n"
+                "• Cancel – abort",
+            )
+            if answer is None:
+                return
+            if answer:
+                scale = min(iw / sw, ih / sh)
+                new_w = max(1, int(sw * scale))
+                new_h = max(1, int(sh * scale))
+                flt = self._ask_resize_filter(src, (new_w, new_h))
+                if flt is None:
+                    return
+                src = src.resize((new_w, new_h), flt)
+        flat = _palette_to_flat_rgb(self._active_palette)
+        pal_img = Image.new("P", (1, 1))
+        pal_img.putpalette(flat)
+        quantised = src.quantize(palette=pal_img, dither=0)
+        self._canvas_frame._clipboard = quantised
+        self._canvas_frame._commit_paste()
+        self._canvas_frame._paste_buf = quantised.copy()
+        self._canvas_frame._paste_src = src 
+        self._canvas_frame._paste_resize_corner = None
+        self._canvas_frame._paste_pos = (0, 0)
+        pw, ph = quantised.size
+        self._canvas_frame._sel = (0, 0, pw - 1, ph - 1)
+        self._canvas_frame._tool = TOOL_MOVE_PASTE
+        self._canvas_frame._update_cursor()
+        self._canvas_frame._redraw()
+        self._update_selection_buttons(True)
+        self._set_status(
+            f"Imported: {os.path.basename(path)} ({quantised.width}×{quantised.height})"
+            " — Paste active — drag to move  │  drag corner handle to resize (Shift or 🔒 = lock A/R)  │  Enter = commit  │  ESC = cancel"
+        )
+
+    def _export_image(self):
+        img = self._canvas_frame.get_image()
+        if img is None:
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export Image As…",
+            defaultextension=".png",
+            filetypes=[
+                ("PNG",  "*.png"),
+                ("BMP",  "*.bmp"),
+                ("JPEG", "*.jpg"),
+                ("All files", "*.*"),
+            ],
+            initialdir=self._pic_dir or ".",
+        )
+        if not path:
+            return
+        try:
+            export = img.copy()
+            export.putpalette(_palette_to_flat_rgb(self._active_palette))
+            rgb = export.convert("RGB")
+            ext = os.path.splitext(path)[1].lower()
+            if ext in (".jpg", ".jpeg"):
+                rgb.save(path, "JPEG", quality=95)
+            else:
+                rgb.save(path)
+            self._set_status(f"Exported: {path}")
+        except Exception as exc:
+            messagebox.showerror("Export Error", f"Cannot save image:\n{exc}")
+            self._set_status("Export failed.")
 
     def _on_palette_changed(self, _event=None):
         name = self._pal_var.get()
@@ -1151,7 +1547,7 @@ class PicEditorPanel(ttk.Frame):
     def _paste(self):
         if self._canvas_frame.paste_selection():
             self._update_selection_buttons(True)
-            self._set_status("Pasted - drag to move, Enter to apply, ESC to cancel.")
+            self._set_status("Paste active — drag to move  │  drag corner handle to resize (Shift or 🔒 = lock A/R)  │  Enter = commit  │  ESC = cancel")
 
     def _apply_paste(self):
         if self._canvas_frame._tool == TOOL_MOVE_PASTE:
@@ -1160,22 +1556,16 @@ class PicEditorPanel(ttk.Frame):
             self._set_status("Paste applied.")
 
     def _rotate_sel(self):
-        if self._canvas_frame._paste_buf is None:
-            self._set_status("Nothing to rotate — copy a selection first (Ctrl+C).")
-            return
         self._canvas_frame.rotate_selection()
         self._set_status("Selection rotated.")
 
     def _mirror_sel(self):
-        if self._canvas_frame._paste_buf is None:
-            self._set_status("Nothing to mirror — copy a selection first (Ctrl+C).")
-            return
         self._canvas_frame.mirror_selection()
         self._set_status("Selection mirrored.")
 
     def _delete_sel(self):
-        self._update_selection_buttons(False)
         self._canvas_frame.delete_selection()
+        self._update_selection_buttons(False)
         self._set_status("Selection deleted.")
 
     def _push_undo(self, img: Image.Image | None):
