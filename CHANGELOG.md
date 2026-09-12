@@ -17,7 +17,7 @@ by TheRuler & Nobody
 - Live interface language switching.
 - Standalone Windows release.
 
-### Improved
+### Improved by Nobody
 
 - Automatic executable profile detection.
 - Safer string, pointer and font validation.
@@ -28,7 +28,7 @@ by TheRuler & Nobody
 - Improved protection against invalid or partial edits.
 - Improved handling of unsaved changes.
 
-### Fixed
+### Fixed by Nobody
 
 - Multiple string repacking and pointer handling issues.
 - Translation and whitespace handling issues.
