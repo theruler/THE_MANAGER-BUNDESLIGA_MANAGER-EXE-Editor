@@ -1,6 +1,6 @@
 # THE MANAGER / Bundesliga Manager Professional String-Editor
 
-## Changelog by Nobody
+## Changelog v1.0 -> 2.0 by Nobody
 
 ### Added
 
