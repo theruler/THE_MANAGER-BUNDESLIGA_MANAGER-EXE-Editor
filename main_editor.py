@@ -23,7 +23,10 @@ from string_exchange import (
     StringExchangeError,
     build_export_document,
     export_json_bytes,
+    export_csv_bytes,
+    parse_csv_document,
     preflight_import_json,
+    preflight_import_csv,
     raw_to_exchange_text,
     stage_import_transaction,
 )
@@ -2115,20 +2118,29 @@ class DOSTranslationEditor:
         if not self._can_exchange_strings():
             messagebox.showwarning(self.tr("dlg.export.blocked"), self._save_block_reason())
             return False
+
+        filepath = filedialog.asksaveasfilename(
+            title=self.tr("fd.export"),
+            initialfile="translations.strings.csv",
+            defaultextension=".strings.csv",
+            filetypes=[
+                ("String Exchange CSV", "*.strings.csv"),
+                ("String Exchange JSON", "*.strings.json"),
+            ],
+        )
+        if not filepath:
+            return False
+
+        use_csv = filepath.lower().endswith(".strings.csv")
         try:
-            payload = export_json_bytes(**self._string_exchange_arguments())
+            if use_csv:
+                payload = export_csv_bytes(**self._string_exchange_arguments())
+            else:
+                payload = export_json_bytes(**self._string_exchange_arguments())
         except (StringExchangeError, KeyError, ValueError) as exc:
             messagebox.showerror(self.tr("dlg.export.blocked"), str(exc))
             return False
 
-        filepath = filedialog.asksaveasfilename(
-            title=self.tr("fd.export"),
-            initialfile="translations.strings.json",
-            defaultextension=".strings.json",
-            filetypes=[("String Exchange JSON", "*.strings.json")],
-        )
-        if not filepath:
-            return False
         try:
             atomic_save_bytes(filepath, payload)
         except OSError as exc:
@@ -2147,16 +2159,27 @@ class DOSTranslationEditor:
             return False
         filepath = filedialog.askopenfilename(
             title=self.tr("fd.import"),
-            filetypes=[("String Exchange JSON", "*.strings.json")],
+            filetypes=[
+                ("String Exchange", "*.strings.csv *.strings.json"),
+                ("String Exchange CSV", "*.strings.csv"),
+                ("String Exchange JSON", "*.strings.json"),
+            ],
         )
         if not filepath:
             return False
+
+        use_csv = filepath.lower().endswith(".strings.csv")
         try:
             with open(filepath, "rb") as handle:
                 raw_document = handle.read()
-            preflight = preflight_import_json(
-                raw_document, **self._string_exchange_arguments()
-            )
+            if use_csv:
+                preflight = preflight_import_csv(
+                    raw_document, **self._string_exchange_arguments()
+                )
+            else:
+                preflight = preflight_import_json(
+                    raw_document, **self._string_exchange_arguments()
+                )
         except (OSError, StringExchangeError, KeyError, ValueError) as exc:
             messagebox.showerror(self.tr("dlg.import.blocked"),
                                  self.tr("dlg.import.nochange", error=exc))
@@ -2177,9 +2200,14 @@ class DOSTranslationEditor:
             return False
 
         try:
-            preflight = preflight_import_json(
-                raw_document, **self._string_exchange_arguments()
-            )
+            if use_csv:
+                preflight = preflight_import_csv(
+                    raw_document, **self._string_exchange_arguments()
+                )
+            else:
+                preflight = preflight_import_json(
+                    raw_document, **self._string_exchange_arguments()
+                )
             work_data, work_entries, validation, _font_result = stage_import_transaction(
                 self.exe_data,
                 self.entries,
