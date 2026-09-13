@@ -15,7 +15,7 @@ Executable profiles are detected automatically. File names do not matter.
 
 - Edit game strings
 - Edit embedded fonts
-- JSON string export / import
+- CSV/JSON string export / import
 - Translation support
 - Changes / Preview before saving
 - Starting Year editor
