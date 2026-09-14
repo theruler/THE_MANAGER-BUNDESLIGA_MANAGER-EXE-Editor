@@ -604,7 +604,7 @@ class DOSTranslationEditor:
         self.edit_text.bind("<KeyRelease>", self.on_text_modified)
         self.edit_text.bind("<Return>",         lambda e: [self.apply_edit(), "break"][1])
         self.edit_text.bind("<Control-Return>",  lambda e: [self.apply_edit(), "break"][1])
-        info_frame = ttk.Frame(edit_frame)
+        self.info_frame = info_frame = ttk.Frame(edit_frame)
         info_frame.pack(fill=tk.X)
         self.current_range_label = ttk.Label(info_frame, text="", font=("Segoe UI", 9, "bold"), foreground="#27AE60")
         self.current_range_label.pack(side=tk.LEFT)
@@ -682,7 +682,11 @@ class DOSTranslationEditor:
         self.translate_text.bind("<KeyRelease>",        self.on_translate_text_modified)
         self.translate_text.bind("<Return>",            lambda e: [self.apply_translation(), "break"][1])
         self.translate_text.bind("<Control-Return>",    lambda e: [self.apply_translation(), "break"][1])
-        self.newspaper_panel = _ne.NewspaperEditorPanel(edit_frame, self)
+        self.newspaper_panel = _ne.NewspaperEditorPanel(
+            edit_frame, self,
+            on_show=self._hide_edit_text,
+            on_hide=self._show_edit_text,
+        )
         self.tab_fonts = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_fonts, text=self.tr("tab.fonts"))
         self._reg_tab(self.tab_fonts, "tab.fonts")
@@ -1164,6 +1168,20 @@ class DOSTranslationEditor:
         widget.tag_configure("space_bg", background="#B3E5FC", foreground="#0288D1")
         return widget
 
+    def _hide_edit_text(self):
+        """Remove the edit_text container from the layout (newspaper mode active)."""
+        container = getattr(self.edit_text, "master", None)
+        if container is not None and container.winfo_manager():
+            container.pack_forget()
+
+    def _show_edit_text(self):
+        """Restore the edit_text container to the layout (newspaper mode off)."""
+        container = getattr(self.edit_text, "master", None)
+        if container is not None and not container.winfo_manager():
+            # Re-pack before info_frame and ctrl_row (pack order matters).
+            # The container was originally the first child of edit_frame.
+            container.pack(fill=tk.X, expand=True, pady=(0, 8), before=self.info_frame)
+
     def _game_cfg(self) -> dict:
         return get_game_config(self.cfg, self.profile_name)
 
@@ -1504,11 +1522,11 @@ class DOSTranslationEditor:
         if not enabled:
             panel = getattr(self, "newspaper_panel", None)
             if panel is not None:
+                # hide() triggers on_hide → _show_edit_text automatically.
                 panel.hide()
 
             entry = self.entries[self.current_index]
             self.edit_text.config(state=tk.NORMAL)
-            self.edit_text.pack(fill=tk.BOTH, expand=True)
             self.edit_text.delete("1.0", tk.END)
             self.edit_text.insert("1.0", self._decode_entry_text(entry))
             self.highlight_spaces()
@@ -1817,13 +1835,16 @@ class DOSTranslationEditor:
         is_news = self._is_newspaper_entry(entry)
         if getattr(self, "newspaper_editor_var", None) and self.newspaper_editor_var.get() and is_news:
             if hasattr(self, "newspaper_panel"):
-                self.edit_text.pack_forget()
-                self.newspaper_panel.pack(fill=tk.BOTH, expand=True)
+                # on_show callback inside show() will hide edit_text;
+                # show() itself packs the panel at the bottom.
                 self.newspaper_panel.show(entry, decode_fn=self._decode_entry_text)
         else:
-            if hasattr(self, "newspaper_panel"):
-                self.newspaper_panel.pack_forget()
-            self.edit_text.pack(fill=tk.BOTH, expand=True)
+            if hasattr(self, "newspaper_panel") and self.newspaper_panel.winfo_ismapped():
+                # on_hide callback inside hide() restores edit_text.
+                self.newspaper_panel.hide()
+            else:
+                # Panel was already hidden; make sure edit_text container is visible.
+                self._show_edit_text()
             self.edit_text.config(state=tk.NORMAL, bg="#FFFFFF")
             self.edit_text.delete("1.0", tk.END)
             self.edit_text.insert("1.0", original_text)
