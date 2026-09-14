@@ -1627,10 +1627,12 @@ class DOSTranslationEditor:
         self.entry_index_by_id = mapping
 
     @staticmethod
-    def _entry_filter_kind(entry):
+    def _entry_filter_kind(entry, newspaper_ids=frozenset()):
         if entry.get("fixed"):
             return "fixed"
         if entry.get("ptr_addrs"):
+            if entry.get("string_id") in newspaper_ids:
+                return "newspaper"
             return "normal"
         if entry.get("code_ptr_addrs"):
             return "code-only"
@@ -1722,6 +1724,15 @@ class DOSTranslationEditor:
         preview_rows = preview.get("strings_by_id", {})
         game_charmaps = self._game_cfg().get("charmaps", {})
         rows = []
+        newspaper_ids: set[str] = set()
+        try:
+            if newspaper_csv.is_supported(self.profile_name):
+                newspaper_ids = {
+                    e["string_id"]
+                    for e in newspaper_csv.collect(self.profile_name, self.entries)
+                }
+        except Exception:
+            pass
         for entry in self.entries:
             string_id = entry["string_id"]
             baseline = self.baseline_filter_data[string_id]
@@ -1738,7 +1749,7 @@ class DOSTranslationEditor:
             preview_status = preview_rows.get(string_id, {}).get("status")
             rows.append({
                 "string_id": string_id,
-                "kind": self._entry_filter_kind(entry),
+                "kind": self._entry_filter_kind(entry, newspaper_ids),
                 "font": font,
                 "current_text": current_text,
                 "baseline_text": baseline["text"],
@@ -2122,16 +2133,16 @@ class DOSTranslationEditor:
         filepath = filedialog.asksaveasfilename(
             title=self.tr("fd.export"),
             initialfile="translations.strings.csv",
-            defaultextension=".strings.csv",
+            defaultextension=".csv",
             filetypes=[
-                ("String Exchange CSV", "*.strings.csv"),
-                ("String Exchange JSON", "*.strings.json"),
+                ("String Exchange CSV", "*.csv"),
+                ("String Exchange JSON", "*.json"),
             ],
         )
         if not filepath:
             return False
 
-        use_csv = filepath.lower().endswith(".strings.csv")
+        use_csv = filepath.lower().endswith(".csv")
         try:
             if use_csv:
                 payload = export_csv_bytes(**self._string_exchange_arguments())

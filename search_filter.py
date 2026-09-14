@@ -1,16 +1,13 @@
-"""Pure, immutable search/filter records for the string-list GUI."""
-
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping
 
 
 class SearchFilterError(ValueError):
-    """Raised when filter metadata or a filter value is inconsistent."""
+    pass
 
 
-KIND_FILTERS = ("All", "Normal", "Fixed", "Code-only", "Suffix-Shared")
+KIND_FILTERS = ("All", "Normal", "Newspaper", "Fixed", "Code-only", "Suffix-Shared")
 CHANGE_FILTERS = ("All", "Changed", "Unchanged")
 STATUS_FILTERS = (
     "All",
@@ -26,8 +23,6 @@ ROW_STATUSES = frozenset(("PASS", "FAIL", "PENDING", "READ-ONLY", "UNCHANGED"))
 
 @dataclass(frozen=True, slots=True)
 class FilterRecord:
-    """One immutable logical string row; never owns editor/live objects."""
-
     source_index: int
     string_id: str
     kind: str
@@ -64,7 +59,6 @@ def _row_status(
 
 
 def build_filter_records(rows: Iterable[Mapping]) -> tuple[FilterRecord, ...]:
-    """Validate detached row metadata and return records in source order."""
     records = []
     seen_ids = set()
     for source_index, row in enumerate(rows):
@@ -84,7 +78,7 @@ def build_filter_records(rows: Iterable[Mapping]) -> tuple[FilterRecord, ...]:
 
         if not isinstance(string_id, str) or not string_id or string_id in seen_ids:
             raise SearchFilterError(f"Missing or duplicate string_id at row {source_index}")
-        if kind not in {"normal", "fixed", "code-only"}:
+        if kind not in {"normal", "newspaper", "fixed", "code-only"}:
             raise SearchFilterError(f"Invalid string kind for {string_id}: {kind!r}")
         if not isinstance(font, str) or not font:
             raise SearchFilterError(f"Invalid effective font for {string_id}")
@@ -130,7 +124,6 @@ def filter_string_ids(
     change_filter: str = "All",
     status_filter: str = "All",
 ) -> tuple[str, ...]:
-    """Return matching IDs in original order without changing any input."""
     if not isinstance(query, str):
         raise SearchFilterError("Search query must be text")
     if kind_filter not in KIND_FILTERS:
@@ -148,6 +141,8 @@ def filter_string_ids(
         if folded_query and folded_query not in record.search_blob:
             continue
         if kind_filter == "Normal" and (record.kind != "normal" or record.suffix_shared):
+            continue
+        if kind_filter == "Newspaper" and record.kind != "newspaper":
             continue
         if kind_filter == "Fixed" and record.kind != "fixed":
             continue
