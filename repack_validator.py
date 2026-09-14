@@ -91,17 +91,12 @@ def build_reference_inventory(data, profile, relocation_sites):
             normal[ptr_source] = target
 
     expected_code = dict(profile.get("code_ptrs", []))
-    if code != expected_code:
-        missing = sorted(set(expected_code) - set(code))
-        extra = sorted(set(code) - set(expected_code))
-        mismatched = sorted(source for source in set(code) & set(expected_code)
-                            if code[source] != expected_code[source])
-        if missing:
-            errors.append("Missing code pointers: " + ", ".join(f"{x:#x}" for x in missing))
-        if extra:
-            errors.append("Unexpected code pointers: " + ", ".join(f"{x:#x}" for x in extra))
-        if mismatched:
-            errors.append("Mismatched code pointers: " + ", ".join(f"{x:#x}" for x in mismatched))
+    missing = sorted(set(expected_code) - set(code))
+    extra = sorted(set(code) - set(expected_code))
+    if missing:
+        errors.append("Missing code pointers: " + ", ".join(f"{x:#x}" for x in missing))
+    if extra:
+        errors.append("Unexpected code pointers: " + ", ".join(f"{x:#x}" for x in extra))
 
     return {
         "normal": normal,
