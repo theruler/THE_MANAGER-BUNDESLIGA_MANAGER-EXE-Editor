@@ -730,11 +730,8 @@ class NewspaperEditorPanel(ttk.Frame):
         self._decode_fn: "Callable[[str], str]" = lambda t: t
         self._encode_fn: "Callable[[str], str]" = lambda t: t
         self._dirty_hint = False
-        # Callbacks invoked when the panel becomes visible / hidden so the
-        # host editor can remove / restore the plain edit_text widget.
         self._on_show_cb: "Callable | None" = on_show
         self._on_hide_cb: "Callable | None" = on_hide
-
         self._build_shell()
 
     def _build_shell(self):
@@ -851,11 +848,9 @@ class NewspaperEditorPanel(ttk.Frame):
         lbl._pdb = pdb 
 
     def _on_inner_cfg(self, _e=None):
-        # Defer so all child widgets complete their geometry pass first.
         self.after_idle(self._recalc_canvas_height)
 
     def _recalc_canvas_height(self):
-        """Resize the canvas to exactly fit its content frame (no scroll needed)."""
         self._inner.update_idletasks()
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
         h = self._inner.winfo_reqheight()
@@ -1031,15 +1026,11 @@ class NewspaperEditorPanel(ttk.Frame):
 
         self._build_layout(translate_enabled, translate_fn)
         self._dirty_hint = False
-
-        # Notify host to remove edit_text before we pack ourselves.
         if self._on_show_cb is not None:
             try:
                 self._on_show_cb()
             except Exception:
                 pass
-
-        # Anchor at the bottom of the parent container.
         self.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 4))
 
     def hide(self):
@@ -1048,8 +1039,6 @@ class NewspaperEditorPanel(ttk.Frame):
         self._entry = None
         self._comps = []
         self._dirty_hint = False
-
-        # Notify host to restore edit_text.
         if self._on_hide_cb is not None:
             try:
                 self._on_hide_cb()
@@ -1095,8 +1084,6 @@ class NewspaperEditorPanel(ttk.Frame):
                 sel_name = item[0]["selector"]
                 label, (bg, fg) = sel_meta.get(sel_name, (sel_name, _SEL_COLOUR))
                 self._add_sel_row(item, label, bg, fg, translate_enabled, translate_fn, sel_meta)
-
-        # Recalculate canvas height after all rows have been packed.
         self.after_idle(self._recalc_canvas_height)
 
     def _add_root_row(self, comp: dict,
