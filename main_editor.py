@@ -46,7 +46,7 @@ from search_filter import (
     filter_string_ids,
 )
 
-APP_VERSION = "2.8.2"
+APP_VERSION = "2.8.5"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
