@@ -304,11 +304,14 @@ class DOSTranslationEditor:
         tools_menu = tk.Menu(self.menubar, tearoff=0)
         tools_menu.add_command(label=self.tr("menu.tools.details"), command=self.show_changes_preview)
         tools_menu.add_separator()
-        tools_menu.add_command(label=self.tr("menu.tools.export"), command=self.export_strings)
-        tools_menu.add_command(label=self.tr("menu.tools.import"), command=self.import_strings)
+        tools_menu.add_command(label=self.tr("menu.tools.export_csv"), command=self.export_normal_csv)
+        tools_menu.add_command(label=self.tr("menu.tools.import_csv"), command=self.import_normal_csv)
         tools_menu.add_separator()
-        tools_menu.add_command(label=self.tr("menu.tools.news_export"),command=self.export_newspaper_csv)
-        tools_menu.add_command(label=self.tr("menu.tools.news_import"),command=self.import_newspaper_csv)
+        tools_menu.add_command(label=self.tr("menu.tools.export_news"), command=self.export_newspaper_csv)
+        tools_menu.add_command(label=self.tr("menu.tools.import_news"), command=self.import_newspaper_csv)
+        tools_menu.add_separator()
+        tools_menu.add_command(label=self.tr("menu.tools.export_json"), command=self.export_all_json)
+        tools_menu.add_command(label=self.tr("menu.tools.import_json"), command=self.import_all_json)
         tools_menu.add_separator()
         tools_menu.add_checkbutton(label=self.tr("menu.tools.autotranslate"),variable=self.translate_enabled_var,command=self.on_translate_toggle,)
         tools_menu.add_command(label=self.tr("menu.tools.translate_all"), command=self.translate_all)
@@ -332,13 +335,21 @@ class DOSTranslationEditor:
         self.view_menu = view_menu
         self.language_menu = lang_menu
         self.save_menu_entries = [(file_menu, 1)]
-        self.exchange_menu_entries = [(tools_menu, 2), (tools_menu, 3),
-                                      (tools_menu, 5), (tools_menu, 6)]
+        self.exchange_menu_entries = [
+            (tools_menu, 2), (tools_menu, 3), # export/import CSV
+            (tools_menu, 5), (tools_menu, 6), # export/import News
+            (tools_menu, 8), (tools_menu, 9)  # export/import JSON
+        ]
         self.supported_menu_entries = [
-            (tools_menu, 0), (tools_menu, 8), (tools_menu, 9),
+            (tools_menu, 0), (tools_menu, 11), (tools_menu, 12),
             (view_menu, 0), (view_menu, 1), (view_menu, 2), (view_menu, 3) 
         ]
         self.root.config(menu=self.menubar)
+        for menu, index in self.save_menu_entries + self.exchange_menu_entries:
+            try:
+                menu.entryconfig(index, state="disabled")
+            except tk.TclError:
+                pass
 
     def _retranslate_menu(self):
         for index, key in ((0, "menu.file"), (1, "menu.tools"), (2, "menu.view")):
@@ -346,15 +357,29 @@ class DOSTranslationEditor:
                 self.menubar.entryconfig(index, label=self.tr(key))
             except tk.TclError:
                 pass
+                
         for menu, items in (
-            (self.file_menu, ((0, "menu.file.open"), (1, "menu.file.save_as"),
-                              (3, "menu.file.quit"))),
-            (self.tools_menu, ((0, "menu.tools.details"), (2, "menu.tools.export"),
-                               (3, "menu.tools.import"), (5, "menu.tools.news_export"),
-                               (6, "menu.tools.news_import"), (8, "menu.tools.autotranslate"),
-                               (9, "menu.tools.translate_all"))),
-            (self.view_menu, ((0, "menu.view.strings"), (1, "menu.view.fonts"),
-                              (3, "menu.view.language"))),
+            (self.file_menu, (
+                (0, "menu.file.open"), 
+                (1, "menu.file.save_as"),
+                (3, "menu.file.quit")
+            )),
+            (self.tools_menu, (
+                (0, "menu.tools.details"),
+                (2, "menu.tools.export_csv"),
+                (3, "menu.tools.import_csv"),
+                (5, "menu.tools.export_news"),
+                (6, "menu.tools.import_news"),
+                (8, "menu.tools.export_json"),
+                (9, "menu.tools.import_json"),
+                (11, "menu.tools.autotranslate"),
+                (12, "menu.tools.translate_all")
+            )),
+            (self.view_menu, (
+                (0, "menu.view.strings"), 
+                (1, "menu.view.fonts"),
+                (5, "menu.view.language")
+            )),
         ):
             for index, key in items:
                 try:
@@ -618,7 +643,7 @@ class DOSTranslationEditor:
         self.discard_edit_button = ttk.Button(ctrl_row, command=self.discard_edit)
         self._reg(self.discard_edit_button, "edit.discard")
         self.discard_edit_button.pack(side=tk.RIGHT, padx=(0, 6))
-        self.supported_controls.extend((self.apply_edit_button, self.discard_edit_button))
+        self.supported_controls.extend((self.discard_edit_button,))
         self.newspaper_editor_var = tk.BooleanVar(value=True)
         self.newspaper_editor_check = ttk.Checkbutton(ctrl_row, variable=self.newspaper_editor_var,command=self.on_newspaper_editor_toggle)
         self._reg(self.newspaper_editor_check, "action.newspaper_editor")
@@ -629,11 +654,11 @@ class DOSTranslationEditor:
         self.preview_button = ttk.Button(ctrl_row, command=self.show_changes_preview)
         self._reg(self.preview_button, "action.details")
         self.preview_button.pack(side=tk.LEFT, padx=(10, 0))
-        self.export_strings_button = ttk.Button(ctrl_row, command=self.export_strings)
-        self._reg(self.export_strings_button, "action.export")
+        self.export_strings_button = ttk.Button(ctrl_row, command=self._panel_export)
+        self.export_strings_button.config(text=self.tr("action.export_normal"))
         self.export_strings_button.pack(side=tk.LEFT, padx=(6, 0))
-        self.import_strings_button = ttk.Button(ctrl_row, command=self.import_strings)
-        self._reg(self.import_strings_button, "action.import")
+        self.import_strings_button = ttk.Button(ctrl_row, command=self._panel_import)
+        self.import_strings_button.config(text=self.tr("action.import_normal"))
         self.import_strings_button.pack(side=tk.LEFT, padx=(6, 0))
         self.font_assign_button = ttk.Button(ctrl_row, command=self._goto_font_assign)
         self._reg(self.font_assign_button, "action.font_assign")
@@ -642,9 +667,6 @@ class DOSTranslationEditor:
             self.newspaper_editor_check,
             self.translate_enabled_check,
             self.preview_button,
-            self.export_strings_button,
-            self.import_strings_button,
-            self.font_assign_button,
         ))
         self.translate_section = ttk.Frame(edit_frame)
         translation_options_row = ttk.Frame(self.translate_section)
@@ -735,7 +757,7 @@ class DOSTranslationEditor:
         self._sync_year_widget()
         self._sync_region_widget()
         self._sync_points_widget()
-        self._update_discard_button_state()
+        self._update_save_state()
 
     def _year_offset(self):
         if not self._supported_loaded():
@@ -1031,7 +1053,7 @@ class DOSTranslationEditor:
         if not self._supported_loaded() or self.current_index is None:
             return False
         panel = getattr(self, "newspaper_panel", None)
-        if panel is not None and panel.winfo_ismapped():
+        if panel is not None and panel.winfo_manager():
             return False
         widget = getattr(self, "edit_text", None)
         if widget is None or str(widget.cget("state")) == "disabled":
@@ -1054,7 +1076,7 @@ class DOSTranslationEditor:
 
     def apply_edit(self):
         panel = getattr(self, "newspaper_panel", None)
-        if panel is not None and panel.winfo_ismapped():
+        if panel is not None and panel.winfo_manager():
             for method_name in ("apply", "apply_edit", "apply_changes"):
                 if hasattr(panel, method_name):
                     return getattr(panel, method_name)()
@@ -1062,7 +1084,7 @@ class DOSTranslationEditor:
 
     def discard_edit(self):
         panel = getattr(self, "newspaper_panel", None)
-        if panel is not None and panel.winfo_ismapped():
+        if panel is not None and panel.winfo_manager():
             for method_name in ("discard", "discard_edit", "discard_changes", "reset", "revert"):
                 if hasattr(panel, method_name):
                     getattr(panel, method_name)()
@@ -1097,7 +1119,7 @@ class DOSTranslationEditor:
         if not self._supported_loaded() or self.current_index is None:
             return False
         panel = getattr(self, "newspaper_panel", None)
-        if panel is not None and panel.winfo_ismapped() and panel.is_dirty():
+        if panel is not None and panel.winfo_manager() and panel.is_dirty():
             return True
         return self._is_edit_text_dirty()
 
@@ -1127,7 +1149,13 @@ class DOSTranslationEditor:
         )
 
     def _can_exchange_strings(self) -> bool:
-        return self._can_save()
+        return bool(
+            self._supported_loaded()
+            and self.integrity_valid
+            and not self.repack_required
+            and self.font_valid
+            and not self.font_pending
+        )
 
     def _save_block_reason(self) -> str:
         if not self.integrity_valid or self.repack_required:
@@ -1149,15 +1177,30 @@ class DOSTranslationEditor:
         return payload, modified_from_source
 
     def _update_save_state(self):
+        can_save      = self._can_save()
+        can_exchange  = self._can_exchange_strings()
+        has_selection = self.current_index is not None and self._supported_loaded()
+        has_pending   = self._has_pending_text_edit()
+
         if hasattr(self, "save_button"):
-            self.save_button.config(state=tk.NORMAL if self._can_save() else tk.DISABLED)
-        self._set_menu_state(getattr(self, "save_menu_entries", []), self._can_save())
-        exchange_state = tk.NORMAL if self._can_exchange_strings() else tk.DISABLED
+            self.save_button.config(state=tk.NORMAL if can_save else tk.DISABLED)
+        self._set_menu_state(getattr(self, "save_menu_entries", []), can_save)
+
+        apply_btn = getattr(self, "apply_edit_button", None)
+        if apply_btn is not None:
+            apply_btn.config(state=tk.NORMAL if has_pending else tk.DISABLED)
+
+        font_btn = getattr(self, "font_assign_button", None)
+        if font_btn is not None:
+            font_btn.config(state=tk.NORMAL if has_selection else tk.DISABLED)
+
+        panel_exc = tk.NORMAL if (can_exchange and has_selection) else tk.DISABLED
         for widget_name in ("export_strings_button", "import_strings_button"):
             widget = getattr(self, widget_name, None)
             if widget is not None:
-                widget.config(state=exchange_state)
-        self._set_menu_state(getattr(self, "exchange_menu_entries", []), self._can_exchange_strings())
+                widget.config(state=panel_exc)
+
+        self._set_menu_state(getattr(self, "exchange_menu_entries", []), can_exchange)
         self._update_discard_button_state()
 
     def _make_text_widget(self, parent, bg="#FFFFFF"):
@@ -1169,17 +1212,13 @@ class DOSTranslationEditor:
         return widget
 
     def _hide_edit_text(self):
-        """Remove the edit_text container from the layout (newspaper mode active)."""
         container = getattr(self.edit_text, "master", None)
         if container is not None and container.winfo_manager():
             container.pack_forget()
 
     def _show_edit_text(self):
-        """Restore the edit_text container to the layout (newspaper mode off)."""
         container = getattr(self.edit_text, "master", None)
         if container is not None and not container.winfo_manager():
-            # Re-pack before info_frame and ctrl_row (pack order matters).
-            # The container was originally the first child of edit_frame.
             container.pack(fill=tk.X, expand=True, pady=(0, 8), before=self.info_frame)
 
     def _game_cfg(self) -> dict:
@@ -1522,7 +1561,6 @@ class DOSTranslationEditor:
         if not enabled:
             panel = getattr(self, "newspaper_panel", None)
             if panel is not None:
-                # hide() triggers on_hide → _show_edit_text automatically.
                 panel.hide()
 
             entry = self.entries[self.current_index]
@@ -1541,7 +1579,7 @@ class DOSTranslationEditor:
 
     def on_translate_toggle(self):
         panel = getattr(self, "newspaper_panel", None)
-        if panel is not None and panel.winfo_ismapped():
+        if panel is not None and panel.winfo_manager():
             enabled = self.translate_enabled_var.get()
             translate_fn = None
             if enabled:
@@ -1738,10 +1776,6 @@ class DOSTranslationEditor:
         self._sync_entry_index()
         if set(self.entry_index_by_id) != set(self.baseline_filter_data):
             raise SearchFilterError("Search baseline does not match current entries")
-        preview = self.diff_preview_cache.get() or {}
-        preview_rows = preview.get("strings_by_id", {})
-        game_charmaps = self._game_cfg().get("charmaps", {})
-        rows = []
         newspaper_ids: set[str] = set()
         try:
             if newspaper_csv.is_supported(self.profile_name):
@@ -1751,6 +1785,10 @@ class DOSTranslationEditor:
                 }
         except Exception:
             pass
+        preview = self.diff_preview_cache.get() or {}
+        preview_rows = preview.get("strings_by_id", {})
+        game_charmaps = self._game_cfg().get("charmaps", {})
+        rows = []
         for entry in self.entries:
             string_id = entry["string_id"]
             baseline = self.baseline_filter_data[string_id]
@@ -1795,6 +1833,8 @@ class DOSTranslationEditor:
         finally:
             self._selection_guard = False
         self.current_index = None
+        self._update_panel_action_buttons()
+        self._update_save_state()
         panel = getattr(self, "newspaper_panel", None)
         if panel is not None:
             panel.hide()
@@ -1833,17 +1873,16 @@ class DOSTranslationEditor:
         entry = self.entries[index]
         original_text = self._decode_entry_text(entry)
         is_news = self._is_newspaper_entry(entry)
+        self._update_panel_action_buttons()
         if getattr(self, "newspaper_editor_var", None) and self.newspaper_editor_var.get() and is_news:
+            self.edit_text.config(state=tk.NORMAL)
+            self.edit_text.delete("1.0", tk.END)
             if hasattr(self, "newspaper_panel"):
-                # on_show callback inside show() will hide edit_text;
-                # show() itself packs the panel at the bottom.
                 self.newspaper_panel.show(entry, decode_fn=self._decode_entry_text)
         else:
-            if hasattr(self, "newspaper_panel") and self.newspaper_panel.winfo_ismapped():
-                # on_hide callback inside hide() restores edit_text.
+            if hasattr(self, "newspaper_panel") and self.newspaper_panel.winfo_manager():
                 self.newspaper_panel.hide()
             else:
-                # Panel was already hidden; make sure edit_text container is visible.
                 self._show_edit_text()
             self.edit_text.config(state=tk.NORMAL, bg="#FFFFFF")
             self.edit_text.delete("1.0", tk.END)
@@ -2146,31 +2185,64 @@ class DOSTranslationEditor:
             summary += self.tr("dlg.translate_all.suffix", n=stats["suffix_skipped"])
         messagebox.showinfo(self.tr("dlg.translate_all.done"), summary)
 
-    def export_strings(self):
+    def _current_entry_is_newspaper(self) -> bool:
+        if self.current_index is None or not self._supported_loaded():
+            return False
+        return self._is_newspaper_entry(self.entries[self.current_index])
+
+    def _update_panel_action_buttons(self):
+        if not hasattr(self, "export_strings_button"):
+            return
+        is_news = self._current_entry_is_newspaper()
+        if is_news:
+            exp_label = self.tr("action.export_newspaper")
+            imp_label = self.tr("action.import_newspaper")
+        else:
+            exp_label = self.tr("action.export_normal")
+            imp_label = self.tr("action.import_normal")
+        self.export_strings_button.config(text=exp_label)
+        self.import_strings_button.config(text=imp_label)
+
+    def _panel_export(self):
+        if self._current_entry_is_newspaper():
+            self.export_newspaper_csv()
+        else:
+            self.export_normal_csv()
+
+    def _panel_import(self):
+        if self._current_entry_is_newspaper():
+            self.import_newspaper_csv()
+        else:
+            self.import_normal_csv()
+
+    def export_normal_csv(self):
         if not self._can_exchange_strings():
             messagebox.showwarning(self.tr("dlg.export.blocked"), self._save_block_reason())
+            return False
+
+        try:
+            payload = export_csv_bytes(**self._string_exchange_arguments())
+            newspaper_ids: set = set()
+            if newspaper_csv.is_supported(self.profile_name):
+                newspaper_ids = {
+                    e["string_id"]
+                    for e in newspaper_csv.collect(self.profile_name, self.entries)
+                }
+            normal_count = sum(
+                1 for e in self.entries
+                if not e.get("fixed") and e.get("string_id") not in newspaper_ids
+            )
+        except (StringExchangeError, newspaper_csv.NewspaperCsvError, KeyError, ValueError) as exc:
+            messagebox.showerror(self.tr("dlg.export.blocked"), str(exc))
             return False
 
         filepath = filedialog.asksaveasfilename(
             title=self.tr("fd.export"),
             initialfile="translations.strings.csv",
             defaultextension=".csv",
-            filetypes=[
-                ("String Exchange CSV", "*.csv"),
-                ("String Exchange JSON", "*.json"),
-            ],
+            filetypes=[("String Exchange CSV", "*.csv")],
         )
         if not filepath:
-            return False
-
-        use_csv = filepath.lower().endswith(".csv")
-        try:
-            if use_csv:
-                payload = export_csv_bytes(**self._string_exchange_arguments())
-            else:
-                payload = export_json_bytes(**self._string_exchange_arguments())
-        except (StringExchangeError, KeyError, ValueError) as exc:
-            messagebox.showerror(self.tr("dlg.export.blocked"), str(exc))
             return False
 
         try:
@@ -2179,39 +2251,34 @@ class DOSTranslationEditor:
             messagebox.showerror(self.tr("dlg.export.failed"),
                                  self.tr("dlg.export.partial", error=exc))
             return False
-        self._set_status("dlg.export.status", n=len(self.entries),
+
+        self._set_status("dlg.export.status", n=normal_count,
                          file=os.path.basename(filepath))
         messagebox.showinfo(self.tr("dlg.export.done"),
-                            self.tr("dlg.export.done_msg", n=len(self.entries), path=filepath))
+                            self.tr("dlg.export.done_msg", n=normal_count, path=filepath))
         return True
 
-    def import_strings(self):
+    def import_normal_csv(self):
         if not self._can_exchange_strings():
             messagebox.showwarning(self.tr("dlg.import.blocked"), self._save_block_reason())
             return False
+
         filepath = filedialog.askopenfilename(
             title=self.tr("fd.import"),
             filetypes=[
-                ("String Exchange", "*.strings.csv *.strings.json"),
                 ("String Exchange CSV", "*.strings.csv"),
-                ("String Exchange JSON", "*.strings.json"),
+                ("All CSV", "*.csv"),
             ],
         )
         if not filepath:
             return False
 
-        use_csv = filepath.lower().endswith(".strings.csv")
         try:
             with open(filepath, "rb") as handle:
                 raw_document = handle.read()
-            if use_csv:
-                preflight = preflight_import_csv(
-                    raw_document, **self._string_exchange_arguments()
-                )
-            else:
-                preflight = preflight_import_json(
-                    raw_document, **self._string_exchange_arguments()
-                )
+            preflight = preflight_import_csv(
+                raw_document, **self._string_exchange_arguments()
+            )
         except (OSError, StringExchangeError, KeyError, ValueError) as exc:
             messagebox.showerror(self.tr("dlg.import.blocked"),
                                  self.tr("dlg.import.nochange", error=exc))
@@ -2232,14 +2299,111 @@ class DOSTranslationEditor:
             return False
 
         try:
-            if use_csv:
-                preflight = preflight_import_csv(
-                    raw_document, **self._string_exchange_arguments()
-                )
-            else:
-                preflight = preflight_import_json(
-                    raw_document, **self._string_exchange_arguments()
-                )
+            preflight = preflight_import_csv(
+                raw_document, **self._string_exchange_arguments()
+            )
+            work_data, work_entries, validation, _font_result = stage_import_transaction(
+                self.exe_data,
+                self.entries,
+                preflight["replacements"],
+                self.profile,
+                self.relocation_sites,
+                EXE_FONT_PROFILES[self.profile_name],
+            )
+        except (StringExchangeError, KeyError, ValueError) as exc:
+            messagebox.showerror(self.tr("dlg.import.blocked"),
+                                 self.tr("dlg.import.nochange", error=exc))
+            return False
+        if not self._can_exchange_strings():
+            messagebox.showwarning(self.tr("dlg.import.blocked"), self._save_block_reason())
+            return False
+
+        self._commit_text_transaction(work_data, work_entries, validation)
+        self.translation_pending = False
+        self.refresh_table(force=True, refresh_active_fields=True)
+        self._update_save_state()
+        self._set_status("dlg.import.status", n=preflight["changed_count"])
+        messagebox.showinfo(self.tr("dlg.import.done"),
+                            self.tr("dlg.import.done_msg", profile=preflight["profile_id"],
+                                    n=preflight["changed_count"]))
+        return True
+
+    def export_all_json(self):
+        if not self._can_exchange_strings():
+            messagebox.showwarning(self.tr("dlg.export.blocked"), self._save_block_reason())
+            return False
+
+        filepath = filedialog.asksaveasfilename(
+            title=self.tr("menu.tools.export_json"),
+            initialfile="backup.strings.json",
+            defaultextension=".json",
+            filetypes=[("String Exchange JSON", "*.json")],
+        )
+        if not filepath:
+            return False
+
+        try:
+            payload = export_json_bytes(**self._string_exchange_arguments())
+        except (StringExchangeError, KeyError, ValueError) as exc:
+            messagebox.showerror(self.tr("dlg.export.blocked"), str(exc))
+            return False
+
+        try:
+            atomic_save_bytes(filepath, payload)
+        except OSError as exc:
+            messagebox.showerror(self.tr("dlg.export.failed"),
+                                 self.tr("dlg.export.partial", error=exc))
+            return False
+
+        self._set_status("dlg.export.status", n=len(self.entries),
+                         file=os.path.basename(filepath))
+        messagebox.showinfo(self.tr("dlg.export.done"),
+                            self.tr("dlg.export.done_msg", n=len(self.entries), path=filepath))
+        return True
+
+    def import_all_json(self):
+        if not self._can_exchange_strings():
+            messagebox.showwarning(self.tr("dlg.import.blocked"), self._save_block_reason())
+            return False
+
+        filepath = filedialog.askopenfilename(
+            title=self.tr("fd.import_json"),
+            filetypes=[
+                ("String Exchange JSON", "*.strings.json *.json"),
+            ],
+        )
+        if not filepath:
+            return False
+
+        try:
+            with open(filepath, "rb") as handle:
+                raw_document = handle.read()
+            preflight = preflight_import_json(
+                raw_document, **self._string_exchange_arguments()
+            )
+        except (OSError, StringExchangeError, KeyError, ValueError) as exc:
+            messagebox.showerror(self.tr("dlg.import.blocked"),
+                                 self.tr("dlg.import.nochange", error=exc))
+            return False
+
+        changed_count = preflight["changed_count"]
+        if changed_count == 0:
+            messagebox.showinfo(self.tr("dlg.import.done"),
+                                self.tr("dlg.import.none", profile=preflight["profile_id"]))
+            return True
+        if not messagebox.askyesno(
+            self.tr("dlg.import.title"),
+            self.tr("dlg.import.confirm", profile=preflight["profile_id"], n=changed_count),
+        ):
+            return False
+        if not self._can_exchange_strings():
+            messagebox.showwarning(self.tr("dlg.import.blocked"), self._save_block_reason())
+            return False
+
+        try:
+            preflight = preflight_import_json(
+                raw_document, **self._string_exchange_arguments()
+            )
             work_data, work_entries, validation, _font_result = stage_import_transaction(
                 self.exe_data,
                 self.entries,
