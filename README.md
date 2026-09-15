@@ -102,7 +102,7 @@ UEFA TAB
 
 Usable as standalone or a built-in main editor TAB, it supports all graphic formats and compression.
 
-<img width="1065" height="839" alt="immagine" src="https://github.com/user-attachments/assets/ecc3c0bb-70c7-4800-a526-480ca29ea440" />
+<img width="1274" height="844" alt="immagine" src="https://github.com/user-attachments/assets/e0594984-6d27-4cae-b666-bb33c1963323" />
 
 ## Usage
 
