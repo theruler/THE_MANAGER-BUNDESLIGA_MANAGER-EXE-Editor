@@ -281,6 +281,9 @@ TEXTS_FR = {
     "preview.sum.year": "Année de départ modifiée : {value}",
     "preview.sum.region": "Région modifiée : {value}",
     "preview.sum.reasons": "Motifs :",
+    "preview.sum.points": "Victoire par point modifiée : {value}",
+    "preview.sum.integrity_fix": "Chaînes orphelines corrigées : {value}",
+    "preview.sum.extended_layout": "EXE étendu : {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "aucune",

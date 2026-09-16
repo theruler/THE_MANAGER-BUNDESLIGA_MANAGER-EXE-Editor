@@ -183,7 +183,7 @@ TEXTS_IT = {
     # ---- load / save
     "fd.open_exe": "Apri eseguibile",
     "fd.save_exe": "Salva eseguibile con nome",
-    "dlg.load.extended": "Il profilo '{detected}' supporta l'extended layout.\n\nEstendendo il file guadagni ~{pool_kb} KB di spazio aggiuntivo.\n\nVuoi estendere?",
+    "dlg.load.extended": "Il profilo '{detected}' supporta la disposizione estesa.\n\nEstendendo il file guadagni ~{pool_kb} KB di spazio aggiuntivo.\n\nVuoi estendere?",
     "dlg.load.failed": "Caricamento non riuscito",
     "dlg.load.failed_msg": "Il nuovo EXE non è stato caricato. Lo stato precedente dell'editor è invariato.\n\n{error}",
     "dlg.load.unsupported_status": "Eseguibile non supportato. Modifica e salvataggio sono disabilitati.",
@@ -281,7 +281,10 @@ TEXTS_IT = {
     "preview.sum.year": "Anno iniziale modificato: {value}",
     "preview.sum.region": "Regione modificata: {value}",
     "preview.sum.reasons": "Motivi:",
-
+    "preview.sum.points": "Punti per vittoria modificati: {value}",
+    "preview.sum.integrity_fix": "Stringhe orfane aggiustate: {value}",
+    "preview.sum.extended_layout": "EXE esteso: {value}",
+    
     # ---- preview: shared value words
     "preview.val.none": "nessuno",
     "preview.val.yes": "sì",
