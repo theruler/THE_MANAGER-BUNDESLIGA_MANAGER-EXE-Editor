@@ -614,6 +614,9 @@ def build_diff_preview(
     pending_font_key: str | None = None,
     pending_font_model: list[dict] | None = None,
     pending_error: str | None = None,
+    integrity_fix_applied: bool = False,
+    extended_layout_active: bool = False,
+    points_var_changed: bool = False,
 ) -> dict:
     baseline_before = bytes(baseline_data)
     current_before = bytes(current_data)
@@ -876,6 +879,9 @@ def build_diff_preview(
             "font_status": "PASS" if font_pass else "FAIL",
             "save_possible": bool(save_possible),
             "pending": pending,
+            "integrity_fix_applied": bool(integrity_fix_applied),
+            "extended_layout_active": bool(extended_layout_active),
+            "points_var_changed": bool(points_var_changed),
         },
     }
 

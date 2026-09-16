@@ -235,6 +235,7 @@ class DOSTranslationEditor:
         self._last_valid_region_index = None
         self._last_valid_points    = None
         self._converted_to_extended = False
+        self._integrity_fixed      = False
         self.diff_preview_cache    = PreviewCache()
         self.filter_records        = ()
         self.filter_records_by_id  = {}
@@ -1132,6 +1133,8 @@ class DOSTranslationEditor:
     def _has_unsaved_changes(self) -> bool:
         return bool(
             self._has_committed_changes()
+            or self._converted_to_extended
+            or self._integrity_fixed
             or self.font_pending
             or self._has_pending_text_edit()
             or self.translation_pending
@@ -1146,6 +1149,7 @@ class DOSTranslationEditor:
             and not self.font_pending
             and not self._has_pending_text_edit()
             and not self.translation_pending
+            and self._has_unsaved_changes()
         )
 
     def _can_exchange_strings(self) -> bool:
@@ -2369,7 +2373,7 @@ class DOSTranslationEditor:
         filepath = filedialog.askopenfilename(
             title=self.tr("fd.import_json"),
             filetypes=[
-                ("String Exchange JSON", "*.strings.json *.json"),
+                ("String Exchange JSON", "*.strings.json"),
             ],
         )
         if not filepath:
@@ -2606,8 +2610,23 @@ class DOSTranslationEditor:
             pending_font_key=pending["pending_font_key"],
             pending_font_model=pending["pending_font_model"],
             pending_error=pending["pending_error"],
+            integrity_fix_applied=self._integrity_fixed,
+            extended_layout_active=self._converted_to_extended or (
+                extended_layout.detect(self.exe_data, self.profile) is not None
+            ),
+            points_var_changed=self._points_var_changed(),
         )
         return snapshot
+
+    def _points_var_changed(self) -> bool:
+        offset = self._points_rule_offset()
+        if offset is None or not self.initial_unpacked_data:
+            return False
+        return (
+            len(self.initial_unpacked_data) >= offset + 2
+            and bytes(self.exe_data[offset:offset + 2])
+            != bytes(self.initial_unpacked_data[offset:offset + 2])
+        )
 
 
     @staticmethod
@@ -2677,6 +2696,20 @@ class DOSTranslationEditor:
                 region_value = "{} → {}".format(
                     self.tr(self._REGION_VARIANTS[before][0]),
                     self.tr(self._REGION_VARIANTS[after][0]))
+        points_offset = self._points_rule_offset()
+        points_changed = summary.get("points_var_changed", False)
+        points_value = no_text
+        if points_changed and points_offset is not None:
+            before_val = int.from_bytes(
+                self.initial_unpacked_data[points_offset:points_offset + 2], "little"
+            ) if len(self.initial_unpacked_data) >= points_offset + 2 else None
+            after_val = int.from_bytes(
+                self.exe_data[points_offset:points_offset + 2], "little"
+            )
+            points_value = (
+                f"{before_val} → {after_val}" if before_val is not None else yes_text
+            )
+
         summary_lines = [
             self.tr("preview.sum.status", value=snapshot["status"]),
             self.tr("preview.sum.profile", value=snapshot["profile_id"]),
@@ -2684,15 +2717,20 @@ class DOSTranslationEditor:
             self.tr("preview.sum.normal", value=summary["normal_changed"]),
             self.tr("preview.sum.fixed", value=summary["fixed_changed"]),
             self.tr("preview.sum.codeonly", value=summary["code_only_changed"]),
+            self.tr("preview.sum.pointers",value=summary["pointer_sources_changed"]),
+            self.tr("preview.sum.integrity_fix", value=flag(summary.get("integrity_fix_applied", False))),
+            "",
             self.tr("preview.sum.glyphs", value=summary["glyphs_changed"]),
-            self.tr("preview.sum.fonts",
-                    value=", ".join(summary["fonts_affected"]) or none_text),
-            self.tr("preview.sum.pointers",
-                    value=summary["pointer_sources_changed"]),
+            self.tr("preview.sum.fonts",value=", ".join(summary["fonts_affected"]) or none_text),
+            "",
             *([self.tr("preview.sum.year", value=flag(year_changed))]
               if year_offset is not None else []),
             *([self.tr("preview.sum.region", value=region_value)]
               if region_offset is not None else []),
+            *([self.tr("preview.sum.points", value=points_value)]
+              if points_offset is not None else []),
+            "",
+            self.tr("preview.sum.extended_layout", value=flag(summary.get("extended_layout_active", False))),
             "",
             self.tr("preview.sum.repack_needed",
                     value=flag(summary["repack_needed"])),
@@ -2922,6 +2960,7 @@ class DOSTranslationEditor:
         self._last_valid_region_index = None
         self.region_var.set("")
         self._converted_to_extended = False
+        self._integrity_fixed       = False
         self.filter_records         = ()
         self.filter_records_by_id   = {}
         self.baseline_filter_data   = {}
@@ -3183,7 +3222,10 @@ class DOSTranslationEditor:
                                  self.tr("dlg.load.failed_msg", error=exc))
             return
 
+        converted_to_extended = self._converted_to_extended
         self._reset_state()
+        self._converted_to_extended = converted_to_extended
+        self._integrity_fixed = False  # will be set after load if auto-fix is applied
         self.source_path = os.path.abspath(filepath)
         exe_dir = os.path.dirname(os.path.abspath(self.source_path))
         pic_folder = os.path.join(exe_dir, "PIC")
@@ -3283,6 +3325,7 @@ class DOSTranslationEditor:
                     if new_validation["ok"]:
                         self.initial_unpacked_data = bytearray(self.exe_data)
                         self.last_saved_exe_data   = bytearray(self.exe_data)
+                        self._integrity_fixed = True
                         self._migrate_legacy_font_mappings()
                         self.status_label.config(text="")
                     else:
@@ -3340,6 +3383,8 @@ class DOSTranslationEditor:
             if not modified_from_source:
                 messagebox.showinfo(self.tr("dlg.save.done"), self.tr("dlg.save.noop"))
                 self.last_saved_exe_data = bytearray(self.exe_data)
+                self._converted_to_extended = False
+                self._integrity_fixed = False
                 self._invalidate_diff_preview("save-baseline")
                 self._try_rebuild_baseline_filter_index()
                 self.refresh_table(force=True, refresh_active_fields=True)
@@ -3363,6 +3408,8 @@ class DOSTranslationEditor:
         self.original_source_data = bytearray(payload)
         self.initial_unpacked_data = bytearray(self.exe_data)
         self.last_saved_exe_data = bytearray(self.exe_data)
+        self._converted_to_extended = False
+        self._integrity_fixed = False
         self.font_editor.mark_saved()
         self._invalidate_diff_preview("save-baseline", refresh=False)
         self._try_rebuild_baseline_filter_index()
