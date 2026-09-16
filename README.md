@@ -50,7 +50,7 @@ Accented letters can be modified and replaced. Width of the single char can be a
 The Region Changer uses the original country configuration present in the game executables.
 
 1. Germany (starting DM 1.500.000)
-2. Italy (Starting Lire 750.000 Milion)
+2. Italy (Starting Lire 750.000 Million)
 3. France (starting Francs 500.000)
 4. England (starting Pounds 375.000)
 
@@ -88,7 +88,7 @@ LEGAUE TAB
 - Teams can be swapped by dragging the buttons to new position
 - RESET puts every stat to zero
 - SHUFFLE shuffles the teams within each league
-- RANDOMIZE randomizes all the stats based on current team position in each league, according to an algorithm that take sin account actual statistic distributions of POINTS a GOALS made in a real championship, adapted to the limits and features of the in-game mechanics.
+- RANDOMIZE randomizes all the stats based on current team position in each league, according to an algorithm that takes into account actual statistic distributions of POINTS a GOALS made in a real championship, adapted to the limits and features of the in-game mechanics.
 
 <img width="1229" height="719" alt="immagine" src="https://github.com/user-attachments/assets/f9f46d47-1993-49db-98bd-9341f1bdccff" />
 
