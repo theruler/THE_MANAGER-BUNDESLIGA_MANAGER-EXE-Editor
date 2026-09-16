@@ -237,7 +237,7 @@ class _ImageCanvas(tk.Frame):
         self._on_modified = on_modified
         self._on_color_picked = on_color_picked
         self._img: Image.Image | None = None
-        self._palette: list[tuple[int, int, int]] = list(_PAL_NORMAL)
+        self._palette: list[tuple[int, int, int]] = list(_PAL_NORMAL20)
         self._zoom = 2
         self._tool = TOOL_DRAW
         self._draw_color = (255, 255, 255, 255)
@@ -898,8 +898,8 @@ class PicEditorPanel(ttk.Frame):
         self._pic_files:    list[str]   = []
         self._current_idx:  int         = -1
         self._current_path: str         = ""
-        self._active_palette_name: str  = "Default"
-        self._active_palette: list[tuple[int,int,int]] = list(_PAL_NORMAL)
+        self._active_palette_name: str  = "Default 2.0"
+        self._active_palette: list[tuple[int,int,int]] = list(_PAL_NORMAL20)
         self._modified  = False
         self._undo_stack: list[Image.Image] = []
         self._apply_style()
@@ -1044,7 +1044,7 @@ class PicEditorPanel(ttk.Frame):
         prow = ttk.Frame(f_colors)
         prow.pack(fill=tk.X, pady=(2, 0))
         ttk.Label(prow, text="Change:", foreground=MUTED).pack(side=tk.LEFT)
-        self._pal_var = tk.StringVar(value="Default")
+        self._pal_var = tk.StringVar(value="Default 2.0")
         pal_names = list(BUILTIN_PALETTES.keys())
         self._pal_combo = ttk.Combobox(prow, textvariable=self._pal_var, values=pal_names, state="readonly", width=12)
         self._pal_combo.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(4, 0))
