@@ -19,36 +19,36 @@ _MARKER_COLOURS: dict[str, tuple[str, str]] = {
     "ATTENDANCE": ("#00838F", "#FFFFFF"),
     "PLAYER_1":   ("#558B2F", "#FFFFFF"),
     "PLAYER_2":   ("#827717", "#FFFFFF"),
-    "MANAGER":    ("#4E342E", "#FFFFFF"),
+    "MANAGER":    ("#DAA520", "#FFFFFF"),
 }
 _SEL_COLOUR   = ("#78909C", "#FFFFFF")
-_BREAK_COLOUR = ("#F57F17", "#000000")
+_BREAK_COLOUR = ("#F57F17", "#FFFFFF")
 
 _SELECTOR_CODE_NAMES: dict[str, str] = {
-    "02": "RANDOM_2",
-    "03": "RANDOM_3",
-    "04": "RANDOM_4",
-    "10": "CONTEXT_1",
-    "20": "CONTEXT_2",
-    "30": "CONTEXT_3",
-    "40": "CONTEXT_4",
-    "50": "CONTEXT_5",
+    "02": "RANDOM_02",
+    "03": "RANDOM_03",
+    "04": "RANDOM_04",
+    "10": "CONTEXT_10",
+    "20": "CONTEXT_20",
+    "30": "CONTEXT_30",
+    "40": "CONTEXT_40",
+    "50": "CONTEXT_50",
 }
 
 _RANDOM_PALETTE: list[tuple[str, str]] = [
     ("#4A235A", "#FFFFFF"),
     ("#6C3483", "#FFFFFF"),
-    ("#8E44AD", "#E8DAEF"),
+    ("#8E44AD", "#FFFFFF"),
     ("#A569BD", "#FFFFFF"),
-    ("#D2B4DE", "#1A0030"),
+    ("#D2B4DE", "#FFFFFF"),
 ]
 
 _CONTEXT_PALETTE: list[tuple[str, str]] = [
     ("#784212", "#FFFFFF"),
     ("#935116", "#FFFFFF"),
     ("#B9770E", "#FFFFFF"),
-    ("#D68910", "#1A0A00"),
-    ("#F0B27A", "#3E1F00"),
+    ("#D68910", "#FFFFFF"),
+    ("#F0B27A", "#FFFFFF"),
 ]
 
 def _semantic_name_from_code(selector_code: str) -> str:
@@ -389,7 +389,7 @@ class _ComponentEditor:
 
     def _insert_marker(self, tw: tk.Text, name: str):
         if name == "BREAK":
-            badge = _TagLabel(tw, "BREAK", "⏎", *_BREAK_COLOUR,
+            badge = _TagLabel(tw, "BREAK", "\\n", *_BREAK_COLOUR,
                               self._ds, deletable=True,
                               on_change=self._on_change, row=self)
             tw.window_create(tk.END, window=badge)
@@ -536,14 +536,34 @@ class _ComponentEditor:
     def _on_return(self, _e=None):
         cursor = self.widget.index(tk.INSERT)
         tokens = self._tokenise(self.widget)
-        cur    = "1.0"
+        tw = self.widget
+        cur = "1.0"
         ins_at = len(tokens)
+        split_at = 0
         for i, (kind, val) in enumerate(tokens):
-            if self.widget.compare(cur, ">=", cursor):
+            if tw.compare(cur, ">=", cursor):
                 ins_at = i
+                split_at = 0
                 break
-            cur = self.widget.index(
-                f"{cur}+1c" if kind == "marker" else f"{cur}+{len(val)}c")
+            if kind == "marker":
+                cur = tw.index(f"{cur}+1c")
+            else:
+                for ci in range(len(val)):
+                    char_idx = tw.index(f"{cur}+{ci}c")
+                    if tw.compare(char_idx, ">=", cursor):
+                        ins_at = i
+                        split_at = ci
+                        break
+                else:
+                    cur = tw.index(f"{cur}+{len(val)}c")
+                    continue
+                break
+        if split_at > 0 and ins_at < len(tokens):
+            kind, val = tokens[ins_at]
+            if kind == "text" and split_at < len(val):
+                tokens[ins_at] = ("text", val[:split_at])
+                tokens.insert(ins_at + 1, ("text", val[split_at:]))
+                ins_at += 1
         tokens.insert(ins_at, ("marker", "BREAK"))
         self._populate(_tokens_to_display(tokens))
         self._push_undo()
@@ -823,7 +843,7 @@ class NewspaperEditorPanel(ttk.Frame):
                   font=("Segoe UI", 7, "bold"),
                   foreground="#546E7A",
                   background="#E8EAF6").pack(side=tk.LEFT, padx=(0, 6))
-        self._make_pool_badge(row1, "BREAK", "⏎", *_BREAK_COLOUR)
+        self._make_pool_badge(row1, "BREAK", "\\n", *_BREAK_COLOUR)
         for name, (bg, fg) in _MARKER_COLOURS.items():
             self._make_pool_badge(row1, name, name, bg, fg)
         row2 = tk.Frame(self._pool_inner, bg="#E8EAF6")
@@ -832,10 +852,10 @@ class NewspaperEditorPanel(ttk.Frame):
                   font=("Segoe UI", 7, "bold"),
                   foreground="#546E7A",
                   background="#E8EAF6").pack(side=tk.LEFT, padx=(0, 6))
-        _GREY_RANDOM  = ("#78909C", "#FFFFFF")
-        _GREY_CONTEXT = ("#90A4AE", "#1A252F")
-        for code, semantic in _SELECTOR_CODE_NAMES.items():
-            colour = _GREY_RANDOM if _is_random_code(code) else _GREY_CONTEXT
+        for i, (code, semantic) in enumerate(_SELECTOR_CODE_NAMES.items()):
+            is_rnd = _is_random_code(code)
+            palette = _RANDOM_PALETTE if is_rnd else _CONTEXT_PALETTE
+            colour = palette[i % len(palette)]
             self._make_pool_badge(row2, f"SEL:{code}", semantic, *colour)
 
     def _make_pool_badge(self, parent, marker_name: str, display: str, bg: str, fg: str):
@@ -878,6 +898,9 @@ class NewspaperEditorPanel(ttk.Frame):
         next_num = max(existing_nums, default=0) + 1
         selector = f"S{next_num:02d}"
 
+        _CONTEXT_BRANCH_COUNT: dict[str, int] = {
+            "10": 2, "20": 4, "30": 3, "40": 2, "50": 2,
+        }
         is_rnd = _is_random_code(code_upper)
         if is_rnd:
             try:
@@ -885,7 +908,7 @@ class NewspaperEditorPanel(ttk.Frame):
             except Exception:
                 n_branches = 2
         else:
-            n_branches = 2
+            n_branches = _CONTEXT_BRANCH_COUNT.get(code_upper, 2)
 
         instance_index = sum(
             1 for c in self._comps
@@ -911,6 +934,10 @@ class NewspaperEditorPanel(ttk.Frame):
                 except CharmapEncodeError:
                     pass
 
+        _CONTEXT_BRANCH_COUNT: dict[str, int] = {
+            "10": 2, "20": 4, "30": 3, "40": 2, "50": 2,
+        }
+
         if code_upper in _SELECTOR_CODE_NAMES:
             if selector_override:
                 selector = selector_override
@@ -922,7 +949,7 @@ class NewspaperEditorPanel(ttk.Frame):
                     except Exception:
                         n_branches = 2
                 else:
-                    n_branches = 2
+                    n_branches = _CONTEXT_BRANCH_COUNT.get(code_upper, 2)
             else:
                 selector, selector_code, _label, _colour, n_branches = \
                     self._allocate_selector(code_upper)
@@ -1167,7 +1194,9 @@ class NewspaperEditorPanel(ttk.Frame):
 
         if self._entry and self._comps:
             was_dirty = self._dirty_hint
-            self._build_layout(enabled, translate_fn)
+            # Pass translate_fn=None so toggling only shows/hides the widget
+            # without triggering automatic translation of the content.
+            self._build_layout(enabled, None)
             self._dirty_hint = was_dirty
 
     def _on_any_change(self):
