@@ -46,7 +46,7 @@ from search_filter import (
     filter_string_ids,
 )
 
-APP_VERSION = "2.8.5"
+APP_VERSION = "2.8.6"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -458,9 +458,7 @@ class DOSTranslationEditor:
             except tk.TclError:
                 pass
         self.filter_toggle_button.config(
-            text=self.tr("filter.toggle_open" if self.filter_frame.winfo_manager()
-                         else "filter.toggle_closed")
-        )
+            text=self.tr("filter.toggle_open" if self.filter_frame.winfo_manager() else "filter.toggle_closed"))
         shown, total = self._counter_state
         self._set_counter(shown, total)
         self._set_filter_status(self.filter_status_key, **self.filter_status_args)
@@ -672,10 +670,10 @@ class DOSTranslationEditor:
         self.translate_section = ttk.Frame(edit_frame)
         translation_options_row = ttk.Frame(self.translate_section)
         translation_options_row.pack(fill=tk.X, pady=(8, 0))
-        for label, var_attr, values, width, on_change in [
-            ("tr.engine", "engine_var",      list(TRANSLATION_ENGINES.keys()), 18, lambda e: self.translate_current()),
-            ("tr.from",   "source_lang_var", ["auto","de","en","fr","es","it"], 6,  lambda e: self.translate_current()),
-            ("tr.to",     "target_lang_var", ["it","en","de","fr","es"],        6,  lambda e: self.translate_current()),
+        for label, var_attr, values, width in [
+            ("tr.engine", "engine_var",      list(TRANSLATION_ENGINES.keys()), 18),
+            ("tr.from",   "source_lang_var", ["auto","de","en","fr","es","it"], 6),
+            ("tr.to",     "target_lang_var", ["it","en","de","fr","es"],        6),
         ]:
             self._reg(ttk.Label(translation_options_row), label).pack(
                 side=tk.LEFT, padx=(0 if label == "tr.engine" else 8, 3))
@@ -683,28 +681,16 @@ class DOSTranslationEditor:
             setattr(self, var_attr, var)
             combo = ttk.Combobox(translation_options_row, textvariable=var, state="readonly", width=width, values=values)
             combo.pack(side=tk.LEFT, padx=(0, 8))
-            combo.bind("<<ComboboxSelected>>", on_change)
             self.supported_controls.append(combo)
         self.engine_var.set("Google Translate")
         self.source_lang_var.set("auto")
         self.target_lang_var.set("it")
-        self.translate_all_button = ttk.Button(translation_options_row, command=self.translate_all)
-        self._reg(self.translate_all_button, "tr.all")
-        self.translate_all_button.pack(side=tk.RIGHT)
-        self.supported_controls.append(self.translate_all_button)
+        self.translate_now_button = ttk.Button(translation_options_row, text="▶ Translate", command=lambda: self.translate_current(force=True))
+        self.translate_now_button.pack(side=tk.LEFT, padx=(0, 6))
+        self.supported_controls.append(self.translate_now_button)
         self.translate_status_label = ttk.Label(translation_options_row, text="", font=("Segoe UI", 9, "italic"), foreground="#7F8C8D")
         self.translate_status_label.pack(side=tk.LEFT, padx=(4, 0))
-        translate_header = ttk.Frame(self.translate_section)
-        translate_header.pack(fill=tk.X, pady=(6, 4))
-        self._reg(ttk.Label(translate_header, font=("Segoe UI", 9, "bold")),"tr.translated").pack(side=tk.LEFT)
-        self.apply_translation_button = ttk.Button(translate_header, command=self.apply_translation)
-        self._reg(self.apply_translation_button, "tr.apply")
-        self.apply_translation_button.pack(side=tk.RIGHT)
-        self.supported_controls.append(self.apply_translation_button)
-        self.translate_text = self._make_text_widget(self.translate_section, bg="#FDFEFE")
-        self.translate_text.bind("<KeyRelease>",        self.on_translate_text_modified)
-        self.translate_text.bind("<Return>",            lambda e: [self.apply_translation(), "break"][1])
-        self.translate_text.bind("<Control-Return>",    lambda e: [self.apply_translation(), "break"][1])
+        self.translate_text = None
         self.newspaper_panel = _ne.NewspaperEditorPanel(
             edit_frame, self,
             on_show=self._hide_edit_text,
@@ -748,7 +734,7 @@ class DOSTranslationEditor:
         for widget in getattr(self, "supported_controls", []):
             widget_state = "readonly" if self.is_supported and isinstance(widget, ttk.Combobox) else state
             widget.config(state=widget_state)
-        for widget_name in ("edit_text", "translate_text"):
+        for widget_name in ("edit_text",):
             widget = getattr(self, widget_name, None)
             if widget is not None:
                 widget.config(state=state)
@@ -1106,8 +1092,7 @@ class DOSTranslationEditor:
         self.edit_text.insert("1.0", original_text)
         self.highlight_spaces()
         self.update_free_space_label()
-        if getattr(self, "translate_enabled_var", None) and self.translate_enabled_var.get():
-            self.translate_current(force=True)
+        self.translate_status_label.config(text="")
         self._cancel_free_space_update()
         self.update_free_space_label()
         self._update_save_state()
@@ -1137,7 +1122,6 @@ class DOSTranslationEditor:
             or self._integrity_fixed
             or self.font_pending
             or self._has_pending_text_edit()
-            or self.translation_pending
         )
 
     def _can_save(self) -> bool:
@@ -1148,7 +1132,6 @@ class DOSTranslationEditor:
             and self.font_valid
             and not self.font_pending
             and not self._has_pending_text_edit()
-            and not self.translation_pending
             and self._has_unsaved_changes()
         )
 
@@ -1168,7 +1151,7 @@ class DOSTranslationEditor:
             return self.font_errors[0] if self.font_errors else self.tr("block.font_invalid")
         if self.font_pending:
             return self.tr("block.font_pending")
-        if self._has_pending_text_edit() or self.translation_pending:
+        if self._has_pending_text_edit():
             return self.tr("block.text_pending")
         return self.tr("block.generic")
 
@@ -1545,39 +1528,39 @@ class DOSTranslationEditor:
         self.edit_text.insert("1.0", self._decode_entry_text(entry))
         self.highlight_spaces()
 
-    def _set_translation_text(self, text, *, pending):
-        self.translate_text.delete("1.0", tk.END)
-        if text:
-            self.translate_text.insert("1.0", text)
-        self.translation_pending = bool(pending)
-
     def on_newspaper_editor_toggle(self):
         if not getattr(self, "newspaper_editor_var", None):
             return
-
+    
         enabled = bool(self.newspaper_editor_var.get())
-
+    
         if self.current_index is None:
             if not enabled and hasattr(self, "newspaper_panel"):
                 self.newspaper_panel.hide()
             return
-
+    
         if not enabled:
             panel = getattr(self, "newspaper_panel", None)
             if panel is not None:
                 panel.hide()
-
+    
             entry = self.entries[self.current_index]
             self.edit_text.config(state=tk.NORMAL)
             self.edit_text.delete("1.0", tk.END)
             self.edit_text.insert("1.0", self._decode_entry_text(entry))
             self.highlight_spaces()
-
-            if getattr(self, "translate_enabled_var", None) and self.translate_enabled_var.get():
-                self.translate_current(force=True)
+            ts = getattr(self, "translate_section", None)
+            translate_active = (getattr(self, "translate_enabled_var", None) and self.translate_enabled_var.get())
+            if ts is not None and translate_active:
+                if not ts.winfo_manager():
+                    ts.pack(fill=tk.X)
+                self.translate_status_label.config(text="")
+            elif ts is not None and not translate_active:
+                if ts.winfo_manager():
+                    ts.pack_forget()
         else:
             self._display_entry(self.current_index, keep_filter=True)
-
+    
         self._update_save_state()
         self._update_discard_button_state()
 
@@ -1598,47 +1581,10 @@ class DOSTranslationEditor:
             return
         if self.translate_enabled_var.get():
             self.translate_section.pack(fill=tk.X)
-            self.translate_current(force=True)
             return
-        if self.translation_pending:
-            decision = messagebox.askyesnocancel(
-                self.tr("dlg.pending_translation.title"),
-                self.tr("dlg.pending_translation.switch"),
-            )
-            if decision is None:
-                self.translate_enabled_var.set(True)
-                return
-            if decision:
-                if not self.apply_translation():
-                    self.translate_enabled_var.set(True)
-                    return
-            else:
-                self._set_translation_text("", pending=False)
         self.translate_section.pack_forget()
         if self.filter_refresh_pending and not self._has_pending_filter_edit():
             self.refresh_table(force=True, refresh_active_fields=True)
-        self._update_save_state()
-
-    def on_translate_text_modified(self, event=None):
-        if event is not None:
-            self.translation_pending = True
-        self._update_text_widget(self.translate_text, update_stats=False)
-
-        live_override = None
-        if self.current_index is not None:
-            entry = self.entries[self.current_index]
-            try:
-                current_raw_bytes = self._encode_entry_text(
-                    entry, self.translate_text.get("1.0", "1.0 lineend")
-                )
-                live_override = (entry, self._raw_text(current_raw_bytes))
-            except (CharmapEncodeError, TextTransactionError) as exc:
-                self.current_range_label.config(
-                    text=self.tr("edit.encoding_blocked", error=exc),
-                    foreground="#C0392B",
-                )
-
-        self._schedule_free_space_update(live_override=live_override)
         self._update_save_state()
 
     def _update_text_widget(self, widget, update_stats=False):
@@ -1826,7 +1772,7 @@ class DOSTranslationEditor:
         self.filter_index_error = None
 
     def _has_pending_filter_edit(self):
-        return bool(self._has_pending_text_edit() or self.translation_pending)
+        return bool(self._has_pending_text_edit())
 
     def _clear_current_selection(self):
         self._selection_guard = True
@@ -1844,8 +1790,6 @@ class DOSTranslationEditor:
             panel.hide()
         self.edit_text.config(state=tk.NORMAL, bg="#FFFFFF")
         self.edit_text.delete("1.0", tk.END)
-        self.translate_text.config(state=tk.NORMAL)
-        self._set_translation_text("", pending=False)
         self.space_stats_label.config(text="")
         self.translate_status_label.config(text="")
         self.current_range_label.config(text="")
@@ -1871,23 +1815,34 @@ class DOSTranslationEditor:
     def _display_entry(self, index, keep_filter=False):
         if not self._supported_loaded():
             return
-        
         self._cancel_free_space_update()
         self.current_index = index
         entry = self.entries[index]
         original_text = self._decode_entry_text(entry)
         is_news = self._is_newspaper_entry(entry)
         self._update_panel_action_buttons()
-        if getattr(self, "newspaper_editor_var", None) and self.newspaper_editor_var.get() and is_news:
+        use_newspaper = (getattr(self, "newspaper_editor_var", None) and self.newspaper_editor_var.get() and is_news)
+        ts = getattr(self, "translate_section", None)
+        translate_active = (getattr(self, "translate_enabled_var", None) and self.translate_enabled_var.get())
+        if use_newspaper:
             self.edit_text.config(state=tk.NORMAL)
             self.edit_text.delete("1.0", tk.END)
             if hasattr(self, "newspaper_panel"):
                 self.newspaper_panel.show(entry, decode_fn=self._decode_entry_text)
+                if translate_active:
+                    engine = self.engine_var.get()
+                    src    = self.source_lang_var.get()
+                    tgt    = self.target_lang_var.get()
+                    def _tr(text, _e=engine, _s=src, _t=tgt):
+                        from translator import translate_string as _ts
+                        return _ts(text, target_lang=_t, source_lang=_s, engine=_e)
+                    self.newspaper_panel.refresh_translation(True, _tr)
+            if ts is not None and ts.winfo_manager():
+                ts.pack_forget()
         else:
             if hasattr(self, "newspaper_panel") and self.newspaper_panel.winfo_manager():
                 self.newspaper_panel.hide()
-            else:
-                self._show_edit_text()
+            self._show_edit_text()
             self.edit_text.config(state=tk.NORMAL, bg="#FFFFFF")
             self.edit_text.delete("1.0", tk.END)
             self.edit_text.insert("1.0", original_text)
@@ -1895,8 +1850,13 @@ class DOSTranslationEditor:
             self.update_free_space_label()
             if not self.integrity_valid:
                 self.edit_text.config(state=tk.DISABLED, bg="#F2F3F4")
-            elif getattr(self, "translate_enabled_var", None) and self.translate_enabled_var.get():
-                self.translate_current(force=True)
+            if ts is not None:
+                if translate_active:
+                    if not ts.winfo_manager():
+                        ts.pack(fill=tk.X)
+                else:
+                    if ts.winfo_manager():
+                        ts.pack_forget()
         self._update_save_state()
         self._update_discard_button_state()
 
@@ -2051,18 +2011,12 @@ class DOSTranslationEditor:
     def _apply_text_widget(self, widget):
         if not self._supported_loaded() or self.current_index is None:
             return False
-        if widget is self.edit_text and self.translation_pending:
-            messagebox.showerror(self.tr("dlg.text_blocked.title"),
-                                 self.tr("dlg.text_blocked.translation"))
-            return False
         display_text = widget.get("1.0", "1.0 lineend")
         try:
             source_entry = self.entries[self.current_index]
             desired_bytes = self._encode_entry_text(source_entry, display_text)
             if desired_bytes == self._entry_raw_bytes(source_entry):
-                if widget is self.translate_text:
-                    self.translation_pending = False
-                self.translate_status_label.config(text=self.tr("tr.no_changes"))
+                self.translate_status_label.config(text=self.tr("tr.no_changes"), foreground="#27AE60")
                 self._update_save_state()
                 if self.filter_refresh_pending and not self._has_pending_filter_edit():
                     self.refresh_table(force=True, refresh_active_fields=True)
@@ -2080,23 +2034,16 @@ class DOSTranslationEditor:
             return False
 
         self._commit_text_transaction(work_data, work_entries, validation)
-        if widget is self.translate_text:
-            self.translation_pending = False
         self.refresh_table(force=True, refresh_active_fields=True)
         self._update_save_state()
         return True
 
-    def apply_translation(self):
-        return self._apply_text_widget(self.translate_text)
-
     def translate_current(self, *, force=False):
         if not self._supported_loaded() or self.current_index is None or not self.translate_enabled_var.get(): return
-        if self.translation_pending and not force:
-            messagebox.showwarning(self.tr("dlg.pending_translation.title"),
-                                   self.tr("dlg.pending_translation.new"))
-            return
-        self._set_translation_text("", pending=False)
-        self.translate_status_label.config(text=self.tr("tr.translating"))
+        self.translate_status_label.config(text="…", foreground="#1565C0")
+        btn = getattr(self, "translate_now_button", None)
+        if btn:
+            btn.config(state=tk.DISABLED)
         self.root.update_idletasks()
         try:
             entry = self.entries[self.current_index]
@@ -2115,11 +2062,20 @@ class DOSTranslationEditor:
             translated_bytes = self._encode_entry_text(entry, translated)
             translated_display = self._decode_raw_for_entry(entry, translated_bytes)
         except Exception as exc:
-            self.translate_status_label.config(text=self.tr("tr.error", error=exc))
+            self.translate_status_label.config(
+                text=self.tr("tr.error", error=exc), foreground="#C0392B")
+            if btn:
+                btn.config(state=tk.NORMAL)
             return
-        self._set_translation_text(translated_display, pending=False)
-        self.translate_status_label.config(text="")
-        self._update_text_widget(self.translate_text, update_stats=False)
+        self.edit_text.config(state=tk.NORMAL)
+        self.edit_text.delete("1.0", tk.END)
+        self.edit_text.insert("1.0", translated_display)
+        self.highlight_spaces()
+        self.on_text_modified()
+        self.translate_status_label.config(text="✔ Translated", foreground="#27AE60")
+        self.root.after(2000, lambda: self.translate_status_label.config(text="", foreground="#7F8C8D"))
+        if btn:
+            btn.config(state=tk.NORMAL)
         self._update_save_state()
 
     def translate_all(self):
@@ -2545,19 +2501,11 @@ class DOSTranslationEditor:
         pending_error = None
         if self.current_index is not None and self._supported_loaded():
             edit_pending = self._has_pending_text_edit()
-            translation_pending = bool(self.translation_pending)
             entry = self.entries[self.current_index]
-            if edit_pending and translation_pending:
-                pending_ids.add(entry["string_id"])
-                pending_error = (
-                    "Both edit and translation fields contain pending text; "
-                    "apply or discard one before previewing."
-                )
-            elif edit_pending or translation_pending:
-                widget = self.translate_text if translation_pending else self.edit_text
+            if edit_pending:
                 pending_ids.add(entry["string_id"])
                 try:
-                    display_text = widget.get("1.0", "1.0 lineend")
+                    display_text = self.edit_text.get("1.0", "1.0 lineend")
                     replacements[entry["string_id"]] = self._encode_entry_text(
                         entry, display_text
                     )
@@ -2867,13 +2815,6 @@ class DOSTranslationEditor:
         pending_raw = None
         if live_override and live_override[0] is entry:
             pending_raw = live_override[1].encode("latin-1")
-        elif self.translation_pending:
-            try:
-                pending_raw = self._encode_entry_text(
-                    entry, self.translate_text.get("1.0", "1.0 lineend")
-                )
-            except (CharmapEncodeError, TextTransactionError):
-                pending_raw = None
         try:
             info = selected_string_status(
                 self.initial_unpacked_data,
@@ -2981,9 +2922,7 @@ class DOSTranslationEditor:
         self.edit_text.config(state=tk.NORMAL, bg="#FFFFFF")
         self.edit_text.delete("1.0", tk.END)
         self.edit_text.config(height=1)
-        self.translate_text.config(state=tk.NORMAL, bg="#FFFFFF")
-        self._set_translation_text("", pending=False)
-        self.translate_text.config(height=1)
+        self.translation_pending = False
         self.space_stats_label.config(text="")
         self.translate_status_label.config(text="")
         self._set_profile("header.profile_none")
@@ -3225,7 +3164,7 @@ class DOSTranslationEditor:
         converted_to_extended = self._converted_to_extended
         self._reset_state()
         self._converted_to_extended = converted_to_extended
-        self._integrity_fixed = False  # will be set after load if auto-fix is applied
+        self._integrity_fixed = False 
         self.source_path = os.path.abspath(filepath)
         exe_dir = os.path.dirname(os.path.abspath(self.source_path))
         pic_folder = os.path.join(exe_dir, "PIC")
