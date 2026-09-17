@@ -209,7 +209,7 @@ class DOSTranslationEditor:
         self._profile_state = ("header.profile_none", None, "#2980B9")
         self.root.title(APP_TITLE)
         self._apply_window_icon()
-        self.root.geometry("1280x800")
+        self.root.geometry("1280x880")
         self.root.minsize(780, 600)
         self.exe_data              = bytearray()
         self.entries               = []
@@ -2601,7 +2601,7 @@ class DOSTranslationEditor:
     def _show_preview_dialog(self, snapshot):
         dialog = tk.Toplevel(self.root)
         dialog.title(self.tr("dlg.preview.title", profile=snapshot["profile_id"]))
-        dialog.geometry("1180x700")
+        dialog.geometry("1200x800")
         dialog.minsize(900, 520)
         dialog.transient(self.root)
 
