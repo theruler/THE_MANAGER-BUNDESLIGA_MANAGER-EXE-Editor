@@ -206,6 +206,7 @@ SEL_COLOR = "#00BFFF"
 TOOL_DRAW       = "draw"
 TOOL_SELECT     = "select"
 TOOL_PICK       = "pick"
+TOOL_FILL       = "fill"
 TOOL_MOVE_PASTE = "move_paste"
 TOOL_HAND       = "hand"
 
@@ -371,6 +372,8 @@ class _ImageCanvas(tk.Frame):
             cursor = "pencil"
         elif self._tool == TOOL_PICK:
             cursor = "target"
+        elif self._tool == TOOL_FILL:
+            cursor = "spraycan"
         elif self._tool == TOOL_MOVE_PASTE:
             if event is not None:
                 corner = self._paste_corner_at(event.x, event.y)
@@ -739,6 +742,9 @@ class _ImageCanvas(tk.Frame):
             if self._on_color_picked:
                 self._on_color_picked(*rgba)
 
+        elif self._tool == TOOL_FILL:
+            self._flood_fill(*pt)
+
     def _on_b1_motion(self, event):
         if self._tool == TOOL_HAND:
             if self._pan_start is not None:
@@ -865,6 +871,37 @@ class _ImageCanvas(tk.Frame):
         self._notify_modified()
         self._redraw()
 
+    def _flood_fill(self, px: int, py: int):
+        if self._img is None:
+            return
+        iw, ih = self._img.size
+        target_index = self._img.getpixel((px, py))
+        if isinstance(target_index, tuple):
+            target_index = target_index[0]
+        r, g, b, _ = self._draw_color
+        fill_index = _rgb_to_palette_index(r, g, b, self._palette)
+        if fill_index == target_index:
+            return
+        self._notify_stroke_start()
+        pixels = self._img.load()
+        stack = [(px, py)]
+        while stack:
+            cx, cy = stack.pop()
+            if not (0 <= cx < iw and 0 <= cy < ih):
+                continue
+            val = pixels[cx, cy]
+            if isinstance(val, tuple):
+                val = val[0]
+            if val != target_index:
+                continue
+            pixels[cx, cy] = fill_index
+            stack.append((cx + 1, cy))
+            stack.append((cx - 1, cy))
+            stack.append((cx, cy + 1))
+            stack.append((cx, cy - 1))
+        self._notify_modified()
+        self._redraw()
+
     def _paint_pixel_raw(self, px: int, py: int):
         if self._img is None:
             return
@@ -926,10 +963,13 @@ class PicEditorPanel(ttk.Frame):
         self._status_lbl.pack(side=tk.LEFT)
         self._pixel_lbl  = ttk.Label(sb, text="", foreground=MUTED)
         self._pixel_lbl.pack(side=tk.RIGHT)
+        self._hint_lbl = ttk.Label(sb, text="", foreground="#5D8AA8", font=("Segoe UI", 9))
+        self._hint_lbl.pack(side=tk.LEFT, padx=(16, 0))
         center = ttk.Frame(self)
         center.pack(fill=tk.BOTH, expand=True, side=tk.TOP)
-        sidebar = ttk.Frame(center, padding=(6, 6))
+        sidebar = ttk.Frame(center, padding=(6, 6), width=200)
         sidebar.pack(side=tk.RIGHT, fill=tk.Y, padx=(6, 0), pady=6)
+        sidebar.pack_propagate(False)
         self._build_toolbox(sidebar)
         self._canvas_frame = _ImageCanvas(
             center,
@@ -976,7 +1016,7 @@ class PicEditorPanel(ttk.Frame):
         f_tools.columnconfigure(1, weight=1)
         ttk.Radiobutton(f_tools, text="✏ Pencil", variable=self._tool_var, value=TOOL_DRAW, command=self._on_tool_change, style="Toolbutton").grid(row=0, column=0, sticky="ew", padx=1, pady=1)
         ttk.Radiobutton(f_tools, text="▢ Select", variable=self._tool_var, value=TOOL_SELECT, command=self._on_tool_change, style="Toolbutton").grid(row=0, column=1, sticky="ew", padx=1, pady=1)
-        ttk.Radiobutton(f_tools, text="🎯 Pick", variable=self._tool_var, value=TOOL_PICK, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=0, sticky="ew", padx=1, pady=1)
+        ttk.Radiobutton(f_tools, text="🪣 Fill", variable=self._tool_var, value=TOOL_FILL, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=0, sticky="ew", padx=1, pady=1)
         ttk.Radiobutton(f_tools, text="✋ Hand", variable=self._tool_var, value=TOOL_HAND, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=1, sticky="ew", padx=1, pady=1)
 
         f_sel = ttk.LabelFrame(parent, text="Pasted selection", padding=(4, 2))
@@ -1037,10 +1077,10 @@ class PicEditorPanel(ttk.Frame):
         ttk.Label(f_colors, text="Palette:", foreground=MUTED).pack(anchor="w", pady=(1, 0))
         self._swatch_frame = tk.Frame(f_colors, bg=BG)
         self._swatch_frame.pack(fill=tk.X, pady=(1, 2))
-        self._swatch_canvas = tk.Canvas(self._swatch_frame, width=160, height=64, highlightthickness=0, bd=0, bg=BG, yscrollincrement=1)
-        self._swatch_canvas.pack(side=tk.LEFT, anchor="center")
+        self._swatch_canvas = tk.Canvas(self._swatch_frame, highlightthickness=0, bd=0, bg=BG)
+        self._swatch_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self._swatch_canvas.bind("<Button-1>", self._on_swatch_click)
-        self._swatch_canvas.bind("<MouseWheel>", lambda e: self._swatch_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+        self._swatch_canvas.bind("<Configure>", lambda _e: self._draw_swatch())
         prow = ttk.Frame(f_colors)
         prow.pack(fill=tk.X, pady=(2, 0))
         ttk.Label(prow, text="Change:", foreground=MUTED).pack(side=tk.LEFT)
@@ -1079,6 +1119,10 @@ class PicEditorPanel(ttk.Frame):
         self.bind_all("<Escape>",        lambda _e: self._escape_action())
         
         self._draw_swatch()
+        self.after_idle(lambda: self._hint_lbl.config(
+            text=self._TOOL_HINTS.get(self._tool_var.get(), ""))
+            if hasattr(self, "_hint_lbl") else None
+        )
 
     def _on_resize_filter_changed(self, _event=None):
         label = self._resize_filter_var.get()
@@ -1446,46 +1490,42 @@ class PicEditorPanel(ttk.Frame):
         n = len(pal)
         if n == 0:
             return
-
+        if hasattr(self, "_swatch_vbar") and self._swatch_vbar.winfo_exists():
+            self._swatch_vbar.pack_forget()
+        c.update_idletasks()
+        available_w = c.winfo_width()
+        if available_w < 10:
+            available_w = 180
         if n > 32:
-            sq = 10
             cols = 16
         else:
-            sq = 20
             cols = 8
-
+        sq = max(6, available_w // cols)
         rows = (n + cols - 1) // cols
         canvas_w = cols * sq
-        canvas_h = min(rows * sq, 80)
-        c.config(width=canvas_w, height=canvas_h, scrollregion=(0, 0, canvas_w, rows * sq))
-
-        if rows * sq > canvas_h:
-            if not hasattr(self, "_swatch_vbar") or not self._swatch_vbar.winfo_exists():
-                self._swatch_vbar = ttk.Scrollbar(self._swatch_frame, orient=tk.VERTICAL, command=c.yview)
-                self._swatch_vbar.pack(side=tk.RIGHT, fill=tk.Y)
-                c.config(yscrollcommand=self._swatch_vbar.set)
-        else:
-            if hasattr(self, "_swatch_vbar") and self._swatch_vbar.winfo_exists():
-                self._swatch_vbar.pack_forget()
-            c.config(yscrollcommand="")
-
+        canvas_h = rows * sq
+        c.config(width=canvas_w, height=canvas_h, scrollregion=(0, 0, canvas_w, canvas_h))
         for i, (r, g, b) in enumerate(pal):
             col = i % cols
             row = i // cols
             x0, y0 = col * sq, row * sq
             c.create_rectangle(x0, y0, x0 + sq, y0 + sq, fill=f"#{r:02X}{g:02X}{b:02X}", outline="")
 
+
     def _on_swatch_click(self, event):
         pal = self._active_palette
         n = len(pal)
         if n > 32:
-            sq = 10
             cols = 16
         else:
-            sq = 20
             cols = 8
 
         c = self._swatch_canvas
+        available_w = c.winfo_width()
+        if available_w < 10:
+            available_w = 180
+        sq = max(6, available_w // cols)
+
         cy = int(c.canvasy(event.y))
         cx = int(c.canvasx(event.x))
         if cx < 0 or cy < 0:
@@ -1502,8 +1542,19 @@ class PicEditorPanel(ttk.Frame):
             self._canvas_frame.set_draw_color(rgba)
             self._update_color_display(rgba)
 
+    _TOOL_HINTS: dict[str, str] = {
+        TOOL_DRAW:   "Pencil — Left-click/drag to draw  │  Right-click to pick color",
+        TOOL_SELECT: "Select — Left-click/drag to select a region  │  Ctrl+C copy  │  Ctrl+V paste  │  ESC deselect",
+        TOOL_FILL:   "Fill — Left-click to flood-fill a region with the current color",
+        TOOL_HAND:   "Hand — Left-click/drag to pan the canvas  │  Scroll wheel to zoom",
+        TOOL_PICK:   "Pick — Left-click to sample a color from the canvas",
+    }
+
     def _on_tool_change(self):
-        self._canvas_frame.set_tool(self._tool_var.get())
+        tool = self._tool_var.get()
+        self._canvas_frame.set_tool(tool)
+        hint = self._TOOL_HINTS.get(tool, "")
+        self._hint_lbl.config(text=hint)
 
     def _on_zoom_change(self):
         try:
@@ -1614,7 +1665,7 @@ class PicEditorPanel(ttk.Frame):
 if __name__ == "__main__":
     _root = tk.Tk()
     _root.title("PIC Editor - Standalone")
-    _root.geometry("1200x760")
+    _root.geometry("1200x800")
     _panel = PicEditorPanel(_root)
     _panel.pack(fill=tk.BOTH, expand=True)
     if len(sys.argv) > 1:
