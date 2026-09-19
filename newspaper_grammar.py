@@ -1,41 +1,39 @@
-"""Grammar for the 179 newspaper strings (69 B1 headlines, 110 B3 articles).
-
-The engine parses a template made of literal text, one-character markers and
-nested selectors:
-
-    marker      %a %b %0 %1 %2 %3 %4 %5 %9 %c %d %t %e
-    selector    %xD1D2  branch # branch # ... #%
-
-D1 == 0 selects randomly among D2 branches, otherwise D1 is a context code and
-D2 is ignored. Nesting is two levels deep in every shipped EXE.
-
-Only literal text is ever translated; markers, selectors and the branch
-structure are carried through unchanged.
-"""
 import re
 
-MARKERS = {
-    "a": "TEAM_A",
-    "b": "TEAM_B",
-    "0": "SCORE_0",
-    "1": "SCORE_1",
-    "2": "PREV_0",
-    "3": "PREV_1",
-    "4": "LEAD_0",
-    "5": "LEAD_1",
-    "9": "ATTENDANCE",
-    "c": "PLAYER_1",
-    "d": "PLAYER_2",
-    "t": "MANAGER",
-    "e": "BREAK",
+MARKER_META: dict[str, tuple[str, str, str]] = {
+    "a": ("TEAM_A",      "TEAM A",      "#1565C0"),
+    "b": ("TEAM_B",      "TEAM B",      "#AD1457"),
+    "0": ("SCORE_A",     "END SCORE A", "#2E7D32"),
+    "1": ("SCORE_B",     "END SCORE B", "#00796B"),
+    "2": ("PREV_A",      "DISADV. A",   "#E65100"),
+    "3": ("PREV_B",      "DISADV. B",   "#BF360C"),
+    "4": ("LEAD_A",      "ADVANTAGE A", "#6A1B9A"),
+    "5": ("LEAD_B",      "ADVANTAGE B", "#4527A0"),
+    "9": ("ATTENDANCE",  "ATTENDANCE",  "#00838F"),
+    "c": ("BEST_PLAYER", "BEST PLAYER", "#558B2F"),
+    "d": ("WORST_PLAYER","WORST PLAYER","#827717"),
+    "t": ("MANAGER",     "MANAGER",     "#DAA520"),
+    "e": ("BREAK",       "\\n",         "#F57F17"),
 }
-MARKER_BY_NAME = {name: code for code, name in MARKERS.items()}
 
-KNOWN_SELECTORS = {"02", "03", "04", "10", "20", "30", "40", "50"}
+SELECTOR_META: dict[str, tuple[str, str]] = {
+    "02": ("RANDOM2",      "#4A235A"),
+    "03": ("RANDOM3",      "#6C3483"),
+    "04": ("RANDOM4",      "#8E44AD"),
+    "10": ("LOCATION",     "#3A1F14"),
+    "20": ("JUDGEMENT",    "#512A18"),
+    "30": ("OUTCOME",      "#6B3518"),
+    "40": ("SATISFACTION", "#874415"),
+    "50": ("MERIT",        "#A65D20"),
+}
+
+
+MARKERS = {code: meta[0] for code, meta in MARKER_META.items()}
+MARKER_BY_NAME = {meta[0]: code for code, meta in MARKER_META.items()}
+KNOWN_SELECTORS = set(SELECTOR_META.keys())
 HEX_DIGITS = set("0123456789ABCDEFabcdef")
 MARKER_PATTERN = re.compile(r"\[\[([A-Z0-9_:]+)\]\]")
 SELECTOR_REF_PATTERN = re.compile(r"\[\[SEL:(S\d{2})\]\]")
-
 
 class NewspaperGrammarError(ValueError):
     pass
@@ -215,7 +213,6 @@ def _encode_display(display, string_id, component_id, selector_lookup):
 
 
 def rebuild(rows, string_id="?"):
-    """Rebuild a template from its component rows (translated_text wins)."""
     by_id = {}
     for row in rows:
         key = row["component_id"]
@@ -262,5 +259,6 @@ def _text_of(row):
     return value
 
 
-__all__ = ["MARKERS", "MARKER_BY_NAME", "KNOWN_SELECTORS", "NewspaperGrammarError",
+__all__ = ["MARKER_META", "SELECTOR_META",
+           "MARKERS", "MARKER_BY_NAME", "KNOWN_SELECTORS", "NewspaperGrammarError",
            "parse", "components", "rebuild", "selector_codes"]

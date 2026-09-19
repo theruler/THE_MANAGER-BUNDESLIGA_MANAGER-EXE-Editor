@@ -7,68 +7,32 @@ import newspaper_grammar as NG
 from charmap import CharmapEncodeError
 from repack_validator import repack_transaction, validate_image
 
-_MARKER_COLOURS: dict[str, tuple[str, str]] = {
-    "TEAM_A":     ("#1565C0", "#FFFFFF"),
-    "TEAM_B":     ("#AD1457", "#FFFFFF"),
-    "SCORE_0":    ("#2E7D32", "#FFFFFF"),
-    "SCORE_1":    ("#00796B", "#FFFFFF"),
-    "PREV_0":     ("#E65100", "#FFFFFF"),
-    "PREV_1":     ("#BF360C", "#FFFFFF"),
-    "LEAD_0":     ("#6A1B9A", "#FFFFFF"),
-    "LEAD_1":     ("#4527A0", "#FFFFFF"),
-    "ATTENDANCE": ("#00838F", "#FFFFFF"),
-    "PLAYER_1":   ("#558B2F", "#FFFFFF"),
-    "PLAYER_2":   ("#827717", "#FFFFFF"),
-    "MANAGER":    ("#DAA520", "#FFFFFF"),
-}
-_SEL_COLOUR   = ("#78909C", "#FFFFFF")
-_BREAK_COLOUR = ("#F57F17", "#FFFFFF")
-
-_SELECTOR_CODE_NAMES: dict[str, str] = {
-    "02": "RANDOM_02",
-    "03": "RANDOM_03",
-    "04": "RANDOM_04",
-    "10": "CONTEXT_10",
-    "20": "CONTEXT_20",
-    "30": "CONTEXT_30",
-    "40": "CONTEXT_40",
-    "50": "CONTEXT_50",
-}
-
-_RANDOM_PALETTE: list[tuple[str, str]] = [
-    ("#4A235A", "#FFFFFF"),
-    ("#6C3483", "#FFFFFF"),
-    ("#8E44AD", "#FFFFFF"),
-    ("#A569BD", "#FFFFFF"),
-    ("#D2B4DE", "#FFFFFF"),
-]
-
-_CONTEXT_PALETTE: list[tuple[str, str]] = [
-    ("#784212", "#FFFFFF"),
-    ("#935116", "#FFFFFF"),
-    ("#B9770E", "#FFFFFF"),
-    ("#D68910", "#FFFFFF"),
-    ("#F0B27A", "#FFFFFF"),
-]
-
-def _semantic_name_from_code(selector_code: str) -> str:
-    return _SELECTOR_CODE_NAMES.get(selector_code.upper(), f"SEL:{selector_code}")
+_TEXT_FG = "#FFFFFF"
+_SEL_COLOUR   = "#78909C"
+_CONTEXT_BRANCH_COUNT: dict[str, int] = {"10": 2, "20": 4, "30": 3, "40": 2, "50": 2,}
+_MARKER_UI: dict[str, tuple[str, str]] = {meta[0]: (meta[1], meta[2]) for meta in NG.MARKER_META.values()}
+_SELECTOR_CODE_NAMES = NG.SELECTOR_META
 
 def _is_random_code(selector_code: str) -> bool:
     return selector_code[:1] == "0"
 
-def _instance_colour(instance_index: int, is_random: bool) -> tuple[str, str]:
-    palette = _RANDOM_PALETTE if is_random else _CONTEXT_PALETTE
-    return palette[instance_index % len(palette)]
+def _instance_colour(code: str, instance_index: int) -> tuple[str, str]:
+    base_hex = _SELECTOR_CODE_NAMES.get(code.upper(), ("", _SEL_COLOUR))[1]
+    if instance_index == 0 or not base_hex.startswith("#") or len(base_hex) != 7:
+        return (base_hex, _TEXT_FG)
+    step = 18 * instance_index
+    r = max(0, int(base_hex[1:3], 16) - step)
+    g = max(0, int(base_hex[3:5], 16) - step)
+    b = max(0, int(base_hex[5:7], 16) - step)
+    return (f"#{r:02X}{g:02X}{b:02X}", _TEXT_FG)
 
-_GROUP_COLOURS: list[tuple[str, str]] = [
-    ("#1A237E", "#C5CAE9"),
-    ("#1B5E20", "#C8E6C9"),
-    ("#4A148C", "#E1BEE7"),
-    ("#E65100", "#FFE0B2"),
-    ("#006064", "#B2EBF2"),
-    ("#880E4F", "#FCE4EC"),
-]
+_CONTEXT_BRANCH_LABELS: dict[str, list[str]] = {
+    "10": ["Away", "Home"],
+    "20": ["Poor", "Average", "Good", "Excellent"],
+    "30": ["Draw", "Win", "Loss"],
+    "40": ["Unsatisfied", "Satisfied"],
+    "50": ["Undeserved", "Deserved"],
+}
 
 class _DragState:
     def __init__(self):
@@ -158,7 +122,6 @@ class _TagLabel(tk.Label):
         self._deletable  = deletable
         self._on_change  = on_change
         self._row        = row
-
         self.bind("<ButtonPress-1>",   self._press)
         self.bind("<B1-Motion>",       self._motion)
         self.bind("<ButtonRelease-1>", self._release)
@@ -180,8 +143,7 @@ class _TagLabel(tk.Label):
     def _press(self, event):
         self._ds.active = self
         self.focus_set()
-        self._ds.show_ghost(self._display, self._bg, self._fg,
-                            event.x_root, event.y_root)
+        self._ds.show_ghost(self._display, self._bg, self._fg, event.x_root, event.y_root)
 
     def _motion(self, event):
         if self._ds.active is not self:
@@ -189,10 +151,8 @@ class _TagLabel(tk.Label):
         self._ds.move_ghost(event.x_root, event.y_root)
         if self._row is None:
             return
-        rx = max(0, min(event.x_root - self._tw.winfo_rootx(),
-                        self._tw.winfo_width() - 1))
-        ry = max(0, min(event.y_root - self._tw.winfo_rooty(),
-                        self._tw.winfo_height() - 1))
+        rx = max(0, min(event.x_root - self._tw.winfo_rootx(),self._tw.winfo_width() - 1))
+        ry = max(0, min(event.y_root - self._tw.winfo_rooty(),self._tw.winfo_height() - 1))
         try:
             drop_tk = self._tw.index(f"@{rx},{ry}")
             self._ds.show_cursor(self._tw, drop_tk)
@@ -209,17 +169,13 @@ class _TagLabel(tk.Label):
         if self._row is None:
             return
 
-        rx = max(0, min(event.x_root - self._tw.winfo_rootx(),
-                        self._tw.winfo_width() - 1))
-        ry = max(0, min(event.y_root - self._tw.winfo_rooty(),
-                        self._tw.winfo_height() - 1))
+        rx = max(0, min(event.x_root - self._tw.winfo_rootx(),self._tw.winfo_width() - 1))
+        ry = max(0, min(event.y_root - self._tw.winfo_rooty(),self._tw.winfo_height() - 1))
         drop_tk  = self._tw.index(f"@{rx},{ry}")
         src_tk   = self._my_index()
-
         tokens   = self._row._tokenise(self._tw)
         drag_pos = self._find_token_pos(tokens, src_tk)
         drop_pos, split_at = self._find_drop_pos(tokens, drop_tk)
-
         if drag_pos is None:
             return
         if split_at > 0 and drop_pos < len(tokens):
@@ -230,15 +186,12 @@ class _TagLabel(tk.Label):
                 if drop_pos < drag_pos:
                     drag_pos += 1
                 drop_pos += 1
-
         if drop_pos == drag_pos:
             return
-
         dragged = tokens.pop(drag_pos)
         if drop_pos > drag_pos:
             drop_pos -= 1
         tokens.insert(drop_pos, dragged)
-
         self._row._populate_widget(self._tw, _tokens_to_display(tokens))
         self._row._push_undo()
         if self._on_change:
@@ -289,6 +242,45 @@ class _TagLabel(tk.Label):
                 panel._remove_sel_component(sel_key)
         return "break"
 
+class _WrapFrame(tk.Frame):
+    pass
+
+    def __init__(self, parent, bg="#F4F6F9", h_gap=6, v_gap=2, **kw):
+        super().__init__(parent, bg=bg, **kw)
+        self._bg    = bg
+        self._h_gap = h_gap
+        self._v_gap = v_gap
+        self._children: list[tk.Widget] = []
+        self.bind("<Configure>", lambda _e: self.after_idle(self._relayout))
+
+    def add(self, widget: tk.Widget):
+        self._children.append(widget)
+        self.after_idle(self._relayout)
+
+    def _relayout(self):
+        self.update_idletasks()
+        avail = self.winfo_width()
+        if avail <= 1:
+            self.after(30, self._relayout)
+            return
+        x, y, row_h = 0, 0, 0
+        for child in self._children:
+            child.update_idletasks()
+            w = child.winfo_reqwidth()
+            h = child.winfo_reqheight()
+            if w <= 0:
+                w = 10
+            if x > 0 and x + w > avail:
+                x = 0
+                y += row_h + self._v_gap
+                row_h = 0
+            child.place(x=x, y=y, width=w, height=h)
+            x += w + self._h_gap
+            row_h = max(row_h, h)
+        total_h = y + row_h
+        self.config(height=max(total_h, 4))
+
+
 class _ComponentEditor:
     def __init__(self, parent: tk.Widget, component: dict,
                  drag_state: _DragState,
@@ -308,22 +300,14 @@ class _ComponentEditor:
         self._panel       = panel
         self._undo:        list[str] = []
         self._committed: str       = component["source_text"]
-
         outer = tk.Frame(parent, bg="#BDC3C7", bd=1)
         outer.pack(side=tk.LEFT, anchor="nw")
-        self.widget = tk.Text(
-            outer, height=1, wrap="none",
-            font=("Consolas", 10, "bold"),
-            bg="#FFFFFF", fg="#1A252F",
-            insertbackground="#1A252F",
-            relief="flat", padx=4, pady=2,
-        )
+        self.widget = tk.Text(outer, height=1, width=30, wrap="none",font=("Consolas", 10, "bold"),bg="#FFFFFF", fg="#1A252F",insertbackground="#1A252F",relief="flat", padx=4, pady=2,)
         self.widget.pack(side=tk.LEFT)
         self.widget.bind("<KeyRelease>", self._on_key)
         self.widget.bind("<Return>",     self._on_return)
         self.widget.bind("<Control-z>",  self._undo_cb)
         self.widget.bind("<Control-Z>",  self._undo_cb)
-
         self._populate(component["source_text"])
         self._push_undo()
 
@@ -357,8 +341,7 @@ class _ComponentEditor:
     _SPACE_TAG = "_space_bg"
 
     def _apply_space_highlight(self, tw: tk.Text):
-        tw.tag_configure(self._SPACE_TAG,
-                         background="#BBDEFB", foreground="#0D47A1")
+        tw.tag_configure(self._SPACE_TAG,background="#BBDEFB", foreground="#0D47A1")
         tw.tag_remove(self._SPACE_TAG, "1.0", tk.END)
         idx = "1.0"
         while True:
@@ -389,7 +372,8 @@ class _ComponentEditor:
 
     def _insert_marker(self, tw: tk.Text, name: str):
         if name == "BREAK":
-            badge = _TagLabel(tw, "BREAK", "\\n", *_BREAK_COLOUR,
+            display, colour = _MARKER_UI["BREAK"]
+            badge = _TagLabel(tw, "BREAK", display, colour, _TEXT_FG,
                               self._ds, deletable=True,
                               on_change=self._on_change, row=self)
             tw.window_create(tk.END, window=badge)
@@ -398,21 +382,16 @@ class _ComponentEditor:
             if sel_key in self._sel_meta:
                 display, colour = self._sel_meta[sel_key]
             elif sel_key.upper() in _SELECTOR_CODE_NAMES:
-                display = _semantic_name_from_code(sel_key)
-                colour  = (_RANDOM_PALETTE[0] if _is_random_code(sel_key)
-                           else _CONTEXT_PALETTE[0])
+                display = _SELECTOR_CODE_NAMES[sel_key.upper()][0]
+                colour  = _instance_colour(sel_key.upper(), 0)
             else:
                 display = sel_key
-                colour  = _SEL_COLOUR
-            badge = _TagLabel(tw, name, display, *colour,
-                              self._ds, deletable=False,
-                              on_change=self._on_change, row=self)
+                colour  = (_SEL_COLOUR, _TEXT_FG)
+            badge = _TagLabel(tw, name, display, *colour, self._ds,deletable=False,on_change=self._on_change, row=self)
             tw.window_create(tk.END, window=badge)
         else:
-            colours = _MARKER_COLOURS.get(name, ("#607D8B", "#FFFFFF"))
-            badge = _TagLabel(tw, name, name, *colours,
-                              self._ds, deletable=False,
-                              on_change=self._on_change, row=self)
+            display, colour = _MARKER_UI.get(name, (name, "#607D8B"))
+            badge = _TagLabel(tw, name, display, colour, _TEXT_FG,self._ds, deletable=False,on_change=self._on_change, row=self)
             tw.window_create(tk.END, window=badge)
 
     def _tokenise(self, tw: tk.Text) -> list[tuple[str, str]]:
@@ -473,36 +452,23 @@ class _ComponentEditor:
     def _resize(self):
         tw = self.widget
         tw.update_idletasks()
-
         import tkinter.font as tkfont
         f = tkfont.Font(font=tw.cget("font"))
         char_w_px = f.measure("W")
         if char_w_px < 1:
             char_w_px = 8
-
-        n_windows = len(tw.window_names())
-        raw_text  = tw.get("1.0", "end-1c").replace("\n", "")
-        text_px   = f.measure(raw_text) if raw_text else 0
+        raw_text = tw.get("1.0", "end-1c").replace("\n", "")
+        text_px  = f.measure(raw_text) if raw_text else 0
         badge_px = 0
         for wname in tw.window_names():
             try:
                 w = tw.nametowidget(wname)
                 badge_px += w.winfo_reqwidth()
             except Exception:
-                badge_px += char_w_px * 5 
-        total_px  = text_px + badge_px + 12 
-        content_chars = max(int(total_px / char_w_px) + 1, 1)
-        new_width = content_chars + 3
-        tw.config(width=max(new_width, 4))
-
-        tw.update_idletasks()
-        total_lines = int(tw.index("end-1c").split(".")[0])
-        lines = 0
-        for ln in range(1, total_lines + 1):
-            result = tw.count(f"{ln}.0", f"{ln}.end", "displaylines")
-            dl = (result[0] if isinstance(result, tuple) else result) or 0
-            lines += dl + 1
-        tw.config(height=max(lines, 1))
+                badge_px += char_w_px * 5
+        total_px = text_px + badge_px + 12
+        new_width = max(int(total_px / char_w_px) + 4, 4)
+        tw.config(width=new_width, height=1)
 
     def _push_undo(self):
         try:
@@ -587,7 +553,6 @@ class _ComponentEditor:
         except CharmapEncodeError:
             pass
 
-
 def _group_components(comps: list[dict]) -> list[dict | list[dict]]:
     groups: dict[str, list[dict]] = {}
     order:  list[str] = []
@@ -610,14 +575,9 @@ def _group_components(comps: list[dict]) -> list[dict | list[dict]]:
         result.append(groups[sel])
     return result
 
-def _group_bg(index: int) -> tuple[str, str]:
-    return _GROUP_COLOURS[index % len(_GROUP_COLOURS)]
-
 
 class _PoolDragBadge:
-    def __init__(self, label: tk.Label, marker_name: str, display: str,
-                 bg: str, fg: str, drag_state: _DragState,
-                 panel: "NewspaperEditorPanel"):
+    def __init__(self, label: tk.Label, marker_name: str, display: str,bg: str, fg: str, drag_state: _DragState,panel: "NewspaperEditorPanel"):
         self._lbl         = label
         self.marker_name  = marker_name
         self._display     = display
@@ -625,15 +585,13 @@ class _PoolDragBadge:
         self._fg          = fg
         self._ds          = drag_state
         self._panel       = panel
-
         label.bind("<ButtonPress-1>",   self._press)
         label.bind("<B1-Motion>",       self._motion)
         label.bind("<ButtonRelease-1>", self._release)
 
     def _press(self, event):
         self._ds.active = self
-        self._ds.show_ghost(self._display, self._bg, self._fg,
-                            event.x_root, event.y_root)
+        self._ds.show_ghost(self._display, self._bg, self._fg,event.x_root, event.y_root)
 
     def _motion(self, event):
         self._ds.move_ghost(event.x_root, event.y_root)
@@ -709,7 +667,7 @@ class _PoolDragBadge:
             ed._push_undo()
             if ed._on_change:
                 ed._on_change()
-            self._panel._add_sel_component_for(self.marker_name, selector_override=selector)
+            self._panel._add_sel_component_for(self.marker_name, selector_override=selector, dropped_into_ed=ed)
         else:
             tokens.insert(insert_at, ("marker", self.marker_name))
             ed._populate_widget(tw, _tokens_to_display(tokens))
@@ -747,6 +705,7 @@ class NewspaperEditorPanel(ttk.Frame):
         self._ds       = _DragState()
         self._entry:   dict | None = None
         self._comps:   list[dict]  = []
+        self._raw_decode_fn: "Callable | None" = None
         self._decode_fn: "Callable[[str], str]" = lambda t: t
         self._encode_fn: "Callable[[str], str]" = lambda t: t
         self._dirty_hint = False
@@ -757,10 +716,7 @@ class NewspaperEditorPanel(ttk.Frame):
     def _build_shell(self):
         self._hdr = ttk.Frame(self)
         self._hdr.pack(fill=tk.X, pady=(8, 2))
-        ttk.Label(self._hdr,
-                  text="📰  Newspaper String Editor",
-                  font=("Segoe UI", 10, "bold"),
-                  foreground="#1565C0").pack(side=tk.LEFT)
+        ttk.Label(self._hdr,text="📰  Newspaper String Editor",font=("Segoe UI", 10, "bold"),foreground="#1565C0").pack(side=tk.LEFT)
         self._status_lbl = ttk.Label(self._hdr, text="",font=("Segoe UI", 9, "italic"),foreground="#27AE60")
         self._status_lbl.pack(side=tk.RIGHT, padx=(0, 8))
         self._err_lbl = ttk.Label(self._hdr, text="",font=("Segoe UI", 9, "italic"),foreground="#C0392B")
@@ -831,43 +787,37 @@ class NewspaperEditorPanel(ttk.Frame):
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self._inner = ttk.Frame(self._canvas)
-        self._win_id = self._canvas.create_window(
-            (0, 0), window=self._inner, anchor="nw")
+        self._win_id = self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
         self._inner.bind("<Configure>",  self._on_inner_cfg)
         self._canvas.bind("<Configure>", self._on_canvas_cfg)
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
             self._canvas.bind(seq, self._scroll)
-        
+        self._build_pool()
 
-    def _build_pool(self, sel_meta: "dict[str, tuple[str, tuple[str,str]]] | None" = None):
+    def _build_pool(self):
         for w in self._pool_inner.winfo_children():
             w.destroy()
+
+        def _pool_label(parent, text, left_pad=0):
+            ttk.Label(parent, text=text,font=("Segoe UI", 7, "bold"),foreground="#546E7A",background="#E8EAF6").pack(side=tk.LEFT, padx=(left_pad, 6))
         row1 = tk.Frame(self._pool_inner, bg="#E8EAF6")
         row1.pack(fill=tk.X, pady=1)
-        ttk.Label(row1, text="TAG:",
-                  font=("Segoe UI", 7, "bold"),
-                  foreground="#546E7A",
-                  background="#E8EAF6").pack(side=tk.LEFT, padx=(0, 6))
-        self._make_pool_badge(row1, "BREAK", "\\n", *_BREAK_COLOUR)
-        for name, (bg, fg) in _MARKER_COLOURS.items():
-            self._make_pool_badge(row1, name, name, bg, fg)
+        _pool_label(row1, "TAG:")
+        for name, (display, colour) in _MARKER_UI.items():
+            self._make_pool_badge(row1, name, display, colour, _TEXT_FG)
         row2 = tk.Frame(self._pool_inner, bg="#E8EAF6")
         row2.pack(fill=tk.X, pady=1)
-        ttk.Label(row2, text="RANDOM / CONTEXT:",
-                  font=("Segoe UI", 7, "bold"),
-                  foreground="#546E7A",
-                  background="#E8EAF6").pack(side=tk.LEFT, padx=(0, 6))
-        for i, (code, semantic) in enumerate(_SELECTOR_CODE_NAMES.items()):
-            is_rnd = _is_random_code(code)
-            palette = _RANDOM_PALETTE if is_rnd else _CONTEXT_PALETTE
-            colour = palette[i % len(palette)]
-            self._make_pool_badge(row2, f"SEL:{code}", semantic, *colour)
+        _pool_label(row2, "RANDOM:")
+        for code, (display, bg) in _SELECTOR_CODE_NAMES.items():
+            if _is_random_code(code):
+                self._make_pool_badge(row2, f"SEL:{code}", display, bg, _TEXT_FG)
+        _pool_label(row2, "CONTEXT:", left_pad=16)
+        for code, (display, bg) in _SELECTOR_CODE_NAMES.items():
+            if not _is_random_code(code):
+                self._make_pool_badge(row2, f"SEL:{code}", display, bg, _TEXT_FG)
 
     def _make_pool_badge(self, parent, marker_name: str, display: str, bg: str, fg: str):
-        lbl = tk.Label(parent, text=display,
-                       bg=bg, fg=fg,
-                       font=("Segoe UI", 8, "bold"),
-                       padx=5, pady=1, relief="flat", cursor="hand2")
+        lbl = tk.Label(parent, text=display,bg=bg, fg=fg,font=("Segoe UI", 8, "bold"),padx=5, pady=1, relief="flat", cursor="hand2")
         lbl.pack(side=tk.LEFT, padx=2)
         pdb = _PoolDragBadge(lbl, marker_name, display, bg, fg, self._ds, panel=self)
         lbl._pdb = pdb 
@@ -903,9 +853,6 @@ class NewspaperEditorPanel(ttk.Frame):
         next_num = max(existing_nums, default=0) + 1
         selector = f"S{next_num:02d}"
 
-        _CONTEXT_BRANCH_COUNT: dict[str, int] = {
-            "10": 2, "20": 4, "30": 3, "40": 2, "50": 2,
-        }
         is_rnd = _is_random_code(code_upper)
         if is_rnd:
             try:
@@ -921,13 +868,13 @@ class NewspaperEditorPanel(ttk.Frame):
             and _is_random_code(c.get("selector_code", "")) == is_rnd
             and c.get("branch_index") == "1"
         )
-        semantic = _semantic_name_from_code(code_upper)
-        colour = _instance_colour(instance_index, is_rnd)
-        label = f"{semantic}({instance_index + 1})"
+        semantic = _SELECTOR_CODE_NAMES[code_upper][0]
+        colour   = _instance_colour(code_upper, instance_index)
+        label    = f"{semantic}({instance_index + 1})"
 
         return selector, code_upper, label, colour, n_branches
 
-    def _add_sel_component_for(self, marker_name: str, selector_override: str | None = None):
+    def _add_sel_component_for(self, marker_name: str, selector_override: str | None = None, dropped_into_ed=None):
         raw_key = marker_name[4:]
         code_upper = raw_key.upper()
         ed_by_id = {e.component_id(): e for e in self._editors}
@@ -938,10 +885,6 @@ class NewspaperEditorPanel(ttk.Frame):
                     comp["source_text"] = ed.get_source()
                 except CharmapEncodeError:
                     pass
-
-        _CONTEXT_BRANCH_COUNT: dict[str, int] = {
-            "10": 2, "20": 4, "30": 3, "40": 2, "50": 2,
-        }
 
         if code_upper in _SELECTOR_CODE_NAMES:
             if selector_override:
@@ -959,8 +902,11 @@ class NewspaperEditorPanel(ttk.Frame):
                 selector, selector_code, _label, _colour, n_branches = \
                     self._allocate_selector(code_upper)
 
-            root_comp = next((c for c in self._comps if not c.get("selector", "")), None)
-            parent_id = root_comp["component_id"] if root_comp else "ROOT"
+            if dropped_into_ed is not None:
+                parent_id = dropped_into_ed.component_id()
+            else:
+                root_comp = next((c for c in self._comps if not c.get("selector", "")), None)
+                parent_id = root_comp["component_id"] if root_comp else "ROOT"
 
             for branch_idx in range(1, n_branches + 1):
                 new_comp = {
@@ -979,8 +925,12 @@ class NewspaperEditorPanel(ttk.Frame):
                  if c.get("selector") == selector), "")
             existing_branches = [c for c in self._comps if c.get("selector") == selector]
             idx = len(existing_branches)
-            root_comp = next((c for c in self._comps if not c.get("selector", "")), None)
-            parent_id = root_comp["component_id"] if root_comp else "ROOT"
+
+            if dropped_into_ed is not None:
+                parent_id = dropped_into_ed.component_id()
+            else:
+                root_comp = next((c for c in self._comps if not c.get("selector", "")), None)
+                parent_id = root_comp["component_id"] if root_comp else "ROOT"
             new_comp = {
                 "component_id":  f"{selector}.{idx + 1}",
                 "parent_id":     parent_id,
@@ -990,7 +940,6 @@ class NewspaperEditorPanel(ttk.Frame):
                 "source_text":   "",
             }
             self._comps.append(new_comp)
-
         self._build_layout(False, None)
         
 
@@ -1003,13 +952,12 @@ class NewspaperEditorPanel(ttk.Frame):
                     comp["source_text"] = ed.get_source()
                 except CharmapEncodeError:
                     pass
-        root_comp = next((c for c in self._comps if not c.get("selector", "")), None)
-        if root_comp:
-            root_comp["source_text"] = root_comp["source_text"].replace(
-                f"[[SEL:{sel_key}]]", "")
+        tag = f"[[SEL:{sel_key}]]"
+        for comp in self._comps:
+            if tag in comp["source_text"]:
+                comp["source_text"] = comp["source_text"].replace(tag, "")
         self._comps = [c for c in self._comps if c.get("selector", "") != sel_key]
         self._build_layout(False, None)
-        
         self._on_any_change()
 
     def _remove_branch_field(self, branch: dict, ed: "_ComponentEditor"):
@@ -1021,41 +969,32 @@ class NewspaperEditorPanel(ttk.Frame):
             comp_id = branch.get("component_id", "")
             self._comps = [c for c in self._comps if c.get("component_id") != comp_id]
             self._build_layout(False, None)
-            
             self._on_any_change()
 
     def show(self, entry: dict, decode_fn: Callable,
              translate_enabled: bool = False,
              translate_fn: Callable | None = None):
         self._entry    = entry
+        self._raw_decode_fn = decode_fn
 
         try:
-            self._decode_fn = lambda text, _e=entry: self._editor._decode_raw_for_entry(
-                _e, text.encode("latin-1", errors="replace")
-            )
-            self._encode_fn = lambda text, _e=entry: self._editor._encode_entry_text(
-                _e, text
-            ).decode("latin-1")
+            self._decode_fn = lambda text, _e=entry: self._editor._decode_raw_for_entry( _e, text.encode("latin-1", errors="replace"))
+            self._encode_fn = lambda text, _e=entry: self._editor._encode_entry_text(_e, text).decode("latin-1")
         except Exception:
             self._decode_fn = lambda t: t
             self._encode_fn = lambda t: t
-
         self._err_lbl.config(text="")
         self._status_lbl.config(text="")
-
         try:
             raw_template = decode_fn(entry)
-            self._comps  = NG.components(raw_template,
-                                         entry.get("string_id", "?"))
+            self._comps  = NG.components(raw_template,entry.get("string_id", "?"))
         except Exception as exc:
             self._err_lbl.config(text=f"Parse error: {exc}")
             self._comps = []
-
         if translate_enabled:
             self._tr_frame.pack(fill=tk.X, after=self._hdr, padx=4, pady=(0, 4))
         else:
             self._tr_frame.pack_forget()
-
         self._build_layout(translate_enabled, translate_fn)
         self._dirty_hint = False
         if self._on_show_cb is not None:
@@ -1096,107 +1035,101 @@ class NewspaperEditorPanel(ttk.Frame):
                 if sel in sel_meta:
                     continue
                 if code.upper() in _SELECTOR_CODE_NAMES:
-                    semantic = _semantic_name_from_code(code) 
-                    is_rnd   = _is_random_code(code)
-                    colour   = _instance_colour(instance_counter, is_rnd)
+                    semantic = _SELECTOR_CODE_NAMES[code.upper()][0]
+                    colour   = _instance_colour(code.upper(), instance_counter)
                     label    = f"{semantic}({instance_counter + 1})"
                     instance_counter += 1
                 else:
-                    colour = _group_bg(fallback_index)
+                    colour = (_SEL_COLOUR, _TEXT_FG)
                     label  = sel
                     fallback_index += 1
                 sel_meta[sel] = (label, colour)
 
-        self._build_pool(sel_meta)
+        comp_by_id = {c["component_id"]: c for c in self._comps}
+        id_to_depth: dict[str, int] = {}
+
+        def _get_depth(cid: str) -> int:
+            if cid in id_to_depth:
+                return id_to_depth[cid]
+            c = comp_by_id.get(cid)
+            if c is None or not c.get("parent_id") or c.get("parent_id") == cid:
+                id_to_depth[cid] = 0
+                return 0
+            d = _get_depth(c["parent_id"]) + 1
+            id_to_depth[cid] = d
+            return d
+
+        for c in self._comps:
+            _get_depth(c["component_id"])
+
+        sel_to_depth: dict[str, int] = {}
+        for c in self._comps:
+            sel = c.get("selector", "")
+            if sel and sel not in sel_to_depth:
+                sel_to_depth[sel] = _get_depth(c["component_id"])
 
         for item in groups:
             if isinstance(item, dict):
                 self._add_root_row(item, translate_enabled, translate_fn, sel_meta)
             else:
                 sel_name = item[0]["selector"]
-                label, (bg, fg) = sel_meta.get(sel_name, (sel_name, _SEL_COLOUR))
-                self._add_sel_row(item, label, bg, fg, translate_enabled, translate_fn, sel_meta)
+                label, (bg, fg) = sel_meta.get(sel_name, (sel_name, (_SEL_COLOUR, _TEXT_FG)))
+                indent = sel_to_depth.get(sel_name, 1)
+                self._add_sel_row(item, label, bg, fg, translate_enabled, translate_fn,
+                                  sel_meta, indent_level=max(indent, 1))
         self.after_idle(self._recalc_canvas_height)
 
-    def _add_root_row(self, comp: dict,
-                      translate_enabled: bool,
-                      translate_fn: Callable | None,
-                      sel_meta: "dict[str, tuple[str, tuple[str,str]]] | None" = None):
+    def _add_root_row(self, comp: dict,translate_enabled: bool,translate_fn: Callable | None,sel_meta: "dict[str, tuple[str, tuple[str,str]]] | None" = None):
         outer = ttk.Frame(self._inner)
         outer.pack(fill=tk.X, padx=4, pady=(0, 2))
-
-        ttk.Label(outer,
-                  text="ROOT",
-                  font=("Segoe UI", 8, "bold"),
-                  foreground="#546E7A").pack(anchor=tk.W)
-
-        ed = _ComponentEditor(outer, comp, self._ds,
-                              on_change=self._on_any_change,
-                              sel_meta=sel_meta or {},
-                              decode_fn=self._decode_fn,
-                              encode_fn=self._encode_fn,
-                              panel=self)
+        hdr = ttk.Frame(outer)
+        hdr.pack(fill=tk.X)
+        ttk.Label(hdr,text="ROOT",font=("Segoe UI", 8, "bold"),foreground="#546E7A").pack(side=tk.LEFT, anchor=tk.W)
+        content_frame = tk.Frame(outer, bg="#F4F6F9")
+        content_frame.pack(fill=tk.X)
+        ed = _ComponentEditor(content_frame, comp, self._ds,on_change=self._on_any_change,fixed_width=True,sel_meta=sel_meta or {},decode_fn=self._decode_fn,encode_fn=self._encode_fn,panel=self)
         self._editors.append(ed)
-
         if translate_enabled and translate_fn:
             ed.translate_content(translate_fn)
 
-    def _add_sel_row(self, branches: list[dict],
-                     label: str,
-                     bg: str, fg: str,
-                     translate_enabled: bool,
-                     translate_fn: Callable | None,
-                     sel_meta=None):
-
+    def _add_sel_row(self, branches: list[dict],label: str,bg: str, fg: str,translate_enabled: bool,translate_fn: Callable | None,sel_meta=None,indent_level: int = 1):
         if not branches:
             return
-
         if sel_meta is None:
             sel_meta = {}
-
         sel_name = branches[0]["selector"]
-
+        sel_code = branches[0].get("selector_code", "").upper()
+        is_rnd   = _is_random_code(sel_code)
+        branch_sublabels = _CONTEXT_BRANCH_LABELS.get(sel_code, [])
+        indent_px = indent_level * 20
         outer = tk.Frame(self._inner, bg="#F4F6F9")
-        outer.pack(fill=tk.X, padx=4, pady=(0, 3))
-        tag_lbl = tk.Label(outer,
-                           text=label,
-                           font=("Segoe UI", 8, "bold"),
-                           bg=bg, fg=fg,
-                           padx=4, pady=3,
-                           relief="flat",
-                           cursor="hand2")
-        tag_lbl.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 4))
+        outer.pack(fill=tk.X, padx=(4 + indent_px, 4), pady=(0, 3))
+        tag_lbl = tk.Label(outer,text=label,font=("Segoe UI", 8, "bold"),bg=bg, fg=fg,padx=4, pady=3,relief="flat",cursor="hand2")
+        tag_lbl.pack(side=tk.LEFT, anchor=tk.N, padx=(0, 6))
         tag_lbl.bind("<Button-3>", lambda e, _s=sel_name: self._remove_sel_component(_s))
-
-        fields_frame = tk.Frame(outer, bg="#F4F6F9")
-        fields_frame.pack(side=tk.LEFT, fill=tk.NONE, expand=False)
-
-        def add_branch_field(branch: dict):
+        fields_frame = _WrapFrame(outer, bg="#F4F6F9", h_gap=6, v_gap=2)
+        fields_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, anchor="nw")
+        for branch_idx, branch in enumerate(branches):
             cell = tk.Frame(fields_frame, bg="#F4F6F9")
-            cell.pack(side=tk.LEFT, fill=tk.NONE, expand=False, padx=(0, 4))
-            ed = _ComponentEditor(cell, branch, self._ds,
-                                  on_change=self._on_any_change,
-                                  fixed_width=False,
-                                  sel_meta=sel_meta,
-                                  decode_fn=self._decode_fn,
-                                  encode_fn=self._encode_fn,
-                                  panel=self)
+            if not is_rnd:
+                if branch_idx < len(branch_sublabels):
+                    sub_text = branch_sublabels[branch_idx]
+                else:
+                    sub_text = f"[{branch_idx + 1}]"
+                sub_lbl = tk.Label(cell, text=sub_text + ":",font=("Segoe UI", 8, "italic"),fg="#555555")
+                sub_lbl.pack(side=tk.LEFT, anchor="center", padx=(0, 2))
+            ed = _ComponentEditor(cell, branch, self._ds,on_change=self._on_any_change,fixed_width=False,sel_meta=sel_meta,decode_fn=self._decode_fn,encode_fn=self._encode_fn,panel=self)
             self._editors.append(ed)
-            ed.widget.bind("<Button-3>", lambda e, _b=branch, _ed=ed: self._remove_branch_field(_b, _ed))
-
+            ed.widget.bind("<Button-3>",lambda e, _b=branch, _ed=ed: self._remove_branch_field(_b, _ed))
             if translate_enabled and translate_fn:
                 ed.translate_content(translate_fn)
+            fields_frame.add(cell)
 
-        for branch in branches:
-            add_branch_field(branch)
-
-    def refresh_translation(self, enabled: bool,
-                            translate_fn: Callable | None = None):
+    def refresh_translation(self, enabled: bool,translate_fn: Callable | None = None):
         if enabled:
             self._tr_frame.pack(fill=tk.X, after=self._hdr, padx=4, pady=(0, 4))
         else:
             self._tr_frame.pack_forget()
-
         if self._entry and self._comps:
             was_dirty = self._dirty_hint
             self._build_layout(enabled, None)
@@ -1309,25 +1242,30 @@ class NewspaperEditorPanel(ttk.Frame):
             detail = validation["errors"][0] if validation.get("errors") else "Unknown error"
             self._err_lbl.config(text=detail)
             return
-
         editor._commit_text_transaction(staged_data, staged_entries, validation)
         editor.translation_pending = False
         editor.refresh_table(force=True, refresh_active_fields=True)
         editor._update_save_state()
-
         for ed in self._editors:
             ed.commit()
         self._dirty_hint = False
-
         self._err_lbl.config(text="")
         self._status_lbl.config(text="✔ Saved")
         self.after(2500, lambda: self._status_lbl.config(text=""))
 
     def discard(self):
-        for ed in self._editors:
-            ed.discard()
+        if self._entry is not None and self._raw_decode_fn is not None:
+            try:
+                raw_template = self._raw_decode_fn(self._entry)
+                self._comps  = NG.components(
+                    raw_template, self._entry.get("string_id", "?"))
+            except Exception:
+                pass
+            self._build_layout(False, None)
+        else:
+            for ed in self._editors:
+                ed.discard()
         self._dirty_hint = False
-
         self._err_lbl.config(text="")
         self._status_lbl.config(text="")
         try:
