@@ -547,9 +547,7 @@ class _ImageCanvas(tk.Frame):
         iw, ih = self._img.size
         z = self._zoom
         dw, dh = iw * z, ih * z
-        self._tk_img = ImageTk.PhotoImage(
-            self._display_image().resize((dw, dh), Image.NEAREST)
-        )
+        self._tk_img = ImageTk.PhotoImage(self._display_image().resize((dw, dh), Image.NEAREST))
         c.create_image(0, 0, anchor="nw", image=self._tk_img, tags="image")
 
         if self._show_grid and z >= 4:
@@ -855,7 +853,6 @@ class _ImageCanvas(tk.Frame):
         sx = 1 if x0 < x1 else -1
         sy = 1 if y0 < y1 else -1
         err = dx - dy
-
         while True:
             self._paint_pixel_raw(x0, y0)
             if x0 == x1 and y0 == y1:
@@ -971,11 +968,7 @@ class PicEditorPanel(ttk.Frame):
         sidebar.pack(side=tk.RIGHT, fill=tk.Y, padx=(6, 0), pady=6)
         sidebar.pack_propagate(False)
         self._build_toolbox(sidebar)
-        self._canvas_frame = _ImageCanvas(
-            center,
-            on_modified=self._on_canvas_modified,
-            on_color_picked=self._on_color_picked_from_canvas,
-        )
+        self._canvas_frame = _ImageCanvas(center,on_modified=self._on_canvas_modified,on_color_picked=self._on_color_picked_from_canvas,)
         self._canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)
         self._canvas_frame._canvas.bind("<Motion>", self._on_mouse_move, add="+")
         self._canvas_frame._zoom_changed_callback = (lambda z: self._zoom_var.set(z))
@@ -1009,7 +1002,6 @@ class PicEditorPanel(ttk.Frame):
         self._info_lbl.pack(side=tk.LEFT, anchor="w")
         self._dirty_lbl = ttk.Label(info_row, text="", foreground=RED, font=("Segoe UI", 9, "bold"))
         self._dirty_lbl.pack(side=tk.RIGHT, anchor="e")
-        
         f_tools = ttk.LabelFrame(parent, text="Tools", padding=(4, 2))
         f_tools.pack(fill=tk.X, pady=3)
         f_tools.columnconfigure(0, weight=1)
@@ -1018,7 +1010,6 @@ class PicEditorPanel(ttk.Frame):
         ttk.Radiobutton(f_tools, text="▢ Select", variable=self._tool_var, value=TOOL_SELECT, command=self._on_tool_change, style="Toolbutton").grid(row=0, column=1, sticky="ew", padx=1, pady=1)
         ttk.Radiobutton(f_tools, text="🪣 Fill", variable=self._tool_var, value=TOOL_FILL, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=0, sticky="ew", padx=1, pady=1)
         ttk.Radiobutton(f_tools, text="✋ Hand", variable=self._tool_var, value=TOOL_HAND, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=1, sticky="ew", padx=1, pady=1)
-
         f_sel = ttk.LabelFrame(parent, text="Pasted selection", padding=(4, 2))
         f_sel.pack(fill=tk.X, pady=3)
         sel_grid = ttk.Frame(f_sel)
@@ -1039,31 +1030,18 @@ class PicEditorPanel(ttk.Frame):
         lock_cell.columnconfigure(1, weight=1)
         self._lock_bg_off = "#c0392b"
         self._lock_bg_off_dim = "#7f2a1e"
-        self._btn_lock = tk.Button(lock_cell, text="🔓", width=2,
-                                    command=self._toggle_aspect_lock, state="disabled",
-                                    relief="flat", bg=self._lock_bg_off_dim, fg="white",
-                                    disabledforeground="white",
-                                    activebackground="#e74c3c", activeforeground="white",
-                                    font=("", 9), cursor="hand2", bd=0, padx=4)
+        self._btn_lock = tk.Button(lock_cell,text="🔓",width=2,command=self._toggle_aspect_lock,state="disabled",relief="flat",bg=self._lock_bg_off_dim,fg="white",disabledforeground="white",activebackground="#e74c3c",activeforeground="white",font=("",9),cursor="hand2",bd=0,padx=4)
         self._btn_lock.grid(row=0, column=0, sticky="ns", ipady=1)
-        self._lbl_lock = tk.Label(lock_cell, text="Aspect Ratio", font=("", 8),
-                                   bg=self._lock_bg_off_dim, fg="#aaaaaa", cursor="arrow")
+        self._lbl_lock = tk.Label(lock_cell, text="Aspect Ratio", font=("", 8),bg=self._lock_bg_off_dim, fg="#aaaaaa", cursor="arrow")
         self._lbl_lock.bind("<Button-1>", lambda _e: self._toggle_aspect_lock() if self._btn_lock["state"] == "normal" else None)
         self._lbl_lock.grid(row=0, column=1, sticky="nsew", ipady=1)
         flt_row = ttk.Frame(f_sel)
         flt_row.pack(fill=tk.X, pady=(3, 1))
         ttk.Label(flt_row, text="Filter:", foreground=MUTED).pack(side=tk.LEFT)
         self._resize_filter_var = tk.StringVar(value="Nearest (pixel-perfect)")
-        self._resize_filter_combo = ttk.Combobox(
-            flt_row,
-            textvariable=self._resize_filter_var,
-            values=[label for label, _ in self._RESIZE_FILTERS],
-            state="readonly",
-            width=14,
-        )
+        self._resize_filter_combo = ttk.Combobox(flt_row,textvariable=self._resize_filter_var,values=[label for label, _ in self._RESIZE_FILTERS],state="readonly",width=14,)
         self._resize_filter_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
         self._resize_filter_combo.bind("<<ComboboxSelected>>", self._on_resize_filter_changed)
-
         f_colors = ttk.LabelFrame(parent, text="Colors", padding=(4, 2))
         f_colors.pack(fill=tk.X, pady=3)
         crow = ttk.Frame(f_colors)
@@ -1089,7 +1067,6 @@ class PicEditorPanel(ttk.Frame):
         self._pal_combo = ttk.Combobox(prow, textvariable=self._pal_var, values=pal_names, state="readonly", width=12)
         self._pal_combo.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(4, 0))
         self._pal_combo.bind("<<ComboboxSelected>>", self._on_palette_changed)
-
         f_view = ttk.LabelFrame(parent, text="View", padding=(4, 2))
         f_view.pack(fill=tk.X, pady=3)
         zrow = ttk.Frame(f_view)
@@ -1102,10 +1079,8 @@ class PicEditorPanel(ttk.Frame):
         self._zoom_spin.bind("<FocusOut>", lambda e: self._on_zoom_change())
         self._grid_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(zrow, text="Show grid", variable=self._grid_var, command=self._on_grid_toggle).pack(side=tk.RIGHT, padx=(10, 0))
-
         self._btn_undo = ttk.Button(parent, text="↩ Undo (Ctrl+Z)", command=self._undo, state="disabled")
         self._btn_undo.pack(fill=tk.X, pady=(6, 2))
-
         cmd_key = "Command" if sys.platform == "darwin" else "Control"
         self.bind_all(f"<{cmd_key}-c>",  lambda _e: self._copy())
         self.bind_all(f"<{cmd_key}-C>",  lambda _e: self._copy())
@@ -1117,7 +1092,6 @@ class PicEditorPanel(ttk.Frame):
         self.bind_all("<KP_Enter>",      lambda _e: self._apply_paste())
         self.bind_all("<Delete>",        lambda _e: self._delete_sel())
         self.bind_all("<Escape>",        lambda _e: self._escape_action())
-        
         self._draw_swatch()
         self.after_idle(lambda: self._hint_lbl.config(
             text=self._TOOL_HINTS.get(self._tool_var.get(), ""))
@@ -1135,16 +1109,13 @@ class PicEditorPanel(ttk.Frame):
         if locked is None:
             locked = self._aspect_lock.get()
         if not enabled:
-            btn_kw  = dict(text="🔓", bg=self._lock_bg_off_dim,
-                           activebackground="#e74c3c", state="disabled", fg="white")
+            btn_kw  = dict(text="🔓", bg=self._lock_bg_off_dim,activebackground="#e74c3c", state="disabled", fg="white")
             lbl_kw  = dict(bg=self._lock_bg_off_dim, fg="#888888", cursor="arrow")
         elif locked:
-            btn_kw  = dict(text="🔒", bg="#27ae60",
-                           activebackground="#2ecc71", state="normal", fg="white")
+            btn_kw  = dict(text="🔒", bg="#27ae60",activebackground="#2ecc71", state="normal", fg="white")
             lbl_kw  = dict(bg="#27ae60", fg="white", cursor="hand2")
         else:
-            btn_kw  = dict(text="🔓", bg=self._lock_bg_off,
-                           activebackground="#e74c3c", state="normal", fg="white")
+            btn_kw  = dict(text="🔓", bg=self._lock_bg_off,activebackground="#e74c3c", state="normal", fg="white")
             lbl_kw  = dict(bg=self._lock_bg_off, fg="white", cursor="hand2")
         self._btn_lock.config(**btn_kw)
         self._lbl_lock.config(**lbl_kw)
@@ -1540,7 +1511,7 @@ class PicEditorPanel(ttk.Frame):
             r, g, b = pal[idx]
             rgba = (r, g, b, 255)
             self._canvas_frame.set_draw_color(rgba)
-            self._update_color_display(rgba)
+            self._update_color_display(rgba, pal_idx=idx)
 
     _TOOL_HINTS: dict[str, str] = {
         TOOL_DRAW:   "Pencil — Left-click/drag to draw  │  Right-click to pick color",
@@ -1583,13 +1554,15 @@ class PicEditorPanel(ttk.Frame):
         self._canvas_frame.set_draw_color(rgba)
         self._update_color_display(rgba)
 
-    def _update_color_display(self, rgba: tuple):
+    def _update_color_display(self, rgba: tuple, pal_idx: int | None = None):
         r, g, b, _ = rgba
         hex_str = f"#{r:02X}{g:02X}{b:02X}"
         self._color_canvas.config(bg=hex_str)
         self._color_canvas.delete("all")
         self._color_canvas.create_rectangle(0, 0, 32, 32, fill=hex_str, outline="")
-        self._color_hex.config(text=hex_str)
+        if pal_idx is None:
+            pal_idx = _rgb_to_palette_index(r, g, b, self._active_palette)
+        self._color_hex.config(text=f"{hex_str} (0x{pal_idx:02X})")
 
     def _copy(self):
         self._canvas_frame.copy_selection()
