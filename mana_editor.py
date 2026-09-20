@@ -319,24 +319,13 @@ class _LeagueTab(ttk.Frame):
         style.configure("Tool.TRadiobutton", background=bg_color)
         
         for val in (2, 3):
-            rb = ttk.Radiobutton(rule_f, text=str(val), variable=self._points_rule, value=val,
-                                 style="Tool.TRadiobutton",
-                                 command=self._on_points_rule_changed)
+            rb = ttk.Radiobutton(rule_f, text=str(val), variable=self._points_rule, value=val,style="Tool.TRadiobutton",command=self._on_points_rule_changed)
             rb.pack(side="left", padx=(0, 4))
-        zero_btn = tk.Button(tools_f, text="RESET STATS", bg="#D35400", fg="white",
-                             activebackground="#E67E22", activeforeground="white",
-                             font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,
-                             cursor="hand2", command=self._zero_all_stats)
+        zero_btn = tk.Button(tools_f, text="RESET STATS", bg="#D35400", fg="white",activebackground="#E67E22", activeforeground="white",font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,cursor="hand2", command=self._zero_all_stats)
         zero_btn.pack(fill="x", pady=(0, 2))
-        pos_btn = tk.Button(tools_f, text="SHUFFLE TEAMS", bg="#D35400", fg="white",
-                            activebackground="#E67E22", activeforeground="white",
-                            font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,
-                            cursor="hand2", command=self._random_positions)
+        pos_btn = tk.Button(tools_f, text="SHUFFLE TEAMS", bg="#D35400", fg="white",activebackground="#E67E22", activeforeground="white",font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,cursor="hand2", command=self._random_positions)
         pos_btn.pack(fill="x", pady=(0, 2))
-        rand_btn = tk.Button(tools_f, text="RANDOMIZE STATS", bg="#D35400", fg="white",
-                             activebackground="#E67E22", activeforeground="white",
-                             font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,
-                             cursor="hand2", command=self._random_all_stats)
+        rand_btn = tk.Button(tools_f, text="RANDOMIZE STATS", bg="#D35400", fg="white",activebackground="#E67E22", activeforeground="white",font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,cursor="hand2", command=self._random_all_stats)
         rand_btn.pack(fill="x", pady=(0, 2))
         self._grid_frame.after(50, self._place_tools_frame)
 
@@ -429,9 +418,7 @@ class _LeagueTab(ttk.Frame):
 
     def _zero_all_stats(self):
         from tkinter import messagebox as _mb
-        if not _mb.askyesno("RESET STATS",
-                            "Puts all the stats of all 64 teams, to zero?\n(CTF, POINTS, GOALS and RANK)",
-                            parent=self):
+        if not _mb.askyesno("RESET STATS","Puts all the stats of all 64 teams, to zero?\n(CTF, POINTS, GOALS and RANK)",parent=self):
             return
         for t in self._parsed["teams"]:
             t["ctf"] = [0, 0, 0]
@@ -447,10 +434,7 @@ class _LeagueTab(ttk.Frame):
 
     def _random_positions(self):
         from tkinter import messagebox as _mb
-        if not _mb.askyesno("SHUFFLE TEAMS",
-                            "Shuffle team positions within each league?\n"
-                            "(All stats and player names follow the team)",
-                            parent=self):
+        if not _mb.askyesno("SHUFFLE TEAMS","Shuffle team positions within each league?\n""(All stats and player names follow the team)",parent=self):
             return
         teams = self._parsed["teams"]
         for first, count, _ in LEAGUE_BOUNDS:
@@ -464,10 +448,7 @@ class _LeagueTab(ttk.Frame):
 
     def _random_all_stats(self):
         from tkinter import messagebox as _mb
-        if not _mb.askyesno("RANDOMIZE STATS",
-                            "Assign random stats (CTF, POINTS, GOALS and RANK)\n"
-                            "to all 64 teams based on their current position?",
-                            parent=self):
+        if not _mb.askyesno("RANDOMIZE STATS","Assign random stats (CTF, POINTS, GOALS and RANK)\n""to all 64 teams based on their current position?",parent=self):
             return
 
         pts_rule    = self._points_rule.get()
@@ -1116,17 +1097,17 @@ class ManaEditorWindow(tk.Toplevel):
             self._clear_dirty()
             abspath = os.path.abspath(path)
             self._file_lbl.config(text=f"{abspath} ({len(new_bytes):,} bytes)")
+            messagebox.showinfo(
+                "MANA.DAT Saved",
+                f"File saved successfully:\n{abspath}",
+                parent=self,
+            )
         except Exception as exc:
             messagebox.showerror("Save error", str(exc), parent=self)
 
 
 class ManaEditorPanel(ttk.Frame):
-    """
-    Embedded panel version of ManaEditorWindow, designed to be placed inside
-    a notebook tab of the main editor.  Save/Load buttons are hidden; the host
-    calls load_file() after opening an EXE and save_if_dirty() before writing
-    the EXE to disk.
-    """
+    pass
 
     def __init__(self, parent, **kw):
         super().__init__(parent, **kw)
@@ -1139,9 +1120,6 @@ class ManaEditorPanel(ttk.Frame):
         self._apply_style()
         self._build_ui()
 
-    # ------------------------------------------------------------------
-    # Style (same palette as the standalone window)
-    # ------------------------------------------------------------------
     def _apply_style(self):
         s = ttk.Style(self)
         try:
@@ -1152,51 +1130,31 @@ class ManaEditorPanel(ttk.Frame):
         s.configure("TLabel", background=BG, foreground=FG, font=("Segoe UI", 10))
         s.configure("TLabelframe", background=BG, foreground=FG, font=("Segoe UI", 10, "bold"))
         s.configure("TLabelframe.Label", background=BG, foreground=FG)
-        s.configure("TButton", font=("Segoe UI", 9, "bold"), padding=5,
-                    background=ACCENT, foreground="white", borderwidth=0)
-        s.map("TButton",
-              background=[("active", "#2980B9"), ("disabled", "#BDC3C7")])
+        s.configure("TButton", font=("Segoe UI", 9, "bold"), padding=5,background=ACCENT, foreground="white", borderwidth=0)
+        s.map("TButton",background=[("active", "#2980B9"), ("disabled", "#BDC3C7")])
         s.configure("TNotebook", background=BG, tabmargins=[2, 4, 0, 0])
-        s.configure("TNotebook.Tab", font=("Segoe UI", 8), padding=(8, 3),
-                    foreground="#aaaaaa", background="#d0d4d8")
-        s.map("TNotebook.Tab",
-              font=[("selected", ("Segoe UI", 13, "bold"))],
-              padding=[("selected", (22, 9))],
-              foreground=[("selected", FG)],
-              background=[("selected", "white")])
+        s.configure("TNotebook.Tab", font=("Segoe UI", 8), padding=(8, 3),foreground="#aaaaaa", background="#d0d4d8")
+        s.map("TNotebook.Tab",font=[("selected", ("Segoe UI", 13, "bold"))],padding=[("selected", (22, 9))],foreground=[("selected", FG)],background=[("selected", "white")])
         s.configure("TEntry", fieldbackground="white")
         s.configure("TCombobox", fieldbackground="white")
 
-    # ------------------------------------------------------------------
-    # UI: only the status bar and the inner notebook (no Open/Save buttons)
-    # ------------------------------------------------------------------
     def _build_ui(self):
         status_bar = ttk.Frame(self, padding=(12, 4, 12, 2))
         status_bar.pack(fill="x")
-        self._file_lbl = ttk.Label(status_bar, text="No MANA.DAT loaded",
-                                   foreground=MUTED, font=("Segoe UI", 9, "italic"))
+        self._save_as_btn = ttk.Button(status_bar, text="Save as…",command=self._cmd_save_as)
+        self._save_as_btn.pack(side="left", padx=(0, 8))
+        self._file_lbl = ttk.Label(status_bar, text="No MANA.DAT loaded",foreground=MUTED, font=("Segoe UI", 9, "italic"))
         self._file_lbl.pack(side="left")
-        self._dirty_lbl = ttk.Label(status_bar, text="",
-                                    foreground=RED, font=("Segoe UI", 9, "bold"))
+        self._dirty_lbl = ttk.Label(status_bar, text="",foreground=RED, font=("Segoe UI", 9, "bold"))
         self._dirty_lbl.pack(side="right")
         ttk.Separator(self, orient="horizontal").pack(fill="x")
         self._nb = ttk.Notebook(self)
         self._nb.pack(fill="both", expand=True, padx=6, pady=6)
-        # Placeholder shown when no file is loaded
         self._placeholder = ttk.Frame(self._nb)
         self._nb.add(self._placeholder, text="  MANA.DAT  ")
-        ttk.Label(self._placeholder,
-                  text="MANA.DAT will be loaded automatically when a supported EXE is opened.",
-                  foreground=MUTED, font=("Segoe UI", 11, "italic")).pack(expand=True)
+        ttk.Label(self._placeholder,text="MANA.DAT will be loaded automatically when a supported EXE is opened.",foreground=MUTED, font=("Segoe UI", 11, "italic")).pack(expand=True)
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
     def load_file(self, path: str) -> bool:
-        """
-        Load a MANA.DAT file.  Returns True on success, False on failure.
-        On failure the panel keeps showing a placeholder/error message.
-        """
         try:
             with open(path, "rb") as fh:
                 raw = fh.read()
@@ -1215,15 +1173,9 @@ class ManaEditorPanel(ttk.Frame):
         return True
 
     def show_placeholder(self, message: str = ""):
-        """Show the placeholder panel (e.g. MANA.DAT not found)."""
         self._show_placeholder(message)
 
     def save_if_dirty(self) -> bool:
-        """
-        Write MANA.DAT back to disk only if it has been modified.
-        Returns True if nothing needed saving or saving succeeded,
-        False if saving failed (error dialog already shown).
-        """
         if not self._dirty:
             return True
         if not self._filepath or not self._original:
@@ -1238,9 +1190,19 @@ class ManaEditorPanel(ttk.Frame):
     def filepath(self) -> str:
         return self._filepath
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+    def _cmd_save_as(self):
+        if not self._original:
+            messagebox.showwarning("No file", "No MANA.DAT loaded.", parent=self)
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Save MANA.DAT as…",
+            defaultextension=".DAT",
+            filetypes=[("MANA data", "*.DAT *.dat"), ("All files", "*.*")],
+        )
+        if path:
+            self._do_save(path)
+
     def _show_placeholder(self, message: str = ""):
         for tab in self._nb.tabs():
             self._nb.forget(tab)
@@ -1248,12 +1210,8 @@ class ManaEditorPanel(ttk.Frame):
         self._uefa_tab = None
         ph = ttk.Frame(self._nb)
         self._nb.add(ph, text="  MANA.DAT  ")
-        display = message if message else (
-            "MANA.DAT will be loaded automatically when a supported EXE is opened."
-        )
-        ttk.Label(ph, text=display,
-                  foreground=MUTED if not message else RED,
-                  font=("Segoe UI", 11, "italic")).pack(expand=True)
+        display = message if message else ("MANA.DAT will be loaded automatically when a supported EXE is opened.")
+        ttk.Label(ph, text=display,foreground=MUTED if not message else RED,font=("Segoe UI", 11, "italic")).pack(expand=True)
         self._file_lbl.config(text="No MANA.DAT loaded")
         self._dirty_lbl.config(text="")
         self._filepath = ""
@@ -1264,16 +1222,9 @@ class ManaEditorPanel(ttk.Frame):
     def _rebuild_tabs(self):
         for tab in self._nb.tabs():
             self._nb.forget(tab)
-        self._league_tab = _LeagueTab(
-            self._nb, self._parsed,
-            filepath=self._filepath,
-            on_dirty=self._mark_dirty,
-        )
+        self._league_tab = _LeagueTab(self._nb, self._parsed,filepath=self._filepath,on_dirty=self._mark_dirty,)
         self._nb.add(self._league_tab, text="  LEAGUE  ")
-        self._uefa_tab = _UefaTab(
-            self._nb, self._parsed,
-            on_dirty=self._mark_dirty,
-        )
+        self._uefa_tab = _UefaTab(self._nb, self._parsed,on_dirty=self._mark_dirty,)
         self._nb.add(self._uefa_tab, text="  UEFA  ")
 
     def _mark_dirty(self):
@@ -1291,9 +1242,10 @@ class ManaEditorPanel(ttk.Frame):
             self._dirty_lbl.config(text="")
             abspath = os.path.abspath(path)
             self._file_lbl.config(text=f"{abspath}  ({len(new_bytes):,} bytes)")
+            messagebox.showinfo("MANA.DAT Saved",f"File saved successfully:\n{abspath}",parent=self,)
             return True
         except Exception as exc:
-            messagebox.showerror("MANA.DAT Save error", str(exc))
+            messagebox.showerror("MANA.DAT Save error", str(exc), parent=self)
             return False
 
 
