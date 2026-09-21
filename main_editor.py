@@ -2190,7 +2190,6 @@ class DOSTranslationEditor:
                 e for e in self.entries
                 if e.get("string_id") not in newspaper_ids
             ]
-            print("CHARMAPS:", exchange_args["charmaps"])
             payload = export_csv_bytes(**exchange_args)
             normal_count = sum(
                 1 for e in exchange_args["entries"]
