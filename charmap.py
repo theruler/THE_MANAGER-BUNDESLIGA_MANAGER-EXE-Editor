@@ -1,5 +1,5 @@
 class CharmapEncodeError(ValueError):
-    """Raised when display text cannot be represented without data loss."""
+    pass
 
 
 def _validated_inverse(charmap: dict) -> dict[str, int]:
@@ -28,13 +28,6 @@ def charmap_decode(raw_bytes: bytes, charmap: dict) -> str:
 
 
 def charmap_encode(text: str, charmap: dict, *, allowed_bytes=None, preserve_bytes=()) -> bytes:
-    """Encode display text without replacement or invented glyph mappings.
-
-    ``allowed_bytes`` is the active font's glyph-code set. Bytes outside that
-    set are accepted only when they already occur in the source entry via
-    ``preserve_bytes``. This keeps unknown legacy/control bytes byte-exact while
-    rejecting newly introduced, unconfirmed characters.
-    """
     inverse = _validated_inverse(charmap)
     allowed = None if allowed_bytes is None else set(allowed_bytes)
     preserved = {}

@@ -18,9 +18,7 @@ FORMAT_NAME = "stefanos-string-exchange"
 FORMAT_VERSION = 2
 HASH_PATTERN = re.compile(r"[0-9A-F]{64}\Z")
 HEX_PAIR_PATTERN = re.compile(r"[0-9A-Fa-f]{2}\Z")
-PROTECTED_TOKEN_PATTERN = re.compile(
-    rf"(?:{CONTROL_TOKEN_PATTERN.pattern})|€|£|°"
-)
+PROTECTED_TOKEN_PATTERN = re.compile(rf"(?:{CONTROL_TOKEN_PATTERN.pattern})|€|£|°")
 
 TOP_LEVEL_FIELDS = {
     "format",
@@ -176,7 +174,11 @@ def raw_to_exchange_text(raw_bytes: bytes, charmap: dict) -> str:
 
     for match in CONTROL_TOKEN_PATTERN.finditer(raw_text):
         append_segment(raw_bytes[cursor:match.start()])
-        parts.append(match.group(0))
+        match_bytes = raw_bytes[match.start():match.end()]
+        if all(f"{b:02x}" in cmap for b in match_bytes):
+            append_segment(match_bytes)
+        else:
+            parts.append(match.group(0))
         cursor = match.end()
     append_segment(raw_bytes[cursor:])
     return "".join(parts)
@@ -912,108 +914,6 @@ def parse_csv_document(raw_document: bytes) -> dict:
     }
 
 
-def preflight_import_csv(
-    raw_document: bytes,
-    profile_id: str,
-    profile: dict,
-    entries: list[dict],
-    charmaps: dict,
-    effective_font,
-    font_codes: dict[str, set[int]],
-    layout_reference: dict | None = None,
-) -> dict:
-
-    csv_doc = parse_csv_document(raw_document)
-
-    if csv_doc["profile_id"] != profile_id:
-        raise StringExchangeError(
-            f"Wrong profile: {csv_doc['profile_id']!r}, expected {profile_id!r}"
-        )
-
-    contexts, fingerprints = _build_context(
-        profile_id, profile, entries, charmaps, effective_font, font_codes,
-        layout_reference,
-    )
-    current_by_id = {context["row"]["string_id"]: context for context in contexts}
-    csv_by_id = {row["string_id"]: row for row in csv_doc["entries"]}
-
-    unknown = sorted(set(csv_by_id) - set(current_by_id))
-    if unknown:
-        raise StringExchangeError(f"Unknown string_id in CSV: {unknown[0]}")
-
-    replacements = {}
-    requested_count = 0
-    idempotent_count = 0
-    for string_id, context in sorted(current_by_id.items()):
-        csv_row = csv_by_id.get(string_id)
-        if csv_row is None:
-            continue
-
-        expected_row = context["row"]
-
-        if csv_row["source_text"] != expected_row["source_text"]:
-            source_raw, _, _ = exchange_text_to_raw(
-                csv_row["source_text"],
-                context["charmap"],
-                context["allowed"],
-                source_mode=True,
-            )
-            if _sha256_bytes(source_raw) != expected_row["source_raw_sha256"]:
-                raise StringExchangeError(f"Stale source conflict for {string_id}")
-
-        translated = csv_row["translated_text"]
-        if translated is None:
-            continue
-        requested_count += 1
-
-        source_raw, source_display, source_escape_counts = exchange_text_to_raw(
-            expected_row["source_text"],
-            context["charmap"],
-            context["allowed"],
-            source_mode=True,
-        )
-        desired_raw, desired_display, desired_escape_counts = exchange_text_to_raw(
-            translated,
-            context["charmap"],
-            context["allowed"],
-            source_mode=False,
-            escape_limits=source_escape_counts,
-            preserve_bytes=context["raw"],
-        )
-        if desired_escape_counts != source_escape_counts:
-            raise StringExchangeError(f"Unconfirmed byte escapes changed for {string_id}")
-        if _token_signature(expected_row["source_text"]) != _token_signature(translated):
-            raise StringExchangeError(f"Protected token mismatch for {string_id}")
-        if _layout_signature(source_display) != _layout_signature(desired_display):
-            raise StringExchangeError(f"Protected whitespace/layout mismatch for {string_id}")
-        if _trailing_spaces(desired_display) < expected_row["protected_trail_spaces"]:
-            raise StringExchangeError(
-                f"Protected trailing space shortfall for {string_id}: "
-                f"{_trailing_spaces(desired_display)} < {expected_row['protected_trail_spaces']}"
-            )
-        if not expected_row["editable"] and desired_raw != context["raw"]:
-            raise StringExchangeError(f"Suffix entry is read-only: {string_id}")
-        fixed_capacity = expected_row["fixed_capacity_bytes"]
-        if fixed_capacity is not None and len(desired_raw) > fixed_capacity:
-            raise StringExchangeError(
-                f"Fixed string {string_id} exceeds {fixed_capacity} bytes"
-            )
-
-        if desired_raw == context["raw"]:
-            idempotent_count += 1
-            continue
-        replacements[string_id] = desired_raw
-
-    return {
-        "profile_id":      profile_id,
-        "entry_count":     len(contexts),
-        "requested_count": requested_count,
-        "changed_count":   len(replacements),
-        "idempotent_count": idempotent_count,
-        "replacements":    replacements,
-        "fingerprints":    fingerprints,
-    }
-
 
 __all__ = [
     "FORMAT_NAME",
@@ -1025,7 +925,6 @@ __all__ = [
     "parse_json_document",
     "parse_csv_document",
     "preflight_import_json",
-    "preflight_import_csv",
     "raw_to_exchange_text",
     "exchange_text_to_raw",
     "stage_import_transaction",

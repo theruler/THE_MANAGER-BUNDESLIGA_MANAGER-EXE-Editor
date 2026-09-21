@@ -26,8 +26,8 @@ from string_exchange import (
     export_csv_bytes,
     parse_csv_document,
     preflight_import_json,
-    preflight_import_csv,
     raw_to_exchange_text,
+    exchange_text_to_raw,
     stage_import_transaction,
 )
 from diff_preview import (
@@ -46,7 +46,7 @@ from search_filter import (
     filter_string_ids,
 )
 
-APP_VERSION = "2.8.8"
+APP_VERSION = "2.8.9"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -1662,7 +1662,7 @@ class DOSTranslationEditor:
                 raw = self._entry_raw_bytes(entry)
                 font = self._get_font_for_entry(entry)
                 try:
-                    text = raw_to_exchange_text(raw, game_charmaps.get(font, {}))
+                    text = self._decode_entry_text(entry)
                 except StringExchangeError:
                     text = raw.decode("latin-1", errors="replace")
                 stub_baseline[sid] = {"raw": raw, "text": text, "suffix_shared": False}
@@ -1745,9 +1745,7 @@ class DOSTranslationEditor:
             font = self._get_font_for_entry(entry)
             current_raw = self._entry_raw_bytes(entry)
             try:
-                current_text = raw_to_exchange_text(
-                    current_raw, game_charmaps.get(font, {})
-                )
+                current_text = self._decode_entry_text(entry)
             except StringExchangeError as exc:
                 raise SearchFilterError(
                     f"Search text could not be decoded for {string_id}: {exc}"
@@ -2181,16 +2179,22 @@ class DOSTranslationEditor:
             return False
 
         try:
-            payload = export_csv_bytes(**self._string_exchange_arguments())
             newspaper_ids: set = set()
             if newspaper_csv.is_supported(self.profile_name):
                 newspaper_ids = {
                     e["string_id"]
                     for e in newspaper_csv.collect(self.profile_name, self.entries)
                 }
+            exchange_args = self._string_exchange_arguments()
+            exchange_args["entries"] = [
+                e for e in self.entries
+                if e.get("string_id") not in newspaper_ids
+            ]
+            print("CHARMAPS:", exchange_args["charmaps"])
+            payload = export_csv_bytes(**exchange_args)
             normal_count = sum(
-                1 for e in self.entries
-                if not e.get("fixed") and e.get("string_id") not in newspaper_ids
+                1 for e in exchange_args["entries"]
+                if not e.get("fixed")
             )
         except (StringExchangeError, newspaper_csv.NewspaperCsvError, KeyError, ValueError) as exc:
             messagebox.showerror(self.tr("dlg.export.blocked"), str(exc))
@@ -2220,7 +2224,10 @@ class DOSTranslationEditor:
 
     def import_normal_csv(self):
         if not self._can_exchange_strings():
-            messagebox.showwarning(self.tr("dlg.import.blocked"), self._save_block_reason())
+            messagebox.showwarning(
+                self.tr("dlg.import.blocked"),
+                self._save_block_reason()
+            )
             return False
 
         filepath = filedialog.askopenfilename(
@@ -2236,56 +2243,119 @@ class DOSTranslationEditor:
         try:
             with open(filepath, "rb") as handle:
                 raw_document = handle.read()
-            preflight = preflight_import_csv(
-                raw_document, **self._string_exchange_arguments()
+
+            csv_doc = parse_csv_document(raw_document)
+
+            if csv_doc["profile_id"] != self.profile_name:
+                raise StringExchangeError(
+                    f"Wrong profile: {csv_doc['profile_id']!r}, expected {self.profile_name!r}"
+                )
+
+            newspaper_ids: set = set()
+            if newspaper_csv.is_supported(self.profile_name):
+                newspaper_ids = {
+                    e["string_id"]
+                    for e in newspaper_csv.collect(self.profile_name, self.entries)
+                }
+
+            entries_by_id = {
+                entry["string_id"]: entry
+                for entry in self.entries
+            }
+
+            unknown = sorted(
+                set(row["string_id"] for row in csv_doc["entries"])
+                - set(entries_by_id)
             )
-        except (OSError, StringExchangeError, KeyError, ValueError) as exc:
-            messagebox.showerror(self.tr("dlg.import.blocked"),
-                                 self.tr("dlg.import.nochange", error=exc))
+            if unknown:
+                raise StringExchangeError(
+                    f"Unknown string_id in CSV: {unknown[0]}"
+                )
+
+            replacements = {}
+
+            for row in csv_doc["entries"]:
+                if row["string_id"] in newspaper_ids:
+                    continue
+                translated = row["translated_text"]
+                if translated is None:
+                    continue
+
+                entry = entries_by_id[row["string_id"]]
+
+                desired_raw, _, _ = exchange_text_to_raw(
+                    translated,
+                    self._charmap_for_entry(entry),
+                    self._font_codes_for_entry(entry),
+                    source_mode=True,
+                )
+
+                if desired_raw != self._entry_raw_bytes(entry):
+                    replacements[row["string_id"]] = desired_raw
+
+            changed_count = len(replacements)
+
+        except (OSError, StringExchangeError, newspaper_csv.NewspaperCsvError, KeyError, ValueError, CharmapEncodeError) as exc:
+            messagebox.showerror(
+                self.tr("dlg.import.blocked"),
+                self.tr("dlg.import.nochange", error=exc)
+            )
             return False
 
-        changed_count = preflight["changed_count"]
         if changed_count == 0:
-            messagebox.showinfo(self.tr("dlg.import.done"),
-                                self.tr("dlg.import.none", profile=preflight["profile_id"]))
+            messagebox.showinfo(
+                self.tr("dlg.import.done"),
+                self.tr("dlg.import.none", profile=csv_doc["profile_id"])
+            )
             return True
+
         if not messagebox.askyesno(
             self.tr("dlg.import.title"),
-            self.tr("dlg.import.confirm", profile=preflight["profile_id"], n=changed_count),
+            self.tr(
+                "dlg.import.confirm",
+                profile=csv_doc["profile_id"],
+                n=changed_count
+            ),
         ):
             return False
+
         if not self._can_exchange_strings():
-            messagebox.showwarning(self.tr("dlg.import.blocked"), self._save_block_reason())
+            messagebox.showwarning(
+                self.tr("dlg.import.blocked"),
+                self._save_block_reason()
+            )
             return False
 
         try:
-            preflight = preflight_import_csv(
-                raw_document, **self._string_exchange_arguments()
-            )
             work_data, work_entries, validation, _font_result = stage_import_transaction(
                 self.exe_data,
                 self.entries,
-                preflight["replacements"],
+                replacements,
                 self.profile,
                 self.relocation_sites,
                 EXE_FONT_PROFILES[self.profile_name],
             )
         except (StringExchangeError, KeyError, ValueError) as exc:
-            messagebox.showerror(self.tr("dlg.import.blocked"),
-                                 self.tr("dlg.import.nochange", error=exc))
-            return False
-        if not self._can_exchange_strings():
-            messagebox.showwarning(self.tr("dlg.import.blocked"), self._save_block_reason())
+            messagebox.showerror(
+                self.tr("dlg.import.blocked"),
+                self.tr("dlg.import.nochange", error=exc)
+            )
             return False
 
         self._commit_text_transaction(work_data, work_entries, validation)
         self.translation_pending = False
         self.refresh_table(force=True, refresh_active_fields=True)
         self._update_save_state()
-        self._set_status("dlg.import.status", n=preflight["changed_count"])
-        messagebox.showinfo(self.tr("dlg.import.done"),
-                            self.tr("dlg.import.done_msg", profile=preflight["profile_id"],
-                                    n=preflight["changed_count"]))
+        self._set_status("dlg.import.status", n=changed_count)
+
+        messagebox.showinfo(
+            self.tr("dlg.import.done"),
+            self.tr(
+                "dlg.import.done_msg",
+                profile=csv_doc["profile_id"],
+                n=changed_count
+            )
+        )
         return True
 
     def export_all_json(self):
