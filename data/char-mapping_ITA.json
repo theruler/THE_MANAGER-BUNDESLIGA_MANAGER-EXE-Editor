@@ -1,0 +1,114 @@
+{
+  "BUNDESLIGA MANAGER PROFESSIONAL": {
+    "string_fonts": {},
+    "charmaps": {
+      "NORMAL.FON": {
+        "7e": "°",
+        "5c": "à",
+        "5b": "ì",
+        "5d": "ò",
+        "24": "€"
+      },
+      "FLOW.FON": {
+        "7e": "°",
+        "24": "€",
+        "5b": "ì",
+        "5d": "é",
+        "7b": "è",
+        "7c": "ù",
+        "7d": "ò",
+        "2a": "à"
+      },
+      "MICRO4.FON": {
+        "24": "€",
+        "5b": "ì",
+        "5d": "é",
+        "7e": "°",
+        "7b": "è",
+        "7c": "ù",
+        "7d": "ò",
+        "2a": "à"
+      }
+    },
+    "range_font_defaults": {
+      "0": "FLOW.FON",
+      "1": "FLOW.FON",
+      "2": "MICRO4.FON",
+      "3": "MICRO4.FON"
+    }
+  },
+  "THE MANAGER (ITALIAN)": {
+    "string_fonts": {},
+    "charmaps": {
+      "NORMAL.FON": {
+        "5d": "ù",
+        "5c": "ò",
+        "5b": "à",
+        "7e": "è"
+      },
+      "FLOW.FON": {
+        "5b": "è",
+        "5e": "°",
+        "7b": "à",
+        "7c": "ò",
+        "7d": "ù",
+        "7e": "ì",
+        "5d": "é",
+        "24": "€"
+      },
+      "MICRO4.FON": {
+        "24": "€",
+        "5b": "à",
+        "5c": "ò",
+        "5d": "ù",
+        "5e": "ì",
+        "7e": "è"
+      }
+    },
+    "range_font_defaults": {
+      "0": "FLOW.FON",
+      "1": "FLOW.FON",
+      "2": "MICRO4.FON",
+      "3": "MICRO4.FON"
+    }
+  },
+  "THE MANAGER (ENGLISH)": {
+    "string_fonts": {},
+    "charmaps": {
+      "NORMAL.FON": {
+        "5b": "Ä",
+        "5c": "Ö",
+        "5d": "Ü",
+        "7b": "ä",
+        "7c": "ö",
+        "7d": "ü",
+        "7e": "ß"
+      },
+      "FLOW.FON": {
+        "5b": "Ä",
+        "5c": "Ö",
+        "5d": "Ü",
+        "7b": "ä",
+        "7c": "ö",
+        "7d": "ü",
+        "7e": "ß",
+        "fd": "£"
+      },
+      "MICRO4.FON": {
+        "5b": "Ä",
+        "5c": "Ö",
+        "5d": "Ü",
+        "7b": "ä",
+        "7c": "ö",
+        "7d": "ü",
+        "7e": "ß"
+      }
+    },
+    "range_font_defaults": {
+      "0": "FLOW.FON",
+      "1": "FLOW.FON",
+      "2": "MICRO4.FON",
+      "3": "MICRO4.FON"
+    }
+  }
+}
