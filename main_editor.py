@@ -1,11 +1,10 @@
 import copy
-import hashlib
 import json
 import os
 import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from exe_handler import unpack_in_memory, get_mz_relocation_sites, GAME_PROFILES, EXE_FONT_PROFILES
+from exe_handler import unpack_in_memory, get_mz_relocation_sites, detect_game_profile, GAME_PROFILES, EXE_FONT_PROFILES
 from charmap import CharmapEncodeError, charmap_decode, charmap_encode
 from translator import CONTROL_TOKEN_PATTERN, translate_string, TRANSLATION_ENGINES
 from utils import (load_config, save_config, get_game_config, DATA_DIR, set_translator as _set_utils_translator)
@@ -14,7 +13,7 @@ from font_editor import EXEFontEditor
 from font_safety import FontSafetyError, atomic_save_bytes, paths_equal, validate_all_fonts
 import extended_layout
 from mana_editor import ManaEditorPanel
-from vga_editor import PicEditorPanel
+from vga_editor import PicEditorPanel, _PAL_NORMAL20, _hex_palette
 import newspaper_csv
 from newspaper_grammar import NewspaperGrammarError
 import newspaper_editor as _ne
@@ -46,7 +45,7 @@ from search_filter import (
     filter_string_ids,
 )
 
-APP_VERSION = "2.8.9"
+APP_VERSION = "2.8.10"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -55,151 +54,23 @@ ICON_FILE = "THE_MANAGER_String_Editor.ico"
 class TextTransactionError(RuntimeError):
     pass
 
-def _canonical_mz_relocation_topology(data):
-    if len(data) < 0x1C or bytes(data[:2]) != b"MZ":
-        raise ValueError("Not a complete MZ image")
-    header_size = int.from_bytes(data[0x08:0x0A], "little") * 16
-    relocation_count = int.from_bytes(data[0x06:0x08], "little")
-    relocation_offset = int.from_bytes(data[0x18:0x1A], "little")
-    relocation_end = relocation_offset + relocation_count * 4
-    if (
-        header_size < 0x1C
-        or header_size > len(data)
-        or relocation_offset < 0x1C
-        or relocation_end > header_size
-    ):
-        raise ValueError("Invalid MZ relocation table layout")
-
-    pairs = []
-    for pos in range(relocation_offset, relocation_end, 4):
-        offset = int.from_bytes(data[pos:pos + 2], "little")
-        segment = int.from_bytes(data[pos + 2:pos + 4], "little")
-        site = header_size + segment * 16 + offset
-        if site < header_size or site + 2 > len(data):
-            raise ValueError("MZ relocation source outside image")
-        pairs.append((segment, offset))
-
-    canonical = b"".join(
-        segment.to_bytes(2, "little") + offset.to_bytes(2, "little")
-        for segment, offset in sorted(pairs)
-    )
-    return {
-        "header_size": header_size,
-        "relocation_count": relocation_count,
-        "relocation_offset": relocation_offset,
-        "sha256": hashlib.sha256(canonical).hexdigest().upper(),
-    }
-
-
-def _match_immutable_code_anchor(data, header_size, anchor):
-    image_offset, pattern_text = anchor
-    tokens = pattern_text.split()
-    wildcard_offsets = tuple(i for i, token in enumerate(tokens) if token == "??")
-    if wildcard_offsets != (9, 10):
-        return False
-    try:
-        expected = tuple(None if token == "??" else int(token, 16) for token in tokens)
-    except ValueError:
-        return False
-    if any(value is not None and not 0 <= value <= 0xFF for value in expected):
-        return False
-    start = header_size + image_offset
-    end = start + len(expected)
-    if start < header_size or end > len(data):
-        return False
-    return all(value is None or data[start + index] == value for index, value in enumerate(expected))
-
-
-def _matches_immutable_profile(data, profile, verbose=False, collect=False):
-    lines = []
-    def emit(msg):
-        if collect:
-            lines.append(msg)
-        elif verbose:
-            print(msg)
-    pname = profile.get("profile_name", "?") if isinstance(profile, dict) else "?"
-    signature = profile.get("immutable_signature")
-    if not signature:
-        emit(f"[detect:{pname}] FAIL: no immutable_signature")
-        return (False, lines) if collect else False
-    anchors = signature.get("code_anchors", ())
-    if len(anchors) != 3:
-        emit(f"[detect:{pname}] FAIL: expected 3 anchors, got {len(anchors)}")
-        return (False, lines) if collect else False
-    try:
-        topology = _canonical_mz_relocation_topology(data)
-    except (TypeError, ValueError) as exc:
-        emit(f"[detect:{pname}] FAIL: _canonical_mz_relocation_topology raised {exc}")
-        return (False, lines) if collect else False
-    expected_sha = signature["relocation_topology_sha256"]
-    sha_ok = (topology["sha256"] == expected_sha) if isinstance(expected_sha, str) \
-             else (topology["sha256"] in expected_sha)
-    checks = [
-        ("header_size",       topology["header_size"],       signature["header_size"]),
-        ("relocation_offset", topology["relocation_offset"], signature["relocation_table_offset"]),
-        ("relocation_count",  topology["relocation_count"],  signature["relocation_count"]),
-        ("reloc_sha256",      sha_ok,                        True),
-        ("entry_cs (0x16)",   int.from_bytes(data[0x16:0x18], "little"), signature["entry_cs"]),
-        ("entry_ip (0x14)",   int.from_bytes(data[0x14:0x16], "little"), signature["entry_ip"]),
-    ]
-    failed = False
-    for name, got, expected in checks:
-        ok = got == expected
-        if name == "reloc_sha256":
-            if ok:
-                status = f"ok  ({topology['sha256']})"
-            else:
-                expected_list = [expected_sha] if isinstance(expected_sha, str) else list(expected_sha)
-                status = f"FAIL  got={topology['sha256']}  expected={expected_list}"
-        else:
-            got_s      = got      if isinstance(got, str)  else hex(got)
-            expected_s = expected if isinstance(expected, str) else hex(expected)
-            status = "ok" if ok else f"FAIL  got={got_s}  expected={expected_s}"
-        emit(f"[detect:{pname}]   {name}: {status}")
-        if not ok:
-            failed = True
-    if failed:
-        return (False, lines) if collect else False
-    for i, anchor in enumerate(anchors):
-        ok = _match_immutable_code_anchor(data, topology["header_size"], anchor)
-        img_off  = anchor[0]
-        file_off = topology["header_size"] + img_off
-        status   = "ok" if ok else f"FAIL  file_offset={hex(file_off)}  img_offset={hex(img_off)}"
-        emit(f"[detect:{pname}]   anchor[{i}] @ img {hex(img_off)}: {status}")
-        if not ok:
-            return (False, lines) if collect else False
-    emit(f"[detect:{pname}] MATCH")
-    return (True, lines) if collect else True
-
 
 class DOSTranslationEditor:
 
     _YEAR_MIN = 1900
     _YEAR_MAX = 2099
-    _YEAR_DISP = {
-        "THE MANAGER (ENGLISH)":           0x07CC,
-        "BUNDESLIGA MANAGER PROFESSIONAL": 0x07E0,
-        "THE MANAGER (ITALIAN)":           0x07E0,
-    }
     _REGION_VARIANTS = (
-        ("region.1", (1, 1)),   # German
-        ("region.2", (2, 1)),   # Italian
-        ("region.3", (1, 3)),   # French
-        ("region.4", (4, 1)),   # English
+        ("region.1", (1, 1)),
+        ("region.2", (2, 1)),
+        ("region.3", (1, 3)),
+        ("region.4", (4, 1)),
     )
-    _REGION_DISP = {
-        "THE MANAGER (ENGLISH)":           0x122E,
-        "BUNDESLIGA MANAGER PROFESSIONAL": 0x224E,
-        "THE MANAGER (ITALIAN)":           0x13AA,
-    }
 
-    _POINTS_RULE = {
-        "THE MANAGER (ENGLISH)":           0x1251,
-        "BUNDESLIGA MANAGER PROFESSIONAL": 0x2271,
-        "THE MANAGER (ITALIAN)":           0x13CD,
-    }
-    
-    
+    _FLAG_TYPES = [
+        ("3 vertical bands",   "3v"),
+        ("3 horizontal bands", "3h"),
+    ]
+
     def __init__(self, root):
         self.root = root
         self.language = DEFAULT_LANGUAGE
@@ -337,9 +208,9 @@ class DOSTranslationEditor:
         self.language_menu = lang_menu
         self.save_menu_entries = [(file_menu, 1)]
         self.exchange_menu_entries = [
-            (tools_menu, 2), (tools_menu, 3), # export/import CSV
-            (tools_menu, 5), (tools_menu, 6), # export/import News
-            (tools_menu, 8), (tools_menu, 9)  # export/import JSON
+            (tools_menu, 2), (tools_menu, 3),
+            (tools_menu, 5), (tools_menu, 6),
+            (tools_menu, 8), (tools_menu, 9) 
         ]
         self.supported_menu_entries = [
             (tools_menu, 0), (tools_menu, 11), (tools_menu, 12),
@@ -510,45 +381,12 @@ class DOSTranslationEditor:
         self.profile_label.pack(side=tk.LEFT)
         self.filename_label = ttk.Label(top_frame, text="", font=("Segoe UI", 9, "italic"), foreground="#7F8C8D")
         self.filename_label.pack(side=tk.LEFT, padx=(8, 0))
-        self.year_label = self._reg(ttk.Label(top_frame, font=("Segoe UI", 9, "bold")),"header.year")
-        self.year_label.pack(side=tk.LEFT, padx=(18, 4))
-        self.year_var = tk.StringVar()
-        self.year_spinbox = ttk.Spinbox(
-            top_frame, from_=self._YEAR_MIN, to=self._YEAR_MAX, increment=1,
-            width=4, justify=tk.CENTER, font=("Segoe UI", 9),
-            textvariable=self.year_var, command=self._commit_year,
-        )
-        self.year_spinbox.pack(side=tk.LEFT)
-        self.year_spinbox.bind("<Return>", self._commit_year)
-        self.year_spinbox.bind("<KP_Enter>", self._commit_year)
-        self.year_spinbox.bind("<FocusOut>", self._commit_year)
-        self.region_label = self._reg(ttk.Label(top_frame, font=("Segoe UI", 9, "bold")),"header.region")
-        self.region_label.pack(side=tk.LEFT, padx=(18, 4))
-        self.region_var = tk.StringVar()
-        self.region_combo = ttk.Combobox(top_frame, textvariable=self.region_var, state="readonly",width=8, justify=tk.LEFT, font=("Segoe UI", 9),)
-        self.region_combo.pack(side=tk.LEFT)
-        self.region_combo.bind("<<ComboboxSelected>>", self._commit_region)
-        self.points_label = self._reg(ttk.Label(top_frame, font=("Segoe UI", 9, "bold")),"header.point")
-        self.points_label.pack(side=tk.LEFT, padx=(18, 4))
-        self.points_var = tk.StringVar()
-        self.points_combo = ttk.Combobox(
-            top_frame, textvariable=self.points_var, state="readonly",
-            width=2, justify=tk.CENTER, font=("Segoe UI", 9),
-            values=["2", "3"],
-        )
-        self.points_combo.pack(side=tk.LEFT)
-        self.points_combo.bind("<<ComboboxSelected>>", self._commit_points)
-        self.points_combo.bind("<Return>", self._commit_points)
-        self.points_combo.bind("<KP_Enter>", self._commit_points)
-        self.points_combo.bind("<FocusOut>", self._commit_points)
         self.status_label   = ttk.Label(top_frame, font=("Segoe UI", 9, "italic"))
         self.status_label.pack(side=tk.RIGHT)
         self._render_header()
         style = ttk.Style()
         style.configure("TNotebook.Tab", font=("Segoe UI", 9), padding=(10, 3))
-        style.map("TNotebook.Tab",
-                  font=[("selected", ("Segoe UI", 9, "bold"))],
-                  padding=[("selected", (10, 4))])
+        style.map("TNotebook.Tab",font=[("selected", ("Segoe UI", 9, "bold"))],padding=[("selected", (10, 4))])
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 8))
         self.tab_strings = ttk.Frame(self.notebook)
@@ -561,12 +399,7 @@ class DOSTranslationEditor:
         self.search_entry = ttk.Entry(self.search_frame, textvariable=self.search_var, font=("Segoe UI", 10))
         self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
         self.search_entry.bind("<Escape>", lambda event: [self.clear_filters(), "break"][1])
-        self.showing_label = ttk.Label(
-            self.search_frame,
-            text=self.tr("status.counter", shown=0, total=0),
-            font=("Segoe UI", 9, "bold"),
-            foreground="#2980B9",
-        )
+        self.showing_label = ttk.Label(self.search_frame,text=self.tr("status.counter", shown=0, total=0),font=("Segoe UI", 9, "bold"),foreground="#2980B9",)
         self.showing_label.pack(side=tk.RIGHT, padx=(10, 0))
         self.filter_toggle_button = ttk.Button(self.search_frame, text=self.tr("filter.toggle_closed"), width=12,command=self._toggle_filters)
         self.filter_toggle_button.pack(side=tk.RIGHT)
@@ -583,16 +416,8 @@ class DOSTranslationEditor:
         )
         self.filter_combos = []
         for label, variable, values, width in filter_specs:
-            self._reg(ttk.Label(self.filter_frame, font=("Segoe UI", 9, "bold")), label).pack(
-                side=tk.LEFT, padx=(0 if not self.filter_combos else 10, 3)
-            )
-            combo = ttk.Combobox(
-                self.filter_frame,
-                textvariable=variable,
-                values=values,
-                state="readonly",
-                width=width,
-            )
+            self._reg(ttk.Label(self.filter_frame, font=("Segoe UI", 9, "bold")), label).pack(side=tk.LEFT, padx=(0 if not self.filter_combos else 10, 3))
+            combo = ttk.Combobox(self.filter_frame,textvariable=variable,values=values,state="readonly",width=width,)
             combo.pack(side=tk.LEFT)
             combo.bind("<<ComboboxSelected>>", self.on_filter_change)
             self.filter_combos.append(combo)
@@ -662,11 +487,7 @@ class DOSTranslationEditor:
         self.font_assign_button = ttk.Button(ctrl_row, command=self._goto_font_assign)
         self._reg(self.font_assign_button, "action.font_assign")
         self.font_assign_button.pack(side=tk.LEFT, padx=(6, 0))
-        self.supported_controls.extend((
-            self.newspaper_editor_check,
-            self.translate_enabled_check,
-            self.preview_button,
-        ))
+        self.supported_controls.extend((self.newspaper_editor_check,self.translate_enabled_check,self.preview_button,))
         self.translate_section = ttk.Frame(edit_frame)
         translation_options_row = ttk.Frame(self.translate_section)
         translation_options_row.pack(fill=tk.X, pady=(8, 0))
@@ -691,11 +512,7 @@ class DOSTranslationEditor:
         self.translate_status_label = ttk.Label(translation_options_row, text="", font=("Segoe UI", 9, "italic"), foreground="#7F8C8D")
         self.translate_status_label.pack(side=tk.LEFT, padx=(4, 0))
         self.translate_text = None
-        self.newspaper_panel = _ne.NewspaperEditorPanel(
-            edit_frame, self,
-            on_show=self._hide_edit_text,
-            on_hide=self._show_edit_text,
-        )
+        self.newspaper_panel = _ne.NewspaperEditorPanel(edit_frame, self,on_show=self._hide_edit_text,on_hide=self._show_edit_text,)
         self.tab_fonts = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_fonts, text=self.tr("tab.fonts"))
         self._reg_tab(self.tab_fonts, "tab.fonts")
@@ -706,8 +523,85 @@ class DOSTranslationEditor:
             on_font_state_changed=self._on_font_state_changed,
             can_change_charmap=self._can_change_charmap,
             on_string_font_change=self._on_string_font_change,
-            translate=self.tr,
-        )
+            translate=self.tr,)
+        self.tab_settings = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_settings, text="Settings")
+        settings_frame = ttk.LabelFrame(self.tab_settings, text="Game Options", padding=15)
+        settings_frame.pack(fill=tk.X, padx=15, pady=15)
+        self.year_container = ttk.Frame(settings_frame)
+        self.year_label = self._reg(ttk.Label(self.year_container, font=("Segoe UI", 9, "bold")), "header.year")
+        self.year_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.year_var = tk.StringVar()
+        self.year_spinbox = ttk.Spinbox(
+            self.year_container, from_=self._YEAR_MIN, to=self._YEAR_MAX, increment=1,
+            width=6, justify=tk.CENTER, font=("Segoe UI", 9),
+            textvariable=self.year_var, command=self._commit_year,)
+        self.year_spinbox.pack(side=tk.LEFT)
+        self.year_spinbox.bind("<Return>", self._commit_year)
+        self.year_spinbox.bind("<KP_Enter>", self._commit_year)
+        self.year_spinbox.bind("<FocusOut>", self._commit_year)
+        self.region_container = ttk.Frame(settings_frame)
+        self.region_label = self._reg(ttk.Label(self.region_container, font=("Segoe UI", 9, "bold")), "header.region")
+        self.region_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.region_var = tk.StringVar()
+        self.region_combo = ttk.Combobox(self.region_container, textvariable=self.region_var, state="readonly",width=12, justify=tk.LEFT, font=("Segoe UI", 9))
+        self.region_combo.pack(side=tk.LEFT)
+        self.region_combo.bind("<<ComboboxSelected>>", self._commit_region)
+        self.points_container = ttk.Frame(settings_frame)
+        self.points_label = self._reg(ttk.Label(self.points_container, font=("Segoe UI", 9, "bold")), "header.point")
+        self.points_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.points_var = tk.StringVar()
+        self.points_combo = ttk.Combobox(self.points_container, textvariable=self.points_var, state="readonly",width=4, justify=tk.CENTER, font=("Segoe UI", 9),values=["2", "3"],)
+        self.points_combo.pack(side=tk.LEFT)
+        self.points_combo.bind("<<ComboboxSelected>>", self._commit_points)
+        self.points_combo.bind("<Return>", self._commit_points)
+        self.points_combo.bind("<KP_Enter>", self._commit_points)
+        self.points_combo.bind("<FocusOut>", self._commit_points)
+        self._wdl_char_values = [bytes([i]).decode("cp437") for i in range(0x20, 0x100)]
+        self.flag_container = ttk.Frame(settings_frame)
+        flag_title_row = ttk.Frame(self.flag_container)
+        flag_title_row.pack(fill=tk.X, anchor="w", pady=(0, 4))
+        ttk.Label(flag_title_row,text="Balance character mapping:",font=("Segoe UI", 9, "bold"),).pack(side=tk.LEFT)
+        self.wdl_container = ttk.Frame(flag_title_row)
+        self.wdl_container.pack(side=tk.LEFT, padx=(18, 0), anchor="center")
+        _wdl_groups = (("WIN", "victory"),("DRAW", "draw"),("LOSS", "loss"),)
+        for col, (title, _key) in enumerate(_wdl_groups):
+            grp = tk.Frame(self.wdl_container,bg="#F4F6F9",bd=1,relief=tk.SOLID,highlightthickness=0,padx=3,pady=2,)
+            grp.pack(side=tk.LEFT, padx=(0 if col == 0 else 3, 0))
+            tk.Label(grp,text=title,bg="#F4F6F9",fg="#2C3E50",font=("Segoe UI", 8, "bold"),anchor=tk.CENTER,justify=tk.CENTER,).pack(fill=tk.X)
+            chars_row = tk.Frame(grp, bg="#F4F6F9")
+            chars_row.pack(fill=tk.X, pady=(1, 0))
+            for s_col in range(2):
+                v = tk.StringVar()
+                combo = ttk.Combobox(chars_row,textvariable=v,values=self._wdl_char_values,state="readonly",width=2,justify=tk.CENTER,font=("Segoe UI Symbol", 9),)
+                combo.pack(side=tk.LEFT, padx=(0 if s_col == 0 else 2, 0))
+                box_index = col * 2 + s_col
+                combo.bind("<<ComboboxSelected>>", lambda ev, i=box_index: self._commit_wdl(i))
+                setattr(self, f"_wdl_var_{box_index}", v)
+                setattr(self, f"_wdl_combo_{box_index}", combo)
+        self._wdl_last_valid = [None] * 6
+        flag_row = ttk.Frame(self.flag_container)
+        flag_row.pack(anchor="w")
+        flag_type_col = ttk.Frame(flag_row)
+        flag_type_col.pack(side=tk.LEFT, anchor="n", padx=(0, 8))
+        ttk.Label(flag_type_col, text="Match Flag:",font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        self._flag_type_var = tk.StringVar()
+        self._flag_type_combo = ttk.Combobox(flag_type_col, textvariable=self._flag_type_var,state="readonly", width=22, font=("Segoe UI", 9),)
+        self._flag_type_combo.config(values=[label for label, _ in self._FLAG_TYPES])
+        self._flag_type_combo.pack(anchor="w", pady=(0, 4))
+        self._flag_type_combo.bind("<<ComboboxSelected>>", self._on_flag_type_changed)
+        FLAG_W, FLAG_H = 90, 60
+        self._flag_canvas = tk.Canvas(flag_row, width=FLAG_W, height=FLAG_H,highlightthickness=1,highlightbackground="#888888",cursor="hand2")
+        self._flag_canvas.pack(side=tk.LEFT, anchor="n", padx=(0, 8))
+        self._flag_canvas.bind("<Button-1>", self._on_flag_canvas_click)
+        self._flag_selected_band = None
+        self._flag_palette_popup = None
+        self._flag_pal_canvas = None
+        self._flag_pal_sq = 14
+        self._flag_pal_cols = 16
+        self._flag_colors = [0, 0, 0]
+        self._flag_font_color = 0
+        self._flag_last_valid_type = None
         self.tab_mana = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_mana, text="MANA.DAT")
         self.mana_editor_panel = ManaEditorPanel(self.tab_mana)
@@ -727,6 +621,7 @@ class DOSTranslationEditor:
             self.save_button.config(state=tk.NORMAL if self._can_save() else tk.DISABLED)
         if hasattr(self, "notebook"):
             for tab in (getattr(self, "tab_strings", None), getattr(self, "tab_fonts", None),
+                        getattr(self, "tab_settings", None),
                         getattr(self, "tab_mana", None), getattr(self, "tab_vga", None)):
                 if tab is not None:
                     self.notebook.tab(tab, state=state)
@@ -744,6 +639,8 @@ class DOSTranslationEditor:
         self._sync_year_widget()
         self._sync_region_widget()
         self._sync_points_widget()
+        self._sync_wdl_widget()
+        self._sync_flag_widget()
         self._update_save_state()
 
     def _year_offset(self):
@@ -754,7 +651,7 @@ class DOSTranslationEditor:
             return None
         if bytes(self.exe_data[offset - 5:offset - 2]) != b"\x26\xC7\x06":
             return None
-        expected = self._YEAR_DISP.get(self.profile_name)
+        expected = self.profile.get("year_disp")
         if expected is None:
             return None
         if int.from_bytes(self.exe_data[offset - 2:offset], "little") != expected:
@@ -765,14 +662,12 @@ class DOSTranslationEditor:
         if not hasattr(self, "year_spinbox"):
             return
         if self._year_offset() is not None:
-            if not self.year_label.winfo_manager():
-                self.year_label.pack(side=tk.LEFT, padx=(10, 2))
-                self.year_spinbox.pack(side=tk.LEFT)
+            if not self.year_container.winfo_manager():
+                self.year_container.pack(fill=tk.X, pady=6)
             self.year_spinbox.config(state=tk.NORMAL)
             return
         self.year_spinbox.config(state=tk.DISABLED)
-        self.year_label.pack_forget()
-        self.year_spinbox.pack_forget()
+        self.year_container.pack_forget()
         self.year_var.set("")
         self._last_valid_year = None
 
@@ -839,7 +734,7 @@ class DOSTranslationEditor:
         offset = self.profile.get("region_offset")
         if not isinstance(offset, int) or offset < 0 or offset + 8 > len(self.exe_data):
             return None
-        a_disp = self._REGION_DISP.get(self.profile_name)
+        a_disp = self.profile.get("region_disp")
         ds_start = self.profile.get("ds_start")
         if a_disp is None or not isinstance(ds_start, int):
             return None
@@ -868,14 +763,12 @@ class DOSTranslationEditor:
             return
         if self._region_offset() is not None:
             self.region_combo.config(values=self._region_values())
-            if not self.region_label.winfo_manager():
-                self.region_label.pack(side=tk.LEFT, padx=(18, 4))
-                self.region_combo.pack(side=tk.LEFT)
+            if not self.region_container.winfo_manager():
+                self.region_container.pack(fill=tk.X, pady=6)
             self.region_combo.config(state="readonly")
             return
         self.region_combo.config(state=tk.DISABLED)
-        self.region_label.pack_forget()
-        self.region_combo.pack_forget()
+        self.region_container.pack_forget()
         self.region_var.set("")
         self._last_valid_region_index = None
 
@@ -920,7 +813,7 @@ class DOSTranslationEditor:
     def _points_rule_offset(self):
         if not self._supported_loaded():
             return None
-        disp = self._POINTS_RULE.get(self.profile_name)
+        disp = self.profile.get("points_rule")
         ds_start = self.profile.get("ds_start")
         if disp is None or not isinstance(ds_start, int):
             return None
@@ -936,14 +829,12 @@ class DOSTranslationEditor:
         if not hasattr(self, "points_combo"):
             return
         if self._points_rule_offset() is not None:
-            if not self.points_label.winfo_manager():
-                self.points_label.pack(side=tk.LEFT, padx=(18, 4))
-                self.points_combo.pack(side=tk.LEFT)
+            if not self.points_container.winfo_manager():
+                self.points_container.pack(fill=tk.X, pady=6)
             self.points_combo.config(state="readonly")
             return
         self.points_combo.config(state=tk.DISABLED)
-        self.points_label.pack_forget()
-        self.points_combo.pack_forget()
+        self.points_container.pack_forget()
         self.points_var.set("")
         self._last_valid_points = None
 
@@ -980,6 +871,493 @@ class DOSTranslationEditor:
         self.exe_data[offset:offset + 2] = payload
         self._invalidate_diff_preview("points-change")
         self._update_save_state()
+
+
+    def _wdl_offset(self):
+        if not self._supported_loaded():
+            return None
+        offset = self.profile.get("wdl_map")
+        if not isinstance(offset, int) or offset < 0 or offset + 6 > len(self.exe_data):
+            return None
+        return offset
+
+    def _sync_wdl_widget(self):
+        if not hasattr(self, "wdl_container"):
+            return
+        if self._wdl_offset() is not None:
+            for i in range(6):
+                combo = getattr(self, f"_wdl_combo_{i}", None)
+                if combo:
+                    combo.config(state="readonly")
+            return
+        for i in range(6):
+            combo = getattr(self, f"_wdl_combo_{i}", None)
+            if combo:
+                combo.config(state=tk.DISABLED)
+            v = getattr(self, f"_wdl_var_{i}", None)
+            if v:
+                v.set("")
+        self._wdl_last_valid = [None] * 6
+
+    def _wdl_char_from_byte(self, value):
+        try:
+            return bytes((value,)).decode("cp437")
+        except (ValueError, UnicodeDecodeError):
+            return ""
+
+    def _wdl_byte_from_char(self, value):
+        if not value:
+            raise ValueError
+        encoded = value[0].encode("cp437")
+        if len(encoded) != 1:
+            raise ValueError
+        return encoded[0]
+
+    def _read_wdl_from_exe(self):
+        offset = self._wdl_offset()
+        if offset is None:
+            self._wdl_last_valid = [None] * 6
+            for i in range(6):
+                v = getattr(self, f"_wdl_var_{i}", None)
+                if v:
+                    v.set("")
+        else:
+            for i in range(6):
+                byte_val = self.exe_data[offset + i]
+                self._wdl_last_valid[i] = byte_val
+                v = getattr(self, f"_wdl_var_{i}", None)
+                char_value = self._wdl_char_from_byte(byte_val)
+                if v:
+                    v.set(char_value if char_value in self._wdl_char_values else "")
+        self._sync_wdl_widget()
+
+    def _commit_wdl(self, box_index: int, event=None):
+        offset = self._wdl_offset()
+        if offset is None:
+            return
+        v = getattr(self, f"_wdl_var_{box_index}", None)
+        if v is None:
+            return
+        raw = v.get()
+        try:
+            value = self._wdl_byte_from_char(raw)
+            if not 0 <= value <= 0xFF:
+                raise ValueError
+        except (ValueError, UnicodeEncodeError):
+            prev = self._wdl_last_valid[box_index]
+            v.set(self._wdl_char_from_byte(prev) if prev is not None else "")
+            return
+        self._wdl_last_valid[box_index] = value
+        file_offset = offset + box_index
+        if self.exe_data[file_offset] == value:
+            return
+        self.exe_data[file_offset] = value
+        self._invalidate_diff_preview("wdl-change")
+        self._update_save_state()
+
+    def _match_flag_config(self):
+        if not self._supported_loaded():
+            return None
+        config = self.profile.get("match_flag")
+        if not isinstance(config, dict):
+            return None
+        return config
+
+    def _flag_offsets_valid(self):
+        mf = self._match_flag_config()
+        if mf is None:
+            return False
+
+        detect_offset = mf.get("detect_offset")
+        color_offsets = mf.get("color_offsets")
+        band_offsets = mf.get("band_offsets")
+        type_sets = mf.get("types")
+
+        if (
+            not isinstance(detect_offset, int)
+            or not isinstance(color_offsets, (tuple, list))
+            or len(color_offsets) != 3
+            or not isinstance(band_offsets, (tuple, list))
+            or len(band_offsets) != 3
+            or not isinstance(type_sets, dict)
+            or not type_sets
+        ):
+            return False
+
+        ranges = [(detect_offset, 1)]
+        for off in color_offsets:
+            if not isinstance(off, int):
+                return False
+            ranges.append((off, 1))
+
+        for off in band_offsets:
+            if not isinstance(off, int):
+                return False
+
+        for patches in type_sets.values():
+            if not isinstance(patches, dict):
+                return False
+            patch_values = list(patches.values())
+            if len(patch_values) != len(band_offsets):
+                return False
+            for band_offset, patch_hex in zip(band_offsets, patch_values):
+                try:
+                    patch = bytes.fromhex(patch_hex)
+                except (TypeError, ValueError):
+                    return False
+                ranges.append((band_offset, len(patch)))
+
+        return all(
+            off >= 0 and off + size <= len(self.exe_data)
+            for off, size in ranges
+        )
+
+    def _detect_flag_type(self):
+        mf = self._match_flag_config()
+        if mf is None or not self._flag_offsets_valid():
+            return None
+
+        band_offsets = tuple(mf["band_offsets"])
+        for type_key, patches in mf["types"].items():
+            if not isinstance(patches, dict):
+                continue
+            patch_values = list(patches.values())
+            if len(patch_values) != len(band_offsets):
+                continue
+
+            if all(
+                bytes(self.exe_data[band_offset:band_offset + len(expected)])
+                == expected
+                for band_offset, expected in (
+                    (off, bytes.fromhex(hex_str))
+                    for off, hex_str in zip(band_offsets, patch_values)
+                )
+            ):
+                return type_key
+        return None
+
+    def _detect_flag_colors(self):
+        mf = self._match_flag_config()
+        if mf is None or not self._flag_offsets_valid():
+            return [0, 0, 0]
+
+        detect_offset = mf["detect_offset"]
+        color_offsets = tuple(mf["color_offsets"])
+        if self.exe_data[detect_offset] == 0x2A:
+            first_color = 0
+        else:
+            first_color = self.exe_data[color_offsets[0]]
+
+        return [first_color, self.exe_data[color_offsets[1]], self.exe_data[color_offsets[2]]]
+
+    def _detect_flag_font_color(self):
+        mf = self._match_flag_config()
+        if mf is None or not self._flag_offsets_valid():
+            return 0
+
+        offset = mf.get("font_color_offset")
+        if not isinstance(offset, int) or not (0 <= offset < len(self.exe_data)):
+            return 0
+
+        value = self.exe_data[offset]
+        return value if 0 <= value < len(_PAL_NORMAL20) else 0
+
+    def _sync_flag_widget(self):
+        if not hasattr(self, "flag_container"):
+            return
+        if self._flag_offsets_valid():
+            if not self.flag_container.winfo_manager():
+                self.flag_container.pack(fill=tk.X, pady=6)
+            self._flag_type_combo.config(state="readonly")
+            return
+
+        self._hide_flag_palette()
+        self._flag_type_combo.config(state=tk.DISABLED)
+        self.flag_container.pack_forget()
+        self._flag_type_var.set("")
+        self._flag_last_valid_type = None
+        self._flag_selected_band = None
+
+    def _read_flag_from_exe(self):
+        type_key = self._detect_flag_type()
+        self._flag_colors = self._detect_flag_colors()
+        self._flag_font_color = self._detect_flag_font_color()
+        self._flag_selected_band = None
+        self._hide_flag_palette()
+
+        if type_key is not None:
+            for label, key in self._FLAG_TYPES:
+                if key == type_key:
+                    self._flag_type_var.set(label)
+                    self._flag_last_valid_type = type_key
+                    break
+        else:
+            self._flag_type_var.set("")
+            self._flag_last_valid_type = None
+
+        self._sync_flag_widget()
+        self._draw_flag_preview()
+
+    def _on_flag_type_changed(self, event=None):
+        label = self._flag_type_var.get()
+        type_key = next((k for lbl, k in self._FLAG_TYPES if lbl == label), None)
+        if type_key is None or not self._flag_offsets_valid():
+            return
+
+        mf = self._match_flag_config()
+        band_offsets = tuple(mf["band_offsets"])
+        patches = mf["types"].get(type_key)
+        if not isinstance(patches, dict):
+            return
+
+        for band_offset, hex_str in zip(band_offsets, patches.values()):
+            data = bytes.fromhex(hex_str)
+            self.exe_data[band_offset:band_offset + len(data)] = data
+
+        self._flag_last_valid_type = type_key
+        self._flag_selected_band = None
+        self._hide_flag_palette()
+        self._draw_flag_preview()
+        self._invalidate_diff_preview("flag-type-change")
+        self._update_save_state()
+
+    def _commit_flag_color(self, band_index, pal_index: int):
+        if not self._flag_offsets_valid():
+            return
+
+        mf = self._match_flag_config()
+
+        if band_index == "title":
+            font_color_offset = mf.get("font_color_offset")
+            if not isinstance(font_color_offset, int):
+                return
+            if not 0 <= font_color_offset < len(self.exe_data):
+                return
+
+            self.exe_data[font_color_offset] = pal_index
+            self._flag_font_color = pal_index
+        else:
+            color_offsets = tuple(mf["color_offsets"])
+            if not isinstance(band_index, int) or not 0 <= band_index < len(color_offsets):
+                return
+
+            self._flag_colors[band_index] = pal_index
+
+            if band_index == 0:
+                detect_offset = mf["detect_offset"]
+                if pal_index == 0:
+                    self.exe_data[detect_offset] = 0x2A
+                    self.exe_data[color_offsets[0]] = 0xC0
+                else:
+                    self.exe_data[detect_offset] = 0xB0
+                    self.exe_data[color_offsets[0]] = pal_index
+            else:
+                self.exe_data[color_offsets[band_index]] = pal_index
+
+        self._hide_flag_palette()
+        self._flag_selected_band = None
+        self._draw_flag_preview()
+        self._invalidate_diff_preview("flag-color-change")
+        self._update_save_state()
+
+    def _hide_flag_palette(self):
+        popup = getattr(self, "_flag_palette_popup", None)
+        self._flag_palette_popup = None
+        self._flag_pal_canvas = None
+        if popup is not None:
+            try:
+                popup.destroy()
+            except tk.TclError:
+                pass
+
+    def _show_flag_palette(self):
+        if not hasattr(self, "_flag_canvas") or self._flag_selected_band is None:
+            return
+
+        self._hide_flag_palette()
+
+        popup = tk.Toplevel(self.root)
+        popup.withdraw()
+        popup.configure(bg="#888888", bd=1, relief=tk.SOLID)
+        popup.overrideredirect(True)
+        popup.transient(self.root)
+
+        pal = list(_PAL_NORMAL20)
+        cols = 16
+        sq = 14
+        rows = max(1, (len(pal) + cols - 1) // cols)
+
+        canvas = tk.Canvas(
+            popup,
+            width=cols * sq,
+            height=rows * sq,
+            highlightthickness=0,
+            bd=0,
+            cursor="hand2",
+        )
+        canvas.pack(padx=1, pady=1)
+
+        for i, (r, g, b) in enumerate(pal):
+            cx = (i % cols) * sq
+            cy = (i // cols) * sq
+            canvas.create_rectangle(
+                cx, cy, cx + sq, cy + sq,
+                fill=f"#{r:02X}{g:02X}{b:02X}",
+                outline="",
+                tags=f"fpc_{i}",
+            )
+
+        self._flag_palette_popup = popup
+        self._flag_pal_canvas = canvas
+        self._flag_pal_sq = sq
+        self._flag_pal_cols = cols
+
+        canvas.bind("<Button-1>", self._on_flag_palette_click)
+        popup.bind("<Escape>", lambda _event: self._hide_flag_palette())
+
+        self.root.update_idletasks()
+        popup.update_idletasks()
+
+        x = self._flag_canvas.winfo_rootx() + self._flag_canvas.winfo_width() + 8
+        y = self._flag_canvas.winfo_rooty()
+
+        screen_w = popup.winfo_screenwidth()
+        screen_h = popup.winfo_screenheight()
+        popup_w = cols * sq + 2
+        popup_h = rows * sq + 2
+
+        if x + popup_w > screen_w:
+            x = max(0, self._flag_canvas.winfo_rootx() - popup_w - 8)
+        if y + popup_h > screen_h:
+            y = max(0, screen_h - popup_h - 8)
+
+        popup.geometry(f"+{x}+{y}")
+        popup.deiconify()
+        popup.lift()
+
+    def _draw_flag_preview(self):
+        if not hasattr(self, "_flag_canvas"):
+            return
+        c = self._flag_canvas
+        c.delete("all")
+        w = int(c["width"])
+        h = int(c["height"])
+        pal = list(_PAL_NORMAL20)
+        type_key = self._flag_last_valid_type
+
+        def _palette_color(idx, fallback="#000000"):
+            if 0 <= idx < len(pal):
+                r, g, b = pal[idx]
+                return f"#{r:02X}{g:02X}{b:02X}"
+            return fallback
+
+        def _band_color(band_idx):
+            idx = self._flag_colors[band_idx] if band_idx < len(self._flag_colors) else 0
+            return _palette_color(idx)
+
+        if type_key == "3v":
+            bw = w // 3
+            for i in range(3):
+                x0 = i * bw
+                x1 = x0 + bw if i < 2 else w
+                col = _band_color(i)
+                outline = "#FFFF00" if self._flag_selected_band == i else ""
+                width = 2 if self._flag_selected_band == i else 0
+                c.create_rectangle(x0, 0, x1, h, fill=col, outline=outline, width=width)
+        elif type_key == "3h":
+            bh = h // 3
+            for i in range(3):
+                y0 = i * bh
+                y1 = y0 + bh if i < 2 else h
+                col = _band_color(i)
+                outline = "#FFFF00" if self._flag_selected_band == i else ""
+                width = 2 if self._flag_selected_band == i else 0
+                c.create_rectangle(0, y0, w, y1, fill=col, outline=outline, width=width)
+        else:
+            c.create_rectangle(0, 0, w, h, fill="#CCCCCC", outline="")
+            c.create_text(
+                w // 2, h // 2, text="?", fill="#888888",
+                font=("Segoe UI", 14, "bold")
+            )
+            return
+
+        title_color = _palette_color(getattr(self, "_flag_font_color", 0), "#FFFFFF")
+        title_selected = self._flag_selected_band == "title"
+        title_x = w // 2
+        title_y = h // 2
+
+        if title_selected:
+            bbox = c.create_text(
+                title_x, title_y, text="title",
+                font=("Segoe UI", 8, "bold"),
+                fill=title_color,
+            )
+            x0, y0, x1, y1 = c.bbox(bbox)
+            pad_x = 4
+            pad_y = 2
+            c.tag_lower(c.create_rectangle(
+                x0 - pad_x, y0 - pad_y, x1 + pad_x, y1 + pad_y,
+                outline=title_color, width=2,
+            ), bbox)
+        else:
+            c.create_text(
+                title_x, title_y, text="title",
+                font=("Segoe UI", 8, "bold"),
+                fill=title_color,
+            )
+
+    def _on_flag_canvas_click(self, event):
+        if not hasattr(self, "_flag_canvas"):
+            return
+
+        c = self._flag_canvas
+        w = int(c["width"])
+        h = int(c["height"])
+        type_key = self._flag_last_valid_type
+
+        if type_key not in {"3v", "3h"}:
+            return
+
+        # The title is a real clickable target placed exactly at the center.
+        # Keep a small hit box around the text so the user does not need to hit
+        # the glyphs pixel-perfectly.
+        center_x = w / 2
+        center_y = h / 2
+        if abs(event.x - center_x) <= 20 and abs(event.y - center_y) <= 8:
+            self._flag_selected_band = "title"
+            self._draw_flag_preview()
+            self._show_flag_palette()
+            return
+
+        if type_key == "3v":
+            bw = w // 3
+            band = min(event.x // bw, 2)
+        else:
+            bh = h // 3
+            band = min(event.y // bh, 2)
+
+        self._flag_selected_band = band
+        self._draw_flag_preview()
+        self._show_flag_palette()
+
+    def _on_flag_palette_click(self, event):
+        if self._flag_selected_band is None:
+            return
+
+        canvas = getattr(self, "_flag_pal_canvas", None)
+        if canvas is None:
+            return
+
+        sq = self._flag_pal_sq
+        cols = self._flag_pal_cols
+        col = event.x // sq
+        row = event.y // sq
+        idx = row * cols + col
+        pal = list(_PAL_NORMAL20)
+        if not 0 <= idx < len(pal):
+            return
+
+        self._commit_flag_color(self._flag_selected_band, idx)
 
     def _supported_loaded(self) -> bool:
         return bool(self.is_supported and self.profile_name and self.profile and self.exe_data)
@@ -1502,8 +1880,7 @@ class DOSTranslationEditor:
     def _can_change_charmap(self) -> bool:
         if not self._has_pending_filter_edit():
             return True
-        messagebox.showwarning(self.tr("dlg.pending_text.title"),
-                               self.tr("dlg.pending_charmap.msg"))
+        messagebox.showwarning(self.tr("dlg.pending_text.title"), self.tr("dlg.pending_charmap.msg"))
         return False
 
     def _on_charmap_changed(self, game_name: str, font_key: str, charmap: dict):
@@ -2078,14 +2455,9 @@ class DOSTranslationEditor:
 
     def translate_all(self):
         if not self._supported_loaded() or not self.entries:
-            messagebox.showinfo(self.tr("dlg.translate_all.title"),
-                                self.tr("dlg.translate_all.none"))
+            messagebox.showinfo(self.tr("dlg.translate_all.title"), self.tr("dlg.translate_all.none"))
             return
-        if not messagebox.askyesno(
-            self.tr("dlg.translate_all.title"),
-            self.tr("dlg.translate_all.confirm", n=len(self.entries),
-                    engine=self.engine_var.get()),
-        ):
+        if not messagebox.askyesno(self.tr("dlg.translate_all.title"), self.tr("dlg.translate_all.confirm", n=len(self.entries), engine=self.engine_var.get())):
             return
 
         engine = self.engine_var.get()
@@ -2119,26 +2491,22 @@ class DOSTranslationEditor:
             )
         except Exception as exc:
             prog_win.destroy()
-            messagebox.showerror(self.tr("dlg.translate_all.blocked"),
-                                 self.tr("dlg.translate_all.nochange", detail=exc))
+            messagebox.showerror(self.tr("dlg.translate_all.blocked"), self.tr("dlg.translate_all.nochange", detail=exc))
             return
 
         prog_win.destroy()
         if validation.get("noop"):
-            messagebox.showinfo(self.tr("dlg.translate_all.title"),
-                                self.tr("dlg.translate_all.unchanged"))
+            messagebox.showinfo(self.tr("dlg.translate_all.title"), self.tr("dlg.translate_all.unchanged"))
             return
         if not validation["ok"]:
             detail = "\n".join(validation.get("errors", [])[:8]) or "Unknown validation error"
-            messagebox.showerror(self.tr("dlg.translate_all.blocked"),
-                                 self.tr("dlg.translate_all.nochange", detail=detail))
+            messagebox.showerror(self.tr("dlg.translate_all.blocked"), self.tr("dlg.translate_all.nochange", detail=detail))
             return
 
         self._commit_text_transaction(work_data, work_entries, validation)
         self.refresh_table(force=True, refresh_active_fields=True)
 
-        summary = self.tr("dlg.translate_all.summary", translated=stats["translated"],
-                          unchanged=stats["unchanged"], blank=stats["blank"])
+        summary = self.tr("dlg.translate_all.summary", translated=stats["translated"], unchanged=stats["unchanged"], blank=stats["blank"])
         if stats["suffix_skipped"]:
             summary += self.tr("dlg.translate_all.suffix", n=stats["suffix_skipped"])
         messagebox.showinfo(self.tr("dlg.translate_all.done"), summary)
@@ -2211,22 +2579,16 @@ class DOSTranslationEditor:
         try:
             atomic_save_bytes(filepath, payload)
         except OSError as exc:
-            messagebox.showerror(self.tr("dlg.export.failed"),
-                                 self.tr("dlg.export.partial", error=exc))
+            messagebox.showerror(self.tr("dlg.export.failed"), self.tr("dlg.export.partial", error=exc))
             return False
 
-        self._set_status("dlg.export.status", n=normal_count,
-                         file=os.path.basename(filepath))
-        messagebox.showinfo(self.tr("dlg.export.done"),
-                            self.tr("dlg.export.done_msg", n=normal_count, path=filepath))
+        self._set_status("dlg.export.status", n=normal_count, file=os.path.basename(filepath))
+        messagebox.showinfo(self.tr("dlg.export.done"), self.tr("dlg.export.done_msg", n=normal_count, path=filepath))
         return True
 
     def import_normal_csv(self):
         if not self._can_exchange_strings():
-            messagebox.showwarning(
-                self.tr("dlg.import.blocked"),
-                self._save_block_reason()
-            )
+            messagebox.showwarning(self.tr("dlg.import.blocked"), self._save_block_reason())
             return False
 
         filepath = filedialog.askopenfilename(
@@ -2295,34 +2657,18 @@ class DOSTranslationEditor:
             changed_count = len(replacements)
 
         except (OSError, StringExchangeError, newspaper_csv.NewspaperCsvError, KeyError, ValueError, CharmapEncodeError) as exc:
-            messagebox.showerror(
-                self.tr("dlg.import.blocked"),
-                self.tr("dlg.import.nochange", error=exc)
-            )
+            messagebox.showerror(self.tr("dlg.import.blocked"), self.tr("dlg.import.nochange", error=exc))
             return False
 
         if changed_count == 0:
-            messagebox.showinfo(
-                self.tr("dlg.import.done"),
-                self.tr("dlg.import.none", profile=csv_doc["profile_id"])
-            )
+            messagebox.showinfo(self.tr("dlg.import.done"), self.tr("dlg.import.none", profile=csv_doc["profile_id"]))
             return True
 
-        if not messagebox.askyesno(
-            self.tr("dlg.import.title"),
-            self.tr(
-                "dlg.import.confirm",
-                profile=csv_doc["profile_id"],
-                n=changed_count
-            ),
-        ):
+        if not messagebox.askyesno(self.tr("dlg.import.title"), self.tr("dlg.import.confirm", profile=csv_doc["profile_id"], n=changed_count)):
             return False
 
         if not self._can_exchange_strings():
-            messagebox.showwarning(
-                self.tr("dlg.import.blocked"),
-                self._save_block_reason()
-            )
+            messagebox.showwarning(self.tr("dlg.import.blocked"), self._save_block_reason())
             return False
 
         try:
@@ -2335,10 +2681,7 @@ class DOSTranslationEditor:
                 EXE_FONT_PROFILES[self.profile_name],
             )
         except (StringExchangeError, KeyError, ValueError) as exc:
-            messagebox.showerror(
-                self.tr("dlg.import.blocked"),
-                self.tr("dlg.import.nochange", error=exc)
-            )
+            messagebox.showerror(self.tr("dlg.import.blocked"), self.tr("dlg.import.nochange", error=exc))
             return False
 
         self._commit_text_transaction(work_data, work_entries, validation)
@@ -2346,15 +2689,7 @@ class DOSTranslationEditor:
         self.refresh_table(force=True, refresh_active_fields=True)
         self._update_save_state()
         self._set_status("dlg.import.status", n=changed_count)
-
-        messagebox.showinfo(
-            self.tr("dlg.import.done"),
-            self.tr(
-                "dlg.import.done_msg",
-                profile=csv_doc["profile_id"],
-                n=changed_count
-            )
-        )
+        messagebox.showinfo(self.tr("dlg.import.done"), self.tr("dlg.import.done_msg", profile=csv_doc["profile_id"], n=changed_count))
         return True
 
     def export_all_json(self):
@@ -2380,14 +2715,11 @@ class DOSTranslationEditor:
         try:
             atomic_save_bytes(filepath, payload)
         except OSError as exc:
-            messagebox.showerror(self.tr("dlg.export.failed"),
-                                 self.tr("dlg.export.partial", error=exc))
+            messagebox.showerror(self.tr("dlg.export.failed"), self.tr("dlg.export.partial", error=exc))
             return False
 
-        self._set_status("dlg.export.status", n=len(self.entries),
-                         file=os.path.basename(filepath))
-        messagebox.showinfo(self.tr("dlg.export.done"),
-                            self.tr("dlg.export.done_msg", n=len(self.entries), path=filepath))
+        self._set_status("dlg.export.status", n=len(self.entries), file=os.path.basename(filepath))
+        messagebox.showinfo(self.tr("dlg.export.done"), self.tr("dlg.export.done_msg", n=len(self.entries), path=filepath))
         return True
 
     def import_all_json(self):
@@ -2411,19 +2743,14 @@ class DOSTranslationEditor:
                 raw_document, **self._string_exchange_arguments()
             )
         except (OSError, StringExchangeError, KeyError, ValueError) as exc:
-            messagebox.showerror(self.tr("dlg.import.blocked"),
-                                 self.tr("dlg.import.nochange", error=exc))
+            messagebox.showerror(self.tr("dlg.import.blocked"), self.tr("dlg.import.nochange", error=exc))
             return False
 
         changed_count = preflight["changed_count"]
         if changed_count == 0:
-            messagebox.showinfo(self.tr("dlg.import.done"),
-                                self.tr("dlg.import.none", profile=preflight["profile_id"]))
+            messagebox.showinfo(self.tr("dlg.import.done"), self.tr("dlg.import.none", profile=preflight["profile_id"]))
             return True
-        if not messagebox.askyesno(
-            self.tr("dlg.import.title"),
-            self.tr("dlg.import.confirm", profile=preflight["profile_id"], n=changed_count),
-        ):
+        if not messagebox.askyesno(self.tr("dlg.import.title"), self.tr("dlg.import.confirm", profile=preflight["profile_id"], n=changed_count)):
             return False
         if not self._can_exchange_strings():
             messagebox.showwarning(self.tr("dlg.import.blocked"), self._save_block_reason())
@@ -2442,8 +2769,7 @@ class DOSTranslationEditor:
                 EXE_FONT_PROFILES[self.profile_name],
             )
         except (StringExchangeError, KeyError, ValueError) as exc:
-            messagebox.showerror(self.tr("dlg.import.blocked"),
-                                 self.tr("dlg.import.nochange", error=exc))
+            messagebox.showerror(self.tr("dlg.import.blocked"), self.tr("dlg.import.nochange", error=exc))
             return False
         if not self._can_exchange_strings():
             messagebox.showwarning(self.tr("dlg.import.blocked"), self._save_block_reason())
@@ -2454,9 +2780,7 @@ class DOSTranslationEditor:
         self.refresh_table(force=True, refresh_active_fields=True)
         self._update_save_state()
         self._set_status("dlg.import.status", n=preflight["changed_count"])
-        messagebox.showinfo(self.tr("dlg.import.done"),
-                            self.tr("dlg.import.done_msg", profile=preflight["profile_id"],
-                                    n=preflight["changed_count"]))
+        messagebox.showinfo(self.tr("dlg.import.done"), self.tr("dlg.import.done_msg", profile=preflight["profile_id"], n=preflight["changed_count"]))
         return True
 
     def _newspaper_ready(self, blocked_key):
@@ -2464,8 +2788,7 @@ class DOSTranslationEditor:
             messagebox.showwarning(self.tr(blocked_key), self._save_block_reason())
             return False
         if not newspaper_csv.is_supported(self.profile_name):
-            messagebox.showwarning(self.tr(blocked_key),
-                                   self.tr("dlg.news.unsupported", profile=self.profile_name))
+            messagebox.showwarning(self.tr(blocked_key), self.tr("dlg.news.unsupported", profile=self.profile_name))
             return False
         return True
 
@@ -2494,14 +2817,10 @@ class DOSTranslationEditor:
         try:
             atomic_save_bytes(filepath, payload)
         except OSError as exc:
-            messagebox.showerror(self.tr("dlg.export.failed"),
-                                 self.tr("dlg.export.partial", error=exc))
+            messagebox.showerror(self.tr("dlg.export.failed"), self.tr("dlg.export.partial", error=exc))
             return False
-        self._set_status("dlg.news.status_export", n=count,
-                         file=os.path.basename(filepath))
-        messagebox.showinfo(self.tr("dlg.export.done"),
-                            self.tr("dlg.news.export_msg", n=count, rows=len(rows),
-                                    path=filepath))
+        self._set_status("dlg.news.status_export", n=count, file=os.path.basename(filepath))
+        messagebox.showinfo(self.tr("dlg.export.done"), self.tr("dlg.news.export_msg", n=count, rows=len(rows), path=filepath))
         return True
 
     def import_newspaper_csv(self):
@@ -2518,17 +2837,14 @@ class DOSTranslationEditor:
                 raw_document = handle.read()
             replacements = newspaper_csv.preflight_import(
                 self.profile_name, self.entries, self._decode_entry_text, raw_document)
-        except (OSError, newspaper_csv.NewspaperCsvError, NewspaperGrammarError,
-                CharmapEncodeError, KeyError, ValueError) as exc:
-            messagebox.showerror(self.tr("dlg.import.blocked"),
-                                 self.tr("dlg.import.nochange", error=exc))
+        except (OSError, newspaper_csv.NewspaperCsvError, NewspaperGrammarError, CharmapEncodeError, KeyError, ValueError) as exc:
+            messagebox.showerror(self.tr("dlg.import.blocked"), self.tr("dlg.import.nochange", error=exc))
             return False
 
         if not replacements:
             messagebox.showinfo(self.tr("dlg.import.done"), self.tr("dlg.news.none"))
             return True
-        if not messagebox.askyesno(self.tr("dlg.import.title"),
-                                   self.tr("dlg.news.confirm", n=len(replacements))):
+        if not messagebox.askyesno(self.tr("dlg.import.title"), self.tr("dlg.news.confirm", n=len(replacements))):
             return False
         if not self._newspaper_ready("dlg.import.blocked"):
             return False
@@ -2547,10 +2863,8 @@ class DOSTranslationEditor:
                 self.relocation_sites,
                 EXE_FONT_PROFILES[self.profile_name],
             )
-        except (StringExchangeError, CharmapEncodeError, TextTransactionError,
-                FontSafetyError, KeyError, ValueError) as exc:
-            messagebox.showerror(self.tr("dlg.import.blocked"),
-                                 self.tr("dlg.import.nochange", error=exc))
+        except (StringExchangeError, CharmapEncodeError, TextTransactionError, FontSafetyError, KeyError, ValueError) as exc:
+            messagebox.showerror(self.tr("dlg.import.blocked"), self.tr("dlg.import.nochange", error=exc))
             return False
         if not self._newspaper_ready("dlg.import.blocked"):
             return False
@@ -2560,8 +2874,7 @@ class DOSTranslationEditor:
         self.refresh_table(force=True, refresh_active_fields=True)
         self._update_save_state()
         self._set_status("dlg.news.status_import", n=len(replacements))
-        messagebox.showinfo(self.tr("dlg.import.done"),
-                            self.tr("dlg.news.done_msg", n=len(replacements)))
+        messagebox.showinfo(self.tr("dlg.import.done"), self.tr("dlg.news.done_msg", n=len(replacements)))
         return True
 
     def _pending_preview_state(self):
@@ -2702,30 +3015,61 @@ class DOSTranslationEditor:
             and bytes(self.exe_data[region_offset:region_offset + 8])
             != bytes(self.initial_unpacked_data[region_offset:region_offset + 8])
         )
-        region_value = no_text
-        if region_changed:
-            before = self._region_index(
-                self._region_pair(self.initial_unpacked_data, region_offset))
-            after = self._region_index(self._region_pair(self.exe_data, region_offset))
-            if before is None or after is None:
-                region_value = yes_text
-            else:
-                region_value = "{} → {}".format(
-                    self.tr(self._REGION_VARIANTS[before][0]),
-                    self.tr(self._REGION_VARIANTS[after][0]))
+
         points_offset = self._points_rule_offset()
-        points_changed = summary.get("points_var_changed", False)
-        points_value = no_text
-        if points_changed and points_offset is not None:
-            before_val = int.from_bytes(
-                self.initial_unpacked_data[points_offset:points_offset + 2], "little"
-            ) if len(self.initial_unpacked_data) >= points_offset + 2 else None
-            after_val = int.from_bytes(
-                self.exe_data[points_offset:points_offset + 2], "little"
-            )
-            points_value = (
-                f"{before_val} → {after_val}" if before_val is not None else yes_text
-            )
+        points_changed = (
+            points_offset is not None
+            and len(self.initial_unpacked_data) >= points_offset + 2
+            and bytes(self.exe_data[points_offset:points_offset + 2])
+            != bytes(self.initial_unpacked_data[points_offset:points_offset + 2])
+        )
+
+        wdl_offset = self._wdl_offset()
+        wdl_changed = (
+            wdl_offset is not None
+            and len(self.initial_unpacked_data) >= wdl_offset + 6
+            and bytes(self.exe_data[wdl_offset:wdl_offset + 6])
+            != bytes(self.initial_unpacked_data[wdl_offset:wdl_offset + 6])
+        )
+
+        def _match_flag_changed():
+            mf = self._match_flag_config()
+            if not mf:
+                return False
+
+            offsets = []
+            detect_offset = mf.get("detect_offset")
+            color_offsets = mf.get("color_offsets", ())
+            font_color_offset = mf.get("font_color_offset")
+            band_offsets = mf.get("band_offsets", ())
+            type_sets = mf.get("types", {})
+
+            if isinstance(detect_offset, int):
+                offsets.append((detect_offset, 2))
+            for off in color_offsets:
+                if isinstance(off, int):
+                    offsets.append((off, 1))
+            if isinstance(font_color_offset, int):
+                offsets.append((font_color_offset, 1))
+            for patches in type_sets.values():
+                if not isinstance(patches, dict):
+                    continue
+                for off, hex_str in zip(band_offsets, patches.values()):
+                    try:
+                        length = len(bytes.fromhex(hex_str))
+                    except (TypeError, ValueError):
+                        continue
+                    if isinstance(off, int):
+                        offsets.append((off, length))
+
+            for off, length in offsets:
+                if off < 0 or len(self.initial_unpacked_data) < off + length:
+                    return False
+                if bytes(self.exe_data[off:off + length]) != bytes(self.initial_unpacked_data[off:off + length]):
+                    return True
+            return False
+
+        match_flag_changed = _match_flag_changed()
 
         summary_lines = [
             self.tr("preview.sum.status", value=snapshot["status"]),
@@ -2742,10 +3086,14 @@ class DOSTranslationEditor:
             "",
             *([self.tr("preview.sum.year", value=flag(year_changed))]
               if year_offset is not None else []),
-            *([self.tr("preview.sum.region", value=region_value)]
+            *([self.tr("preview.sum.region", value=flag(region_changed))]
               if region_offset is not None else []),
-            *([self.tr("preview.sum.points", value=points_value)]
+            *([self.tr("preview.sum.points", value=flag(points_changed))]
               if points_offset is not None else []),
+            *([f"WDL: {flag(wdl_changed)}"]
+              if wdl_offset is not None else []),
+            *([f"Match Flag: {flag(match_flag_changed)}"]
+              if self._match_flag_config() is not None else []),
             "",
             self.tr("preview.sum.extended_layout", value=flag(summary.get("extended_layout_active", False))),
             "",
@@ -2864,8 +3212,7 @@ class DOSTranslationEditor:
         try:
             snapshot = self._build_changes_preview()
         except (DiffPreviewError, KeyError, ValueError) as exc:
-            messagebox.showerror(self.tr("dlg.preview.failed"),
-                                 self.tr("dlg.import.nochange", error=exc))
+            messagebox.showerror(self.tr("dlg.preview.failed"), self.tr("dlg.import.nochange", error=exc))
             return False
         self.filter_records_dirty = True
         self.refresh_table()
@@ -2925,23 +3272,7 @@ class DOSTranslationEditor:
         )
 
     def detect_profile(self, data):
-        header = f"[detect_profile] file size={hex(len(data))}, MZ={bytes(data[:2]) if len(data) >= 2 else '?'}"
-        all_logs = [header]
-        matches = []
-        for name, profile in GAME_PROFILES.items():
-            all_logs.append(f"[detect_profile] --- testing profile: {name} ---")
-            matched, lines = _matches_immutable_profile(data, profile, collect=True)
-            all_logs.extend(lines)
-            if matched:
-                matches.append(name)
-        result = matches[0] if len(matches) == 1 else None
-        if result is not None:
-            print(f"[detect_profile] detected={result}")
-        else:
-            for line in all_logs:
-                print(line)
-            print(f"[detect_profile] result=None  (all matches={matches})")
-        return result
+        return detect_game_profile(data, GAME_PROFILES)
 
     def _reset_state(self):
         self._invalidate_diff_preview("reset", refresh=False)
@@ -3062,9 +3393,7 @@ class DOSTranslationEditor:
             unsaved = self._has_unsaved_changes()
         except Exception:
             unsaved = True
-        if unsaved and not messagebox.askyesno(
-            self.tr("dlg.unsaved.title"), self.tr("dlg.unsaved.close")
-        ):
+        if unsaved and not messagebox.askyesno(self.tr("dlg.unsaved.title"), self.tr("dlg.unsaved.close")):
             return
         self._cancel_free_space_update()
         self.root.destroy()
@@ -3219,15 +3548,14 @@ class DOSTranslationEditor:
                 if descriptor is not None:
                     pool_start, pool_end = descriptor["pool"]
                     pool_kb = (pool_end - pool_start) // 1024
-                    if messagebox.askyesno("Extended Layout",self.tr("dlg.load.extended", detected=detected, pool_kb=pool_kb)):
+                    if messagebox.askyesno("Extended Layout", self.tr("dlg.load.extended", detected=detected, pool_kb=pool_kb)):
                         unpacked_data, _ = extended_layout.convert_to_extended(unpacked_data, profile)
                         self._converted_to_extended = True
 
                 validate_all_fonts(unpacked_data, EXE_FONT_PROFILES[detected])
                 prepared = self._prepare_load_content(unpacked_data, profile)
         except (OSError, ValueError, KeyError, FontSafetyError) as exc:
-            messagebox.showerror(self.tr("dlg.load.failed"),
-                                 self.tr("dlg.load.failed_msg", error=exc))
+            messagebox.showerror(self.tr("dlg.load.failed"), self.tr("dlg.load.failed_msg", error=exc))
             return
 
         converted_to_extended = self._converted_to_extended
@@ -3308,6 +3636,8 @@ class DOSTranslationEditor:
         self._read_year_from_exe()
         self._read_region_from_exe()
         self._read_points_from_exe()
+        self._read_wdl_from_exe()
+        self._read_flag_from_exe()
         self.notebook.select(self.tab_strings)
         self._update_save_state()
         self.status_label.config(text="")
@@ -3337,8 +3667,7 @@ class DOSTranslationEditor:
                         self._migrate_legacy_font_mappings()
                         self.status_label.config(text="")
                     else:
-                        self._set_status("dlg.load.integrity_status",
-                                         error=new_validation["errors"][0])
+                        self._set_status("dlg.load.integrity_status", error=new_validation["errors"][0])
             self._try_rebuild_baseline_filter_index()
             self.refresh_table(force=True)
             self._update_save_state()
@@ -3358,8 +3687,7 @@ class DOSTranslationEditor:
 
     def save_exe(self):
         if not self._supported_loaded():
-            messagebox.showwarning(self.tr("dlg.save.unsupported"),
-                                   self.tr("dlg.save.unsupported_msg"))
+            messagebox.showwarning(self.tr("dlg.save.unsupported"), self.tr("dlg.save.unsupported_msg"))
             return False
         if self.font_valid and not self.font_pending:
             self.font_editor.validate_live_state()
@@ -3382,8 +3710,7 @@ class DOSTranslationEditor:
                 with open(self.source_path, "rb") as handle:
                     current_source = handle.read()
             except OSError as exc:
-                messagebox.showerror(self.tr("dlg.save.blocked"),
-                                     self.tr("dlg.save.verify", error=exc))
+                messagebox.showerror(self.tr("dlg.save.blocked"), self.tr("dlg.save.verify", error=exc))
                 return False
             if current_source != bytes(self.original_source_data):
                 messagebox.showerror(self.tr("dlg.save.blocked"), self.tr("dlg.save.external"))
@@ -3397,19 +3724,14 @@ class DOSTranslationEditor:
                 self._try_rebuild_baseline_filter_index()
                 self.refresh_table(force=True, refresh_active_fields=True)
                 return True
-            if not messagebox.askyesno(
-                self.tr("dlg.save.overwrite_title"), self.tr("dlg.save.overwrite_msg")
-            ):
+            if not messagebox.askyesno(self.tr("dlg.save.overwrite_title"), self.tr("dlg.save.overwrite_msg")):
                 return False
             backup_original = True
 
         try:
-            backup_path = atomic_save_bytes(
-                filepath, payload, backup_original=backup_original
-            )
+            backup_path = atomic_save_bytes(filepath, payload, backup_original=backup_original)
         except OSError as exc:
-            messagebox.showerror(self.tr("dlg.save.failed"),
-                                 self.tr("dlg.save.failed_msg", error=exc))
+            messagebox.showerror(self.tr("dlg.save.failed"), self.tr("dlg.save.failed_msg", error=exc))
             return False
 
         self.source_path = os.path.abspath(filepath)
@@ -3431,8 +3753,7 @@ class DOSTranslationEditor:
             mana_panel.save_if_dirty()
 
         backup_note = self.tr("dlg.save.backup", path=backup_path) if backup_path else ""
-        messagebox.showinfo(self.tr("dlg.save.done"),
-                            self.tr("dlg.save.done_msg", path=filepath, backup=backup_note))
+        messagebox.showinfo(self.tr("dlg.save.done"), self.tr("dlg.save.done_msg", path=filepath, backup=backup_note))
         return True
 
 __all__ = ['DOSTranslationEditor']

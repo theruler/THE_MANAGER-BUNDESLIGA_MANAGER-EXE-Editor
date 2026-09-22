@@ -40,12 +40,8 @@ class EXEFontEditor:
         self.can_change_charmap = can_change_charmap
         self.on_open_charmap    = on_open_charmap
         self.on_string_font_change = on_string_font_change
-        # Injected by the main editor; font_editor never imports main_editor.
         self.translate          = translate
         self._i18n              = []
-        # Containers built outside self.parent (CharMap panel).  set_enabled()
-        # must cover them, otherwise they would stay operable for an
-        # unsupported executable.
         self._external_panels   = []
         self.raw_data:    bytearray = bytearray()
         self.initial_raw_data: bytearray = bytearray()
@@ -68,7 +64,6 @@ class EXEFontEditor:
         self._bind_shortcuts(parent)
 
     def tr(self, key, **fmt):
-        """Localised text via the injected translator; fail-visible fallback."""
         if callable(self.translate):
             return self.translate(key, **fmt)
         return key
@@ -79,7 +74,6 @@ class EXEFontEditor:
         return widget
 
     def retranslate(self):
-        """Re-label all registered widgets; no font state is touched."""
         for widget, key in self._i18n:
             try:
                 widget.config(text=self.tr(key))
@@ -104,12 +98,9 @@ class EXEFontEditor:
         self.font_combo.bind("<<ComboboxSelected>>", self._on_font_select)
         self._reg(ttk.Button(bar, command=self._write_to_exe),
                   "font.apply").pack(side=tk.LEFT, padx=4)
-        self.font_status = ttk.Label(bar, text=self.tr("font.load_first"),
-                                     font=("Segoe UI", 9, "italic"), foreground="#7F8C8D")
+        self.font_status = ttk.Label(bar, text=self.tr("font.load_first"),font=("Segoe UI", 9, "italic"), foreground="#7F8C8D")
         self.font_status.pack(side=tk.LEFT, padx=12)
-        self._reg(ttk.Label(bar, font=("Segoe UI", 9, "italic"), foreground="#566573",
-                            justify=tk.RIGHT),
-                  "settings.hint_text").pack(side=tk.RIGHT, padx=(8, 0))
+        self._reg(ttk.Label(bar, font=("Segoe UI", 9, "italic"), foreground="#566573",justify=tk.RIGHT),"settings.hint_text").pack(side=tk.RIGHT, padx=(8, 0))
         body = ttk.Frame(parent, padding=(12, 0, 12, 8))
         body.pack(fill=tk.BOTH, expand=True)
         lf = ttk.LabelFrame(body, padding=6)
@@ -130,7 +121,6 @@ class EXEFontEditor:
         self.canvas.bind("<B1-Motion>", lambda e: self._last_drag_state is not None and self._toggle_pixel(e.x, e.y, force=self._last_drag_state))
         rf = ttk.Frame(body, padding=(8, 0, 0, 0))
         rf.pack(side=tk.RIGHT, fill=tk.Y)
-
         prop_group = ttk.LabelFrame(rf, padding=8)
         self._reg(prop_group, "font.props")
         prop_group.pack(fill=tk.X)
@@ -148,56 +138,41 @@ class EXEFontEditor:
         self.string_font_label_widget = self._reg(ttk.Label(font_assign_col), "settings.font_label")
         self.string_font_label_widget.pack(anchor=tk.W)
         self.string_font_var = tk.StringVar(value="FLOW.FON")
-        self.string_font_combo = ttk.Combobox(
-            font_assign_col, textvariable=self.string_font_var, state="readonly",
-            width=14, values=["FLOW.FON", "NORMAL.FON", "MICRO4.FON"],
-        )
+        self.string_font_combo = ttk.Combobox(font_assign_col, textvariable=self.string_font_var, state="readonly",width=14, values=["FLOW.FON", "NORMAL.FON", "MICRO4.FON"],)
         self.string_font_combo.pack(anchor=tk.W, pady=(2, 0))
         self.string_font_combo.bind("<<ComboboxSelected>>", self._on_string_font_change_internal)
-
         tools_group = ttk.LabelFrame(rf, padding=8)
         self._reg(tools_group, "font.tools")
         tools_group.pack(fill=tk.X, pady=(8, 0))
         copy_paste_frame = ttk.Frame(tools_group)
         copy_paste_frame.pack(fill=tk.X, pady=(0, 2))
-        self._reg(ttk.Button(copy_paste_frame, command=self._copy_glyph),
-                  "font.copy").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-        self._reg(ttk.Button(copy_paste_frame, command=self._paste_glyph),
-                  "font.paste").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+        self._reg(ttk.Button(copy_paste_frame, command=self._copy_glyph),"font.copy").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        self._reg(ttk.Button(copy_paste_frame, command=self._paste_glyph),"font.paste").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
         clear_invert_frame = ttk.Frame(tools_group)
         clear_invert_frame.pack(fill=tk.X, pady=2)
-        self._reg(ttk.Button(clear_invert_frame, command=lambda: self._edit_char("clear")),
-                  "font.clear").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-        self._reg(ttk.Button(clear_invert_frame, command=lambda: self._edit_char("invert")),
-                  "font.invert").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+        self._reg(ttk.Button(clear_invert_frame, command=lambda: self._edit_char("clear")),"font.clear").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        self._reg(ttk.Button(clear_invert_frame, command=lambda: self._edit_char("invert")),"font.invert").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
         shift_frame = ttk.Frame(tools_group)
         shift_frame.pack(fill=tk.X, pady=(4, 2))
         for text, row, col, dir_ in [("▲", 0, 1, "up"), ("◀", 1, 0, "left"), ("▶", 1, 2, "right"), ("▼", 2, 1, "down")]:
             ttk.Button(shift_frame, text=text, width=3, command=lambda d=dir_: self._edit_char("shift", d)).grid(row=row, column=col, padx=1, pady=1)
         shift_frame.columnconfigure((0, 1, 2), weight=1)
-
         file_group = ttk.LabelFrame(rf, padding=8)
         self._reg(file_group, "font.file")
         file_group.pack(fill=tk.X, pady=(8, 0))
         import_export_frame = ttk.Frame(file_group)
         import_export_frame.pack(fill=tk.X)
-        self._reg(ttk.Button(import_export_frame, command=self._import_font),
-                  "font.import").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-        self._reg(ttk.Button(import_export_frame, command=self._export_font),
-                  "font.export").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
-
+        self._reg(ttk.Button(import_export_frame, command=self._import_font),"font.import").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        self._reg(ttk.Button(import_export_frame, command=self._export_font),"font.export").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
         charmap_group = ttk.LabelFrame(rf, padding=8)
         self._reg(charmap_group, "settings.charmap_group")
         charmap_group.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
         self._build_charmap_inline(charmap_group)
-
         self.alias_label = ttk.Label(rf, text="", font=("Segoe UI", 8, "italic"), foreground="#E67E22", wraplength=150)
         self.alias_label.pack(anchor=tk.W, pady=(6, 0))
 
     def _build_charmap_inline(self, parent):
-        """Build the CharMap controls inside the given frame (called by _build_ui)."""
-        self.charmap_title_label = ttk.Label(parent, text=self.tr("font.charmap_title"),
-                                             font=("Segoe UI", 9, "bold"))
+        self.charmap_title_label = ttk.Label(parent, text=self.tr("font.charmap_title"),font=("Segoe UI", 9, "bold"))
         self.charmap_title_label.pack(anchor=tk.W, pady=(0, 4))
         map_row = ttk.Frame(parent)
         map_row.pack(fill=tk.X, pady=(0, 2))
@@ -208,16 +183,10 @@ class EXEFontEditor:
         self.charmap_list = tk.Listbox(parent, width=20, height=8, font=("Consolas", 9), exportselection=False)
         self.charmap_list.pack(fill=tk.BOTH, expand=True, pady=(2, 2))
         self.charmap_list.bind("<<ListboxSelect>>", self._on_charmap_select)
-        self._reg(ttk.Button(parent, command=self._remove_charmap_entry),
-                  "font.remove").pack(fill=tk.X, pady=1)
+        self._reg(ttk.Button(parent, command=self._remove_charmap_entry),"font.remove").pack(fill=tk.X, pady=1)
         self._refresh_charmap_list()
 
     def build_charmap_panel(self, parent):
-        """Build the CharMap controls in an arbitrary external parent frame.
-
-        Kept for backwards compatibility; the charmap is now built inline
-        in the right column of the Font Editor tab via _build_charmap_inline.
-        """
         panel = ttk.Frame(parent)
         panel.pack(fill=tk.BOTH, expand=True)
         self._external_panels.append(panel)
@@ -232,7 +201,6 @@ class EXEFontEditor:
         self.cfg = cfg
 
     def set_font_names(self, names: list):
-        """Update the string-font assignment combo with available font names."""
         if hasattr(self, "string_font_combo"):
             self.string_font_combo.config(values=names)
 
@@ -393,9 +361,6 @@ class EXEFontEditor:
             font_names = list(self.game_profile["fonts"].keys())
             self.font_combo.config(values=font_names)
             self.font_combo.set(font_names[0])
-            # Listbox inserts are ignored while the widget is disabled.  Enable
-            # the editor before populating it, after the font structure passed
-            # its complete read-only validation above.
             self.set_enabled(True)
             if not self._load_current_font(font_names[0]):
                 raise FontSafetyError("Initial font could not be loaded")
@@ -424,9 +389,7 @@ class EXEFontEditor:
         self.char_list.selection_clear(0, tk.END)
         self.char_list.selection_set(0)
         self._on_char_select(None)
-        self.font_status.config(text=self.tr(
-            "font.summary", font=font_key, chars=summary["pointer_count"],
-            unique=summary["unique_count"]))
+        self.font_status.config(text=self.tr("font.summary", font=font_key, chars=summary["pointer_count"],unique=summary["unique_count"]))
         self._refresh_charmap_list()
         self._set_font_state(
             valid=True,
@@ -599,10 +562,7 @@ class EXEFontEditor:
             messagebox.showwarning(self.tr("font.no_data"), self.tr("font.no_data_msg"))
             return
         desc = self.game_profile["fonts"][self.current_font_key]
-        filepath = filedialog.asksaveasfilename(title=self.tr("font.fd_export"),
-                                               initialfile=self.current_font_key, 
-                                               defaultextension=".FON", 
-                                               filetypes=[("Font files", "*.FON *.fon *.bin"), ("All Files", "*.*")])
+        filepath = filedialog.asksaveasfilename(title=self.tr("font.fd_export"),initialfile=self.current_font_key, defaultextension=".FON", filetypes=[("Font files", "*.FON *.fon *.bin"), ("All Files", "*.*")])
         if not filepath: return
         try:
             out = export_font_bytes(self.font_data, desc)
@@ -610,16 +570,13 @@ class EXEFontEditor:
         except (FontSafetyError, OSError) as exc:
             messagebox.showerror(self.tr("font.export_error"), str(exc))
             return
-        self.font_status.config(text=self.tr("font.exported", font=self.current_font_key,
-                                             file=os.path.basename(filepath)))
+        self.font_status.config(text=self.tr("font.exported", font=self.current_font_key,file=os.path.basename(filepath)))
 
     def _import_font(self):
         if not self.is_supported or not self.game_profile or not self.current_font_key:
             messagebox.showwarning(self.tr("font.no_data"), self.tr("font.no_data_msg"))
             return
-        filepath = filedialog.askopenfilename(
-            title=self.tr("font.fd_import", font=self.current_font_key), 
-                                             filetypes=[("Font files", "*.FON *.fon *.bin"), ("All Files", "*.*")])
+        filepath = filedialog.askopenfilename(title=self.tr("font.fd_import", font=self.current_font_key), filetypes=[("Font files", "*.FON *.fon *.bin"), ("All Files", "*.*")])
         if not filepath: return
         try:
             with open(filepath, "rb") as f:
@@ -800,8 +757,7 @@ class EXEFontEditor:
         if not self.is_supported:
             return
         if self._clipboard is None:
-            messagebox.showwarning(self.tr("font.empty_clipboard"),
-                                   self.tr("font.empty_clipboard_msg"))
+            messagebox.showwarning(self.tr("font.empty_clipboard"),self.tr("font.empty_clipboard_msg"))
             return
         
         if not self.font_data or self.selected_idx >= len(self.font_data):

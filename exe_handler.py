@@ -1,3 +1,4 @@
+import hashlib
 import struct
 
 def read_u16(data, offset):
@@ -200,6 +201,28 @@ GAME_PROFILES = {
         "fixed_strings": [(0x55438, 11)],
         "code_year": 0x12AF2,
         "region_offset": 0x5508A,
+        "year_disp": 0x07e0,
+        "region_disp": 0x13aa,
+        "points_rule": 0x13cd,
+        "wdl_map": 0x550b6,
+        "match_flag": {
+            "detect_offset": 0x9fe0,
+            "color_offsets": (40929, 40967, 41008),
+            "band_offsets": (40931, 40969, 41010),
+            "font_color_offset": 0xa084,
+            "types": {
+                "3v": {
+                    "3v1": "B8EE0050B86A0050B90100",
+                    "3v2": "B8EE0050B8D40050B9010051B96B00",
+                    "3v3": "B8EE0050B83E0150B8010050B8D500",
+                },
+                "3h": {
+                    "3h1": "B84F0050B83E0150B90100",
+                    "3h2": "B8A00050B83E0150B9500051B90100",
+                    "3h3": "B8EE0050B83E0150B8A10050B80100",
+                },
+            },
+        },
         "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
         "immutable_signature": {
             "header_size": 0x6D80,
@@ -232,6 +255,28 @@ GAME_PROFILES = {
         "fixed_strings": [(0x56174, 8)],
         "code_year": 0x12A18,
         "region_offset": 0x55A2E,
+        "year_disp": 0x07e0,
+        "region_disp": 0x224e,
+        "points_rule": 0x2271,
+        "wdl_map": 0x55a5a,
+        "match_flag": {
+            "detect_offset": 0x9f10,
+            "color_offsets": (40721, 40759, 40800),
+            "band_offsets": (40723, 40761, 40802),
+            "font_color_offset": 0x9fb4,
+            "types": {
+                "3v": {
+                    "3v1": "B8EE0050B86A0050B90100",
+                    "3v2": "B8EE0050B8D40050B9010051B96B00",
+                    "3v3": "B8EE0050B83E0150B8010050B8D500",
+                },
+                "3h": {
+                    "3h1": "B84F0050B83E0150B90100",
+                    "3h2": "B8A00050B83E0150B9500051B90100",
+                    "3h3": "B8EE0050B83E0150B8A10050B80100",
+                },
+            },
+        },
         "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
         "immutable_signature": {
             "header_size": 0x6CB0,
@@ -262,6 +307,28 @@ GAME_PROFILES = {
         "fixed_strings": [(0x538F4, 8)],
         "code_year": 0x128A2,
         "region_offset": 0x5354E,
+        "year_disp": 0x07cc,
+        "region_disp": 0x122e,
+        "points_rule": 0x1251,
+        "wdl_map": 0x5357a,
+        "match_flag": {
+            "detect_offset": 0x9ef0,
+            "color_offsets": (40689, 40727, 40768),
+            "band_offsets": (40691, 40729, 40770),
+            "font_color_offset": 0x9f94,
+            "types": {
+                "3v": {
+                    "3v1": "B8EE0050B86A0050B90100",
+                    "3v2": "B8EE0050B8D40050B9010051B96B00",
+                    "3v3": "B8EE0050B83E0150B8010050B8D500",
+                },
+                "3h": {
+                    "3h1": "B84F0050B83E0150B90100",
+                    "3h2": "B8A00050B83E0150B9500051B90100",
+                    "3h3": "B8EE0050B83E0150B8A10050B80100",
+                },
+            },
+        },
         "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
         "immutable_signature": {
             "header_size": 0x6C90,
@@ -308,4 +375,147 @@ EXE_FONT_PROFILES = {
     },
 }
 
-__all__ = ['unpack_in_memory', 'get_mz_relocation_sites', 'GAME_PROFILES', 'EXE_FONT_PROFILES']
+def _canonical_mz_relocation_topology(data):
+    if len(data) < 0x1C or bytes(data[:2]) != b"MZ":
+        raise ValueError("Not a complete MZ image")
+    header_size = int.from_bytes(data[0x08:0x0A], "little") * 16
+    relocation_count = int.from_bytes(data[0x06:0x08], "little")
+    relocation_offset = int.from_bytes(data[0x18:0x1A], "little")
+    relocation_end = relocation_offset + relocation_count * 4
+    if (
+        header_size < 0x1C
+        or header_size > len(data)
+        or relocation_offset < 0x1C
+        or relocation_end > header_size
+    ):
+        raise ValueError("Invalid MZ relocation table layout")
+
+    pairs = []
+    for pos in range(relocation_offset, relocation_end, 4):
+        offset = int.from_bytes(data[pos:pos + 2], "little")
+        segment = int.from_bytes(data[pos + 2:pos + 4], "little")
+        site = header_size + segment * 16 + offset
+        if site < header_size or site + 2 > len(data):
+            raise ValueError("MZ relocation source outside image")
+        pairs.append((segment, offset))
+
+    canonical = b"".join(
+        segment.to_bytes(2, "little") + offset.to_bytes(2, "little")
+        for segment, offset in sorted(pairs)
+    )
+    return {
+        "header_size": header_size,
+        "relocation_count": relocation_count,
+        "relocation_offset": relocation_offset,
+        "sha256": hashlib.sha256(canonical).hexdigest().upper(),
+    }
+
+
+def _match_immutable_code_anchor(data, header_size, anchor):
+    image_offset, pattern_text = anchor
+    tokens = pattern_text.split()
+    wildcard_offsets = tuple(i for i, token in enumerate(tokens) if token == "??")
+    if wildcard_offsets != (9, 10):
+        return False
+    try:
+        expected = tuple(None if token == "??" else int(token, 16) for token in tokens)
+    except ValueError:
+        return False
+    if any(value is not None and not 0 <= value <= 0xFF for value in expected):
+        return False
+    start = header_size + image_offset
+    end = start + len(expected)
+    if start < header_size or end > len(data):
+        return False
+    return all(value is None or data[start + index] == value for index, value in enumerate(expected))
+
+
+def _matches_immutable_profile(data, profile_name, profile, verbose=False, collect=False):
+    lines = []
+    def emit(msg):
+        if collect:
+            lines.append(msg)
+        elif verbose:
+            print(msg)
+    pname = profile_name
+    signature = profile.get("immutable_signature")
+    if not signature:
+        emit(f"[detect:{pname}] FAIL: no immutable_signature")
+        return (False, lines) if collect else False
+    anchors = signature.get("code_anchors", ())
+    if len(anchors) != 3:
+        emit(f"[detect:{pname}] FAIL: expected 3 anchors, got {len(anchors)}")
+        return (False, lines) if collect else False
+    try:
+        topology = _canonical_mz_relocation_topology(data)
+    except (TypeError, ValueError) as exc:
+        emit(f"[detect:{pname}] FAIL: _canonical_mz_relocation_topology raised {exc}")
+        return (False, lines) if collect else False
+    expected_sha = signature["relocation_topology_sha256"]
+    sha_ok = (topology["sha256"] == expected_sha) if isinstance(expected_sha, str) \
+             else (topology["sha256"] in expected_sha)
+    checks = [
+        ("header_size",       topology["header_size"],       signature["header_size"]),
+        ("relocation_offset", topology["relocation_offset"], signature["relocation_table_offset"]),
+        ("relocation_count",  topology["relocation_count"],  signature["relocation_count"]),
+        ("reloc_sha256",      sha_ok,                        True),
+        ("entry_cs (0x16)",   int.from_bytes(data[0x16:0x18], "little"), signature["entry_cs"]),
+        ("entry_ip (0x14)",   int.from_bytes(data[0x14:0x16], "little"), signature["entry_ip"]),
+    ]
+    failed = False
+    for name, got, expected in checks:
+        ok = got == expected
+        if name == "reloc_sha256":
+            if ok:
+                status = f"ok  ({topology['sha256']})"
+            else:
+                expected_list = [expected_sha] if isinstance(expected_sha, str) else list(expected_sha)
+                status = f"FAIL  got={topology['sha256']}  expected={expected_list}"
+        else:
+            got_s      = got      if isinstance(got, str)  else hex(got)
+            expected_s = expected if isinstance(expected, str) else hex(expected)
+            status = "ok" if ok else f"FAIL  got={got_s}  expected={expected_s}"
+        emit(f"[detect:{pname}]   {name}: {status}")
+        if not ok:
+            failed = True
+    if failed:
+        return (False, lines) if collect else False
+    for i, anchor in enumerate(anchors):
+        ok = _match_immutable_code_anchor(data, topology["header_size"], anchor)
+        img_off  = anchor[0]
+        file_off = topology["header_size"] + img_off
+        status   = "ok" if ok else f"FAIL  file_offset={hex(file_off)}  img_offset={hex(img_off)}"
+        emit(f"[detect:{pname}]   anchor[{i}] @ img {hex(img_off)}: {status}")
+        if not ok:
+            return (False, lines) if collect else False
+    emit(f"[detect:{pname}] MATCH")
+    return (True, lines) if collect else True
+
+
+def detect_game_profile(data, profiles):
+    header = f"[detect_profile] file size={hex(len(data))}, MZ={bytes(data[:2]) if len(data) >= 2 else '?'}"
+    all_logs = [header]
+    matches = []
+    for name, profile in profiles.items():
+        all_logs.append(f"[detect_profile] --- testing profile: {name} ---")
+        matched, lines = _matches_immutable_profile(data, name, profile, collect=True)
+        all_logs.extend(lines)
+        if matched:
+            matches.append(name)
+    result = matches[0] if len(matches) == 1 else None
+    if result is not None:
+        print(f"[detect_profile] detected={result}")
+    else:
+        for line in all_logs:
+            print(line)
+        print(f"[detect_profile] result=None  (all matches={matches})")
+    return result
+
+
+__all__ = [
+    'unpack_in_memory',
+    'get_mz_relocation_sites',
+    'detect_game_profile',
+    'GAME_PROFILES',
+    'EXE_FONT_PROFILES',
+]
