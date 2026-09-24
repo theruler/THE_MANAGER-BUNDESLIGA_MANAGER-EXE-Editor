@@ -54,7 +54,7 @@ TEXTS_EN = {
     "header.teams": "Teams for 1st League:",
     "header.wdl": "Win/Draw/Loss characters:",
     "header.match": "Match Flag:",
-    "header.point": "Points:",
+    "header.point": "Points per victory:",
     "header.region.a": "Region A:",
     "header.region.b": "Region B:",
     
@@ -288,7 +288,7 @@ TEXTS_EN = {
     "preview.sum.year": "Starting year changed: {value}",
     "preview.sum.region": "Region changed: {value}",
     "preview.sum.reasons": "Reasons:",
-    "preview.sum.points": "Victory per point changed: {value}",
+    "preview.sum.points": "Points per victory changed: {value}",
     "preview.sum.integrity_fix": "Orphan strings fixed: {value}",
     "preview.sum.extended_layout": "Extended EXE: {value}",
     "preview.sum.teams": "Teams for 1st League: {value}",
@@ -345,12 +345,7 @@ TEXTS_EN = {
     "utils.cfg.save_failed": "Could not save config: {error}",
 
     # ---- wdl (win/draw/loss) groups
-    "wdl.win": "WIN",
-    "wdl.draw": "DRAW",
-    "wdl.loss": "LOSS",
-    "wdl.victory": "victory",
-    "wdl.draw_desc": "draw",
-    "wdl.loss_desc": "loss",
+    "wdl.awayhome":  "Away - Home",
 
     # ---- flag types
     "flag.3v": "3 vertical bands",

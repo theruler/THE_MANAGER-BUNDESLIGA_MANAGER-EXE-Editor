@@ -51,7 +51,7 @@ TEXTS_IT = {
     "region.2": "Italia",
     "region.3": "Francia",
     "region.4": "Inghilterra",
-    "header.point": "Punti:",
+    "header.point": "Punti per vittoria:",
     "header.teams": "Squadre per la Serie A:",
     "header.wdl": "Caratteri Vittoria/Pareggio/Sconfitta:",
     "header.match": "Bandiera della partita:",
@@ -345,13 +345,8 @@ TEXTS_IT = {
     "utils.cfg.save_failed": "Impossibile salvare la configurazione: {error}",
 
     # ---- gruppi wdl (vittoria/pari/sconfitta)
-    "wdl.win": "VITTORIA",
-    "wdl.draw": "PARI",
-    "wdl.loss": "SCONFITTA",
-    "wdl.victory": "vittoria",
-    "wdl.draw_desc": "pari",
-    "wdl.loss_desc": "sconfitta",
-    
+    "wdl.awayhome":  "Trasferta - Casa",
+
     # ---- tipi di flag
     "flag.3v": "3 bande verticali",
     "flag.3h": "3 bande orizzontali",

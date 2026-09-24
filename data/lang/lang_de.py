@@ -51,7 +51,7 @@ TEXTS_DE = {
     "region.2": "Italien",
     "region.3": "Frankreich",
     "region.4": "England",
-    "header.point": "Punkte:",
+    "header.point": "Punkte pro sieg:",
     "header.teams": "Mannschaften für die 1. Liga:",
     "header.wdl": "Siege/Unentschieden/Niederlagen-Zeichen:",
     "header.match": "Spielflagge:",
@@ -286,7 +286,7 @@ TEXTS_DE = {
     "preview.sum.year": "Startjahr geändert: {value}",
     "preview.sum.region": "Region geändert: {value}",
     "preview.sum.reasons": "Gründe:",
-    "preview.sum.points": "Sieg pro Punkt geändert: {value}",
+    "preview.sum.points": "Punkte pro sieg geändert: {value}",
     "preview.sum.integrity_fix": "Verwaiste Strings behoben: {value}",
     "preview.sum.extended_layout": "Erweiterte EXE: {value}",
     "preview.sum.teams": "Mannschaften für die 1. Liga: {value}",
@@ -343,12 +343,7 @@ TEXTS_DE = {
     "utils.cfg.save_failed": "Konfiguration konnte nicht gespeichert werden: {error}",
 
     # ---- WDL-Gruppen (Sieg/Unentschieden/Niederlage)
-    "wdl.win": "SIEG",
-    "wdl.draw": "UNENTSCHIEDEN",
-    "wdl.loss": "NIEDERLAGE",
-    "wdl.victory": "Sieg",
-    "wdl.draw_desc": "Unentschieden",
-    "wdl.loss_desc": "Niederlage",
+    "wdl.awayhome":  "Auswärt - Heim",
     
     # ---- Flaggentypen
     "flag.3v": "3 vertikale Streifen",

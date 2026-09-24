@@ -51,7 +51,7 @@ TEXTS_FR = {
     "region.2": "Italie",
     "region.3": "France",
     "region.4": "Angleterre",
-    "header.point": "Points:",
+    "header.point": "Points par victoire:",
     "header.teams": "Équipes pour la 1re division :",
     "header.wdl": "Caractères Victoire/Nul/Défaite :",
     "header.match": "Drapeau du match :",
@@ -288,7 +288,7 @@ TEXTS_FR = {
     "preview.sum.year": "Année de départ modifiée : {value}",
     "preview.sum.region": "Région modifiée : {value}",
     "preview.sum.reasons": "Motifs :",
-    "preview.sum.points": "Victoire par point modifiée : {value}",
+    "preview.sum.points": "Points par victoire modifiée : {value}",
     "preview.sum.integrity_fix": "Chaînes orphelines corrigées : {value}",
     "preview.sum.extended_layout": "EXE étendu : {value}",
     "preview.sum.teams": "Équipes pour la 1re division : {value}",
@@ -345,12 +345,7 @@ TEXTS_FR = {
     "utils.cfg.save_failed": "Impossible d’enregistrer la configuration : {error}",
 
     # ---- groupes wdl (victoire/nul/défaite)
-    "wdl.win": "VICTOIRE",
-    "wdl.draw": "NUL",
-    "wdl.loss": "DÉFAITE",
-    "wdl.victory": "victoire",
-    "wdl.draw_desc": "nul",
-    "wdl.loss_desc": "défaite",
+    "wdl.awayhome":  "Extérieur - Domicile",
     
     # ---- types de drapeaux
     "flag.3v": "3 bandes verticales",

@@ -51,7 +51,7 @@ TEXTS_ES = {
     "region.2": "Italia",
     "region.3": "Francia",
     "region.4": "Inglaterra",
-    "header.point": "Puntaje:",
+    "header.point": "Puntos por victoria:",
     "header.teams": "Equipos de 1.ª división:",
     "header.wdl": "Caracteres de Victoria/Empate/Derrota:",
     "header.match": "Bandera del partido:",
@@ -286,7 +286,7 @@ TEXTS_ES = {
     "preview.sum.year": "Año inicial cambiado: {value}",
     "preview.sum.region": "Región cambiada: {value}",
     "preview.sum.reasons": "Motivos:",
-    "preview.sum.points": "Victoria por punto cambiada: {value}",
+    "preview.sum.points": "Puntos por victoria cambiada: {value}",
     "preview.sum.integrity_fix": "Cadenas huérfanas solucionadas: {value}",
     "preview.sum.extended_layout": "EXE extendido: {value}",
     "preview.sum.teams": "Equipos de 1.ª división: {value}",
@@ -343,12 +343,7 @@ TEXTS_ES = {
     "utils.cfg.save_failed": "No se ha podido guardar la configuración: {error}",
 
     # ---- grupos wdl (victoria/empate/derrota)
-    "wdl.win": "VICTORIA",
-    "wdl.draw": "EMPATE",
-    "wdl.loss": "DERROTA",
-    "wdl.victory": "victoria",
-    "wdl.draw_desc": "empate",
-    "wdl.loss_desc": "derrota",
+    "wdl.awayhome":  "Visitante - Local",
     
     # ---- tipos de bandera
     "flag.3v": "3 bandas verticales",

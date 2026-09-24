@@ -38,7 +38,7 @@ GAME_PROFILES = {
             "offset": 0x55096,
             "number": _1st_LEAGUE_TEAMS,
         },
-        "wdl_map": 0x55096,
+        "wdl_map": 0x550b6,
         "match_flag": {
             "detect_offset": 0x9fe0,
             "color_offsets": (0x9fe1, 0xa007, 0xa030),

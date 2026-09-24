@@ -326,6 +326,11 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 combo.config(values=values)
                 if index >= 0:
                     combo.current(index)
+        current_idx = self._flag_type_combo.current()
+        new_values = [self.tr(label_key) for label_key, _ in self._FLAG_TYPES]
+        self._flag_type_combo.config(values=new_values)
+        if current_idx >= 0:
+            self._flag_type_combo.current(current_idx)
         self._render_header()
         font_editor = getattr(self, "font_editor", None)
         if font_editor is not None:
@@ -484,8 +489,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             ("tr.from",   "source_lang_var", ["auto","de","en","fr","es","it"], 6),
             ("tr.to",     "target_lang_var", ["it","en","de","fr","es"],        6),
         ]:
-            self._reg(ttk.Label(translation_options_row), label).pack(
-                side=tk.LEFT, padx=(0 if label == "tr.engine" else 8, 3))
+            self._reg(ttk.Label(translation_options_row), label).pack(side=tk.LEFT, padx=(0 if label == "tr.engine" else 8, 3))
             var = tk.StringVar(value=values[0])
             setattr(self, var_attr, var)
             combo = ttk.Combobox(translation_options_row, textvariable=var, state="readonly", width=width, values=values)
@@ -514,6 +518,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             translate=self.tr,)
         self.tab_settings = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_settings, text=self.tr("tab.options"))
+        self._reg_tab(self.tab_settings, "tab.options") 
         settings_frame = ttk.LabelFrame(self.tab_settings)
         settings_frame.pack(fill=tk.X, padx=15, pady=15)
         self.year_container = ttk.Frame(settings_frame)
@@ -529,12 +534,12 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.year_spinbox.bind("<KP_Enter>", self._commit_year)
         self.year_spinbox.bind("<FocusOut>", self._commit_year)
         self.region_container = ttk.Frame(settings_frame)
-        self.region_a_label = ttk.Label(self.region_container, text=self.tr("header.region.a"), font=("Segoe UI", 9, "bold"))
+        self.region_a_label = self._reg(ttk.Label(self.region_container, font=("Segoe UI", 9, "bold")), "header.region.a")
         self.region_a_label.pack(side=tk.LEFT, padx=(0, 8))
         self.region_a_var = tk.StringVar()
         self.region_a_combo = ttk.Combobox(self.region_container,textvariable=self.region_a_var,state="readonly",width=12,justify=tk.LEFT,font=("Segoe UI", 9),)
         self.region_a_combo.pack(side=tk.LEFT)
-        self.region_b_label = ttk.Label(self.region_container, text=self.tr("header.region.b"), font=("Segoe UI", 9, "bold"))
+        self.region_b_label = self._reg(ttk.Label(self.region_container, font=("Segoe UI", 9, "bold")), "header.region.b")
         self.region_b_label.pack(side=tk.LEFT, padx=(18, 8))
         self.region_b_var = tk.StringVar()
         self.region_b_combo = ttk.Combobox(self.region_container,textvariable=self.region_b_var,state="readonly",width=12,justify=tk.LEFT,font=("Segoe UI", 9),)
@@ -552,7 +557,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.points_combo.bind("<KP_Enter>", self._commit_points)
         self.points_combo.bind("<FocusOut>", self._commit_points)
         self.teams_container = ttk.Frame(settings_frame)
-        self.teams_label = ttk.Label(self.teams_container, text=self.tr("header.teams"), font=("Segoe UI", 9, "bold"))
+        self.teams_label = self._reg(ttk.Label(self.teams_container, font=("Segoe UI", 9, "bold")), "header.teams")
         self.teams_label.pack(side=tk.LEFT, padx=(0, 8))
         self.teams_var = tk.StringVar()
         self.teams_combo = ttk.Combobox(self.teams_container, textvariable=self.teams_var, state="readonly", width=4, justify=tk.CENTER, font=("Segoe UI", 9), values=["20", "18"])
@@ -564,20 +569,23 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._wdl_char_values = [bytes([i]).decode("cp437") for i in range(0x20, 0x100)]
         self.flag_container = ttk.Frame(settings_frame)
         flag_title_row = ttk.Frame(self.flag_container)
-        flag_title_row.pack(fill=tk.X, anchor="w", pady=(0, 4))
-        ttk.Label(flag_title_row,text=self.tr("header.wdl"),font=("Segoe UI", 9, "bold"),).pack(side=tk.LEFT)
-        self.wdl_container = ttk.Frame(flag_title_row)
-        self.wdl_container.pack(side=tk.LEFT, padx=(18, 0), anchor="center")
-        _wdl_groups = ((self.tr("wdl.win"), self.tr("wdl.victory")),(self.tr("wdl.draw"), self.tr("wdl.draw_desc")),(self.tr("wdl.loss"), self.tr("wdl.loss_desc")),)
-        for col, (title, _key) in enumerate(_wdl_groups):
-            grp = tk.Frame(self.wdl_container,bg="#F4F6F9",bd=1,relief=tk.SOLID,highlightthickness=0,padx=3,pady=2,)
+        flag_title_row.pack(fill=tk.X, anchor="w", pady=(0, 2))
+        self.wdl_title_label = self._reg(ttk.Label(flag_title_row, font=("Segoe UI", 9, "bold")), "header.wdl")
+        self.wdl_title_label.pack(side=tk.LEFT)
+        self.wdl_container = ttk.Frame(self.flag_container)
+        self.wdl_container.pack(fill=tk.X, anchor="w", pady=(0, 4))
+        self._wdl_title_labels = []
+        for col in range(3):
+            grp = tk.Frame(self.wdl_container, bg="#F4F6F9", bd=1, relief=tk.SOLID,highlightthickness=0, padx=3, pady=1)
             grp.pack(side=tk.LEFT, padx=(0 if col == 0 else 3, 0))
-            tk.Label(grp,text=title,bg="#F4F6F9",fg="#2C3E50",font=("Segoe UI", 8, "bold"),anchor=tk.CENTER,justify=tk.CENTER,).pack(fill=tk.X)
+            lbl = self._reg(tk.Label(grp, bg="#F4F6F9", fg="#2C3E50", font=("Segoe UI", 7), anchor=tk.CENTER, justify=tk.CENTER),"wdl.awayhome")
+            lbl.pack(fill=tk.X)
+            self._wdl_title_labels.append(lbl)
             chars_row = tk.Frame(grp, bg="#F4F6F9")
             chars_row.pack(fill=tk.X, pady=(1, 0))
             for s_col in range(2):
                 v = tk.StringVar()
-                combo = ttk.Combobox(chars_row,textvariable=v,values=self._wdl_char_values,state="readonly",width=2,justify=tk.CENTER,font=("Segoe UI Symbol", 9),)
+                combo = ttk.Combobox(chars_row, textvariable=v, values=self._wdl_char_values,state="readonly", width=3, justify=tk.CENTER,font=("Segoe UI Symbol", 9))
                 combo.pack(side=tk.LEFT, padx=(0 if s_col == 0 else 2, 0))
                 box_index = col * 2 + s_col
                 combo.bind("<<ComboboxSelected>>", lambda ev, i=box_index: self._commit_wdl(i))
@@ -588,10 +596,12 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         flag_row.pack(anchor="w")
         flag_type_col = ttk.Frame(flag_row)
         flag_type_col.pack(side=tk.LEFT, anchor="n", padx=(0, 8))
-        ttk.Label(flag_type_col, text=self.tr("header.match"),font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        self.match_label = self._reg(ttk.Label(flag_type_col, font=("Segoe UI", 9, "bold")), "header.match")
+        self.match_label.pack(anchor="w")
         self._flag_type_var = tk.StringVar()
         self._flag_type_combo = ttk.Combobox(flag_type_col, textvariable=self._flag_type_var,state="readonly", width=22, font=("Segoe UI", 9),)
-        self._flag_type_combo.config(values=[label for label, _ in self._FLAG_TYPES])
+        new_values = [self.tr(label_key) for label_key, _ in self._FLAG_TYPES]
+        self._flag_type_combo.config(values=new_values)
         self._flag_type_combo.pack(anchor="w", pady=(0, 4))
         self._flag_type_combo.bind("<<ComboboxSelected>>", self._on_flag_type_changed)
         FLAG_W, FLAG_H = 90, 60
@@ -647,8 +657,6 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._sync_wdl_widget()
         self._sync_flag_widget()
         self._update_save_state()
-
-
 
     def _supported_loaded(self) -> bool:
         return bool(self.is_supported and self.profile_name and self.profile and self.exe_data)
@@ -985,19 +993,17 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._update_save_state()
         self._update_discard_button_state()
 
+    def _make_translate_fn(self):
+        engine = self.engine_var.get()
+        src    = self.source_lang_var.get()
+        tgt    = self.target_lang_var.get()
+        return lambda text: translate_string(text, target_lang=tgt, source_lang=src, engine=engine)
+
     def on_translate_toggle(self):
         panel = getattr(self, "newspaper_panel", None)
         if panel is not None and panel.winfo_manager():
             enabled = self.translate_enabled_var.get()
-            translate_fn = None
-            if enabled:
-                engine = self.engine_var.get()
-                src    = self.source_lang_var.get()
-                tgt    = self.target_lang_var.get()
-                def _tr(text, _e=engine, _s=src, _t=tgt):
-                    from translator import translate_string as _ts
-                    return _ts(text, target_lang=_t, source_lang=_s, engine=_e)
-                translate_fn = _tr
+            translate_fn = self._make_translate_fn() if enabled else None
             panel.refresh_translation(enabled, translate_fn)
             return
         if self.translate_enabled_var.get():
@@ -1249,13 +1255,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             if hasattr(self, "newspaper_panel"):
                 self.newspaper_panel.show(entry, decode_fn=self._decode_entry_text)
                 if translate_active:
-                    engine = self.engine_var.get()
-                    src    = self.source_lang_var.get()
-                    tgt    = self.target_lang_var.get()
-                    def _tr(text, _e=engine, _s=src, _t=tgt):
-                        from translator import translate_string as _ts
-                        return _ts(text, target_lang=_t, source_lang=_s, engine=_e)
-                    self.newspaper_panel.refresh_translation(True, _tr)
+                    self.newspaper_panel.refresh_translation(True, self._make_translate_fn())
             if ts is not None and ts.winfo_manager():
                 ts.pack_forget()
         else:
@@ -1472,12 +1472,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             original = self._decode_raw_for_entry(
                 entry, source_bytes, preserve_controls=True
             )
-            translated = translate_string(
-                original,
-                target_lang=self.target_lang_var.get(),
-                source_lang=self.source_lang_var.get(),
-                engine=self.engine_var.get(),
-            )
+            translated = self._make_translate_fn()(original)
             translated_bytes = self._encode_entry_text(entry, translated)
             translated_display = self._decode_raw_for_entry(entry, translated_bytes)
         except Exception as exc:
@@ -1504,9 +1499,6 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         if not messagebox.askyesno(self.tr("dlg.translate_all.title"), self.tr("dlg.translate_all.confirm", n=len(self.entries), engine=self.engine_var.get())):
             return
 
-        engine = self.engine_var.get()
-        src = self.source_lang_var.get()
-        tgt = self.target_lang_var.get()
         prog_win = tk.Toplevel(self.root)
         prog_win.title(self.tr("dlg.translate_all.window"))
         prog_win.resizable(False, False)
@@ -1526,9 +1518,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
         try:
             work_data, work_entries, validation, stats = self._prepare_translate_all_transaction(
-                lambda original: translate_string(
-                    original, target_lang=tgt, source_lang=src, engine=engine
-                ),
+                self._make_translate_fn(),
                 on_progress=update_progress,
             )
         except Exception as exc:
