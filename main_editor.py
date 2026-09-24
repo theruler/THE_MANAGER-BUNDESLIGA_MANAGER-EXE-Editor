@@ -1,23 +1,22 @@
 import copy
-import json
 import os
 import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from exe_handler import unpack_in_memory, get_mz_relocation_sites, detect_game_profile, GAME_PROFILES, EXE_FONT_PROFILES
-from charmap import CharmapEncodeError, charmap_decode, charmap_encode
-from translator import CONTROL_TOKEN_PATTERN, translate_string, TRANSLATION_ENGINES
-from utils import (load_config, save_config, get_game_config, DATA_DIR, set_translator as _set_utils_translator)
+from charmap import CharmapEncodeError
+from translator import translate_string, TRANSLATION_ENGINES
+from utils import (load_config, save_config, get_game_config, set_translator as _set_utils_translator)
 import i18n
 from font_editor import EXEFontEditor
 from font_safety import FontSafetyError, atomic_save_bytes, paths_equal, validate_all_fonts
 import extended_layout
 from mana_editor import ManaEditorPanel
-from vga_editor import PicEditorPanel, _PAL_NORMAL20, _hex_palette
+from vga_editor import PicEditorPanel, _hex_palette
 import newspaper_csv
 from newspaper_grammar import NewspaperGrammarError
 import newspaper_editor as _ne
-from repack_validator import build_reference_inventory, find_unknown_gaps, make_string_id, repack_transaction, validate_image
+from repack_validator import build_reference_inventory, find_unknown_gaps, make_string_id, validate_image
 from string_exchange import (
     StringExchangeError,
     build_export_document,
@@ -44,32 +43,17 @@ from search_filter import (
     build_filter_records,
     filter_string_ids,
 )
+from exe_settings_mixin import ExeSettingsMixin
+from string_codec_mixin import StringCodecMixin, TextTransactionError
+from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.8.10"
+APP_VERSION = "2.8.11"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
 
 
-class TextTransactionError(RuntimeError):
-    pass
-
-
-class DOSTranslationEditor:
-
-    _YEAR_MIN = 1900
-    _YEAR_MAX = 2099
-    _REGION_VARIANTS = (
-        ("region.1", (1, 1)),
-        ("region.2", (2, 1)),
-        ("region.3", (1, 3)),
-        ("region.4", (4, 1)),
-    )
-
-    _FLAG_TYPES = [
-        ("3 vertical bands",   "3v"),
-        ("3 horizontal bands", "3h"),
-    ]
+class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
     def __init__(self, root):
         self.root = root
@@ -103,8 +87,10 @@ class DOSTranslationEditor:
         self.font_errors           = []
         self.translation_pending   = False
         self._last_valid_year      = None
-        self._last_valid_region_index = None
+        self._last_valid_region_a = None
+        self._last_valid_region_b = None
         self._last_valid_points    = None
+        self._last_valid_teams = None
         self._converted_to_extended = False
         self._integrity_fixed      = False
         self.diff_preview_cache    = PreviewCache()
@@ -334,10 +320,12 @@ class DOSTranslationEditor:
         self._set_counter(shown, total)
         self._set_filter_status(self.filter_status_key, **self.filter_status_args)
         if self._region_offset() is not None:
-            index = self.region_combo.current()
-            self.region_combo.config(values=self._region_values())
-            if index >= 0:
-                self.region_combo.current(index)
+            values = self._region_values()
+            for combo in (self.region_a_combo, self.region_b_combo):
+                index = combo.current()
+                combo.config(values=values)
+                if index >= 0:
+                    combo.current(index)
         self._render_header()
         font_editor = getattr(self, "font_editor", None)
         if font_editor is not None:
@@ -506,7 +494,7 @@ class DOSTranslationEditor:
         self.engine_var.set("Google Translate")
         self.source_lang_var.set("auto")
         self.target_lang_var.set("it")
-        self.translate_now_button = ttk.Button(translation_options_row, text="▶ Translate", command=lambda: self.translate_current(force=True))
+        self.translate_now_button = ttk.Button(translation_options_row, text=self.tr("tr.translate_play"), command=lambda: self.translate_current(force=True))
         self.translate_now_button.pack(side=tk.LEFT, padx=(0, 6))
         self.supported_controls.append(self.translate_now_button)
         self.translate_status_label = ttk.Label(translation_options_row, text="", font=("Segoe UI", 9, "italic"), foreground="#7F8C8D")
@@ -525,8 +513,8 @@ class DOSTranslationEditor:
             on_string_font_change=self._on_string_font_change,
             translate=self.tr,)
         self.tab_settings = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_settings, text="Settings")
-        settings_frame = ttk.LabelFrame(self.tab_settings, text="Game Options", padding=15)
+        self.notebook.add(self.tab_settings, text=self.tr("tab.options"))
+        settings_frame = ttk.LabelFrame(self.tab_settings)
         settings_frame.pack(fill=tk.X, padx=15, pady=15)
         self.year_container = ttk.Frame(settings_frame)
         self.year_label = self._reg(ttk.Label(self.year_container, font=("Segoe UI", 9, "bold")), "header.year")
@@ -541,12 +529,18 @@ class DOSTranslationEditor:
         self.year_spinbox.bind("<KP_Enter>", self._commit_year)
         self.year_spinbox.bind("<FocusOut>", self._commit_year)
         self.region_container = ttk.Frame(settings_frame)
-        self.region_label = self._reg(ttk.Label(self.region_container, font=("Segoe UI", 9, "bold")), "header.region")
-        self.region_label.pack(side=tk.LEFT, padx=(0, 8))
-        self.region_var = tk.StringVar()
-        self.region_combo = ttk.Combobox(self.region_container, textvariable=self.region_var, state="readonly",width=12, justify=tk.LEFT, font=("Segoe UI", 9))
-        self.region_combo.pack(side=tk.LEFT)
-        self.region_combo.bind("<<ComboboxSelected>>", self._commit_region)
+        self.region_a_label = ttk.Label(self.region_container, text=self.tr("header.region.a"), font=("Segoe UI", 9, "bold"))
+        self.region_a_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.region_a_var = tk.StringVar()
+        self.region_a_combo = ttk.Combobox(self.region_container,textvariable=self.region_a_var,state="readonly",width=12,justify=tk.LEFT,font=("Segoe UI", 9),)
+        self.region_a_combo.pack(side=tk.LEFT)
+        self.region_b_label = ttk.Label(self.region_container, text=self.tr("header.region.b"), font=("Segoe UI", 9, "bold"))
+        self.region_b_label.pack(side=tk.LEFT, padx=(18, 8))
+        self.region_b_var = tk.StringVar()
+        self.region_b_combo = ttk.Combobox(self.region_container,textvariable=self.region_b_var,state="readonly",width=12,justify=tk.LEFT,font=("Segoe UI", 9),)
+        self.region_b_combo.pack(side=tk.LEFT)
+        self.region_a_combo.bind("<<ComboboxSelected>>", self._commit_region_a)
+        self.region_b_combo.bind("<<ComboboxSelected>>", self._commit_region_b)
         self.points_container = ttk.Frame(settings_frame)
         self.points_label = self._reg(ttk.Label(self.points_container, font=("Segoe UI", 9, "bold")), "header.point")
         self.points_label.pack(side=tk.LEFT, padx=(0, 8))
@@ -557,14 +551,24 @@ class DOSTranslationEditor:
         self.points_combo.bind("<Return>", self._commit_points)
         self.points_combo.bind("<KP_Enter>", self._commit_points)
         self.points_combo.bind("<FocusOut>", self._commit_points)
+        self.teams_container = ttk.Frame(settings_frame)
+        self.teams_label = ttk.Label(self.teams_container, text=self.tr("header.teams"), font=("Segoe UI", 9, "bold"))
+        self.teams_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.teams_var = tk.StringVar()
+        self.teams_combo = ttk.Combobox(self.teams_container, textvariable=self.teams_var, state="readonly", width=4, justify=tk.CENTER, font=("Segoe UI", 9), values=["20", "18"])
+        self.teams_combo.pack(side=tk.LEFT)
+        self.teams_combo.bind("<<ComboboxSelected>>", self._commit_teams)
+        self.teams_combo.bind("<Return>", self._commit_teams)
+        self.teams_combo.bind("<KP_Enter>", self._commit_teams)
+        self.teams_combo.bind("<FocusOut>", self._commit_teams)
         self._wdl_char_values = [bytes([i]).decode("cp437") for i in range(0x20, 0x100)]
         self.flag_container = ttk.Frame(settings_frame)
         flag_title_row = ttk.Frame(self.flag_container)
         flag_title_row.pack(fill=tk.X, anchor="w", pady=(0, 4))
-        ttk.Label(flag_title_row,text="Balance character mapping:",font=("Segoe UI", 9, "bold"),).pack(side=tk.LEFT)
+        ttk.Label(flag_title_row,text=self.tr("header.wdl"),font=("Segoe UI", 9, "bold"),).pack(side=tk.LEFT)
         self.wdl_container = ttk.Frame(flag_title_row)
         self.wdl_container.pack(side=tk.LEFT, padx=(18, 0), anchor="center")
-        _wdl_groups = (("WIN", "victory"),("DRAW", "draw"),("LOSS", "loss"),)
+        _wdl_groups = ((self.tr("wdl.win"), self.tr("wdl.victory")),(self.tr("wdl.draw"), self.tr("wdl.draw_desc")),(self.tr("wdl.loss"), self.tr("wdl.loss_desc")),)
         for col, (title, _key) in enumerate(_wdl_groups):
             grp = tk.Frame(self.wdl_container,bg="#F4F6F9",bd=1,relief=tk.SOLID,highlightthickness=0,padx=3,pady=2,)
             grp.pack(side=tk.LEFT, padx=(0 if col == 0 else 3, 0))
@@ -584,7 +588,7 @@ class DOSTranslationEditor:
         flag_row.pack(anchor="w")
         flag_type_col = ttk.Frame(flag_row)
         flag_type_col.pack(side=tk.LEFT, anchor="n", padx=(0, 8))
-        ttk.Label(flag_type_col, text="Match Flag:",font=("Segoe UI", 9, "bold")).pack(anchor="w")
+        ttk.Label(flag_type_col, text=self.tr("header.match"),font=("Segoe UI", 9, "bold")).pack(anchor="w")
         self._flag_type_var = tk.StringVar()
         self._flag_type_combo = ttk.Combobox(flag_type_col, textvariable=self._flag_type_var,state="readonly", width=22, font=("Segoe UI", 9),)
         self._flag_type_combo.config(values=[label for label, _ in self._FLAG_TYPES])
@@ -639,725 +643,12 @@ class DOSTranslationEditor:
         self._sync_year_widget()
         self._sync_region_widget()
         self._sync_points_widget()
+        self._sync_teams_widget()
         self._sync_wdl_widget()
         self._sync_flag_widget()
         self._update_save_state()
 
-    def _year_offset(self):
-        if not self._supported_loaded():
-            return None
-        offset = self.profile.get("code_year")
-        if not isinstance(offset, int) or offset < 5 or offset + 2 > len(self.exe_data):
-            return None
-        if bytes(self.exe_data[offset - 5:offset - 2]) != b"\x26\xC7\x06":
-            return None
-        expected = self.profile.get("year_disp")
-        if expected is None:
-            return None
-        if int.from_bytes(self.exe_data[offset - 2:offset], "little") != expected:
-            return None
-        return offset
 
-    def _sync_year_widget(self):
-        if not hasattr(self, "year_spinbox"):
-            return
-        if self._year_offset() is not None:
-            if not self.year_container.winfo_manager():
-                self.year_container.pack(fill=tk.X, pady=6)
-            self.year_spinbox.config(state=tk.NORMAL)
-            return
-        self.year_spinbox.config(state=tk.DISABLED)
-        self.year_container.pack_forget()
-        self.year_var.set("")
-        self._last_valid_year = None
-
-    def _revert_year(self):
-        self.year_var.set("" if self._last_valid_year is None else str(self._last_valid_year))
-
-    def _read_year_from_exe(self):
-        offset = self._year_offset()
-        if offset is None:
-            self._last_valid_year = None
-            self.year_var.set("")
-        else:
-            self._last_valid_year = int.from_bytes(self.exe_data[offset:offset + 2], "little")
-            self.year_var.set(str(self._last_valid_year))
-        self._sync_year_widget()
-
-    def _commit_year(self, event=None):
-        offset = self._year_offset()
-        if offset is None:
-            return
-        raw = self.year_var.get().strip()
-        if not raw.isdigit():
-            self._revert_year()
-            return
-        value = int(raw)
-        if not (self._YEAR_MIN <= value <= self._YEAR_MAX):
-            self._revert_year()
-            return
-        self.year_var.set(str(value))
-        self._last_valid_year = value
-        payload = value.to_bytes(2, "little")
-        if bytes(self.exe_data[offset:offset + 2]) == payload:
-            return
-        self.exe_data[offset:offset + 2] = payload
-        self._invalidate_diff_preview("year-change")
-        self._update_save_state()
-
-    def _region_pair(self, data, offset):
-        return (int.from_bytes(data[offset:offset + 4], "little"),
-                int.from_bytes(data[offset + 4:offset + 8], "little"))
-
-    def _region_index(self, pair):
-        for index, (_key, variant) in enumerate(self._REGION_VARIANTS):
-            if tuple(pair) == variant:
-                return index
-        return None
-
-    def _region_anchor(self, disp, immediate, ds_start) -> bool:
-        head = bytes((0x26, 0x83, 0x3E)) + disp.to_bytes(2, "little") + bytes([immediate])
-        tail = bytes((0x26, 0x83, 0x3E)) + (disp + 2).to_bytes(2, "little") + bytes((0x00,))
-        limit = min(len(self.exe_data), ds_start)
-        index = self.exe_data.find(head, 0, limit)
-        while index >= 0:
-            probe = index + 6
-            if (probe + 8 <= limit and self.exe_data[probe] == 0x75
-                    and bytes(self.exe_data[probe + 2:probe + 8]) == tail):
-                return True
-            index = self.exe_data.find(head, index + 1, limit)
-        return False
-
-    def _region_offset(self):
-        if not self._supported_loaded():
-            return None
-        offset = self.profile.get("region_offset")
-        if not isinstance(offset, int) or offset < 0 or offset + 8 > len(self.exe_data):
-            return None
-        a_disp = self.profile.get("region_disp")
-        ds_start = self.profile.get("ds_start")
-        if a_disp is None or not isinstance(ds_start, int):
-            return None
-        if offset - ds_start != a_disp:
-            return None
-        if (offset + 4) - ds_start != a_disp + 4:
-            return None
-        if int.from_bytes(self.exe_data[offset + 2:offset + 4], "little") != 0:
-            return None
-        if int.from_bytes(self.exe_data[offset + 6:offset + 8], "little") != 0:
-            return None
-        if self._region_pair(self.exe_data, offset) not in {
-                variant for _key, variant in self._REGION_VARIANTS}:
-            return None
-        if not self._region_anchor(a_disp, 0x04, ds_start):
-            return None
-        if not self._region_anchor(a_disp + 4, 0x03, ds_start):
-            return None
-        return offset
-
-    def _region_values(self):
-        return [self.tr(key) for key, _variant in self._REGION_VARIANTS]
-
-    def _sync_region_widget(self):
-        if not hasattr(self, "region_combo"):
-            return
-        if self._region_offset() is not None:
-            self.region_combo.config(values=self._region_values())
-            if not self.region_container.winfo_manager():
-                self.region_container.pack(fill=tk.X, pady=6)
-            self.region_combo.config(state="readonly")
-            return
-        self.region_combo.config(state=tk.DISABLED)
-        self.region_container.pack_forget()
-        self.region_var.set("")
-        self._last_valid_region_index = None
-
-    def _revert_region(self):
-        if self._last_valid_region_index is None:
-            self.region_var.set("")
-        else:
-            self.region_combo.current(self._last_valid_region_index)
-
-    def _read_region_from_exe(self):
-        offset = self._region_offset()
-        index = None
-        if offset is not None:
-            index = self._region_index(self._region_pair(self.exe_data, offset))
-        if index is None:
-            self._last_valid_region_index = None
-            self.region_var.set("")
-        else:
-            self.region_combo.config(values=self._region_values())
-            self.region_combo.current(index)
-            self._last_valid_region_index = index
-        self._sync_region_widget()
-
-    def _commit_region(self, event=None):
-        offset = self._region_offset()
-        if offset is None:
-            return
-        index = self.region_combo.current()
-        if not 0 <= index < len(self._REGION_VARIANTS):
-            self._revert_region()
-            return
-        _key, (a_value, b_value) = self._REGION_VARIANTS[index]
-        payload = a_value.to_bytes(4, "little") + b_value.to_bytes(4, "little")
-        if bytes(self.exe_data[offset:offset + 8]) == payload:
-            self._last_valid_region_index = index
-            return
-        self.exe_data[offset:offset + 8] = payload
-        self._last_valid_region_index = index
-        self._invalidate_diff_preview("region-change")
-        self._update_save_state()
-
-    def _points_rule_offset(self):
-        if not self._supported_loaded():
-            return None
-        disp = self.profile.get("points_rule")
-        ds_start = self.profile.get("ds_start")
-        if disp is None or not isinstance(ds_start, int):
-            return None
-        offset = ds_start + disp
-        if offset < 0 or offset + 2 > len(self.exe_data):
-            return None
-        val = int.from_bytes(self.exe_data[offset:offset + 2], "little")
-        if val not in (2, 3):
-            return None
-        return offset
-
-    def _sync_points_widget(self):
-        if not hasattr(self, "points_combo"):
-            return
-        if self._points_rule_offset() is not None:
-            if not self.points_container.winfo_manager():
-                self.points_container.pack(fill=tk.X, pady=6)
-            self.points_combo.config(state="readonly")
-            return
-        self.points_combo.config(state=tk.DISABLED)
-        self.points_container.pack_forget()
-        self.points_var.set("")
-        self._last_valid_points = None
-
-    def _revert_points(self):
-        self.points_var.set("" if self._last_valid_points is None else str(self._last_valid_points))
-
-    def _read_points_from_exe(self):
-        offset = self._points_rule_offset()
-        if offset is None:
-            self._last_valid_points = None
-            self.points_var.set("")
-        else:
-            self._last_valid_points = int.from_bytes(self.exe_data[offset:offset + 2], "little")
-            self.points_var.set(str(self._last_valid_points))
-        self._sync_points_widget()
-
-    def _commit_points(self, event=None):
-        offset = self._points_rule_offset()
-        if offset is None:
-            return
-        raw = self.points_var.get().strip()
-        if not raw.isdigit():
-            self._revert_points()
-            return
-        value = int(raw)
-        if value not in (2, 3):
-            self._revert_points()
-            return
-        self.points_var.set(str(value))
-        self._last_valid_points = value
-        payload = value.to_bytes(2, "little")
-        if bytes(self.exe_data[offset:offset + 2]) == payload:
-            return
-        self.exe_data[offset:offset + 2] = payload
-        self._invalidate_diff_preview("points-change")
-        self._update_save_state()
-
-
-    def _wdl_offset(self):
-        if not self._supported_loaded():
-            return None
-        offset = self.profile.get("wdl_map")
-        if not isinstance(offset, int) or offset < 0 or offset + 6 > len(self.exe_data):
-            return None
-        return offset
-
-    def _sync_wdl_widget(self):
-        if not hasattr(self, "wdl_container"):
-            return
-        if self._wdl_offset() is not None:
-            for i in range(6):
-                combo = getattr(self, f"_wdl_combo_{i}", None)
-                if combo:
-                    combo.config(state="readonly")
-            return
-        for i in range(6):
-            combo = getattr(self, f"_wdl_combo_{i}", None)
-            if combo:
-                combo.config(state=tk.DISABLED)
-            v = getattr(self, f"_wdl_var_{i}", None)
-            if v:
-                v.set("")
-        self._wdl_last_valid = [None] * 6
-
-    def _wdl_char_from_byte(self, value):
-        try:
-            return bytes((value,)).decode("cp437")
-        except (ValueError, UnicodeDecodeError):
-            return ""
-
-    def _wdl_byte_from_char(self, value):
-        if not value:
-            raise ValueError
-        encoded = value[0].encode("cp437")
-        if len(encoded) != 1:
-            raise ValueError
-        return encoded[0]
-
-    def _read_wdl_from_exe(self):
-        offset = self._wdl_offset()
-        if offset is None:
-            self._wdl_last_valid = [None] * 6
-            for i in range(6):
-                v = getattr(self, f"_wdl_var_{i}", None)
-                if v:
-                    v.set("")
-        else:
-            for i in range(6):
-                byte_val = self.exe_data[offset + i]
-                self._wdl_last_valid[i] = byte_val
-                v = getattr(self, f"_wdl_var_{i}", None)
-                char_value = self._wdl_char_from_byte(byte_val)
-                if v:
-                    v.set(char_value if char_value in self._wdl_char_values else "")
-        self._sync_wdl_widget()
-
-    def _commit_wdl(self, box_index: int, event=None):
-        offset = self._wdl_offset()
-        if offset is None:
-            return
-        v = getattr(self, f"_wdl_var_{box_index}", None)
-        if v is None:
-            return
-        raw = v.get()
-        try:
-            value = self._wdl_byte_from_char(raw)
-            if not 0 <= value <= 0xFF:
-                raise ValueError
-        except (ValueError, UnicodeEncodeError):
-            prev = self._wdl_last_valid[box_index]
-            v.set(self._wdl_char_from_byte(prev) if prev is not None else "")
-            return
-        self._wdl_last_valid[box_index] = value
-        file_offset = offset + box_index
-        if self.exe_data[file_offset] == value:
-            return
-        self.exe_data[file_offset] = value
-        self._invalidate_diff_preview("wdl-change")
-        self._update_save_state()
-
-    def _match_flag_config(self):
-        if not self._supported_loaded():
-            return None
-        config = self.profile.get("match_flag")
-        if not isinstance(config, dict):
-            return None
-        return config
-
-    def _flag_offsets_valid(self):
-        mf = self._match_flag_config()
-        if mf is None:
-            return False
-
-        detect_offset = mf.get("detect_offset")
-        color_offsets = mf.get("color_offsets")
-        band_offsets = mf.get("band_offsets")
-        type_sets = mf.get("types")
-
-        if (
-            not isinstance(detect_offset, int)
-            or not isinstance(color_offsets, (tuple, list))
-            or len(color_offsets) != 3
-            or not isinstance(band_offsets, (tuple, list))
-            or len(band_offsets) != 3
-            or not isinstance(type_sets, dict)
-            or not type_sets
-        ):
-            return False
-
-        ranges = [(detect_offset, 1)]
-        for off in color_offsets:
-            if not isinstance(off, int):
-                return False
-            ranges.append((off, 1))
-
-        for off in band_offsets:
-            if not isinstance(off, int):
-                return False
-
-        for patches in type_sets.values():
-            if not isinstance(patches, dict):
-                return False
-            patch_values = list(patches.values())
-            if len(patch_values) != len(band_offsets):
-                return False
-            for band_offset, patch_hex in zip(band_offsets, patch_values):
-                try:
-                    patch = bytes.fromhex(patch_hex)
-                except (TypeError, ValueError):
-                    return False
-                ranges.append((band_offset, len(patch)))
-
-        return all(
-            off >= 0 and off + size <= len(self.exe_data)
-            for off, size in ranges
-        )
-
-    def _detect_flag_type(self):
-        mf = self._match_flag_config()
-        if mf is None or not self._flag_offsets_valid():
-            return None
-
-        band_offsets = tuple(mf["band_offsets"])
-        for type_key, patches in mf["types"].items():
-            if not isinstance(patches, dict):
-                continue
-            patch_values = list(patches.values())
-            if len(patch_values) != len(band_offsets):
-                continue
-
-            if all(
-                bytes(self.exe_data[band_offset:band_offset + len(expected)])
-                == expected
-                for band_offset, expected in (
-                    (off, bytes.fromhex(hex_str))
-                    for off, hex_str in zip(band_offsets, patch_values)
-                )
-            ):
-                return type_key
-        return None
-
-    def _detect_flag_colors(self):
-        mf = self._match_flag_config()
-        if mf is None or not self._flag_offsets_valid():
-            return [0, 0, 0]
-
-        detect_offset = mf["detect_offset"]
-        color_offsets = tuple(mf["color_offsets"])
-        if self.exe_data[detect_offset] == 0x2A:
-            first_color = 0
-        else:
-            first_color = self.exe_data[color_offsets[0]]
-
-        return [first_color, self.exe_data[color_offsets[1]], self.exe_data[color_offsets[2]]]
-
-    def _detect_flag_font_color(self):
-        mf = self._match_flag_config()
-        if mf is None or not self._flag_offsets_valid():
-            return 0
-
-        offset = mf.get("font_color_offset")
-        if not isinstance(offset, int) or not (0 <= offset < len(self.exe_data)):
-            return 0
-
-        value = self.exe_data[offset]
-        return value if 0 <= value < len(_PAL_NORMAL20) else 0
-
-    def _sync_flag_widget(self):
-        if not hasattr(self, "flag_container"):
-            return
-        if self._flag_offsets_valid():
-            if not self.flag_container.winfo_manager():
-                self.flag_container.pack(fill=tk.X, pady=6)
-            self._flag_type_combo.config(state="readonly")
-            return
-
-        self._hide_flag_palette()
-        self._flag_type_combo.config(state=tk.DISABLED)
-        self.flag_container.pack_forget()
-        self._flag_type_var.set("")
-        self._flag_last_valid_type = None
-        self._flag_selected_band = None
-
-    def _read_flag_from_exe(self):
-        type_key = self._detect_flag_type()
-        self._flag_colors = self._detect_flag_colors()
-        self._flag_font_color = self._detect_flag_font_color()
-        self._flag_selected_band = None
-        self._hide_flag_palette()
-
-        if type_key is not None:
-            for label, key in self._FLAG_TYPES:
-                if key == type_key:
-                    self._flag_type_var.set(label)
-                    self._flag_last_valid_type = type_key
-                    break
-        else:
-            self._flag_type_var.set("")
-            self._flag_last_valid_type = None
-
-        self._sync_flag_widget()
-        self._draw_flag_preview()
-
-    def _on_flag_type_changed(self, event=None):
-        label = self._flag_type_var.get()
-        type_key = next((k for lbl, k in self._FLAG_TYPES if lbl == label), None)
-        if type_key is None or not self._flag_offsets_valid():
-            return
-
-        mf = self._match_flag_config()
-        band_offsets = tuple(mf["band_offsets"])
-        patches = mf["types"].get(type_key)
-        if not isinstance(patches, dict):
-            return
-
-        for band_offset, hex_str in zip(band_offsets, patches.values()):
-            data = bytes.fromhex(hex_str)
-            self.exe_data[band_offset:band_offset + len(data)] = data
-
-        self._flag_last_valid_type = type_key
-        self._flag_selected_band = None
-        self._hide_flag_palette()
-        self._draw_flag_preview()
-        self._invalidate_diff_preview("flag-type-change")
-        self._update_save_state()
-
-    def _commit_flag_color(self, band_index, pal_index: int):
-        if not self._flag_offsets_valid():
-            return
-
-        mf = self._match_flag_config()
-
-        if band_index == "title":
-            font_color_offset = mf.get("font_color_offset")
-            if not isinstance(font_color_offset, int):
-                return
-            if not 0 <= font_color_offset < len(self.exe_data):
-                return
-
-            self.exe_data[font_color_offset] = pal_index
-            self._flag_font_color = pal_index
-        else:
-            color_offsets = tuple(mf["color_offsets"])
-            if not isinstance(band_index, int) or not 0 <= band_index < len(color_offsets):
-                return
-
-            self._flag_colors[band_index] = pal_index
-
-            if band_index == 0:
-                detect_offset = mf["detect_offset"]
-                if pal_index == 0:
-                    self.exe_data[detect_offset] = 0x2A
-                    self.exe_data[color_offsets[0]] = 0xC0
-                else:
-                    self.exe_data[detect_offset] = 0xB0
-                    self.exe_data[color_offsets[0]] = pal_index
-            else:
-                self.exe_data[color_offsets[band_index]] = pal_index
-
-        self._hide_flag_palette()
-        self._flag_selected_band = None
-        self._draw_flag_preview()
-        self._invalidate_diff_preview("flag-color-change")
-        self._update_save_state()
-
-    def _hide_flag_palette(self):
-        popup = getattr(self, "_flag_palette_popup", None)
-        self._flag_palette_popup = None
-        self._flag_pal_canvas = None
-        if popup is not None:
-            try:
-                popup.destroy()
-            except tk.TclError:
-                pass
-
-    def _show_flag_palette(self):
-        if not hasattr(self, "_flag_canvas") or self._flag_selected_band is None:
-            return
-
-        self._hide_flag_palette()
-
-        popup = tk.Toplevel(self.root)
-        popup.withdraw()
-        popup.configure(bg="#888888", bd=1, relief=tk.SOLID)
-        popup.overrideredirect(True)
-        popup.transient(self.root)
-
-        pal = list(_PAL_NORMAL20)
-        cols = 16
-        sq = 14
-        rows = max(1, (len(pal) + cols - 1) // cols)
-
-        canvas = tk.Canvas(
-            popup,
-            width=cols * sq,
-            height=rows * sq,
-            highlightthickness=0,
-            bd=0,
-            cursor="hand2",
-        )
-        canvas.pack(padx=1, pady=1)
-
-        for i, (r, g, b) in enumerate(pal):
-            cx = (i % cols) * sq
-            cy = (i // cols) * sq
-            canvas.create_rectangle(
-                cx, cy, cx + sq, cy + sq,
-                fill=f"#{r:02X}{g:02X}{b:02X}",
-                outline="",
-                tags=f"fpc_{i}",
-            )
-
-        self._flag_palette_popup = popup
-        self._flag_pal_canvas = canvas
-        self._flag_pal_sq = sq
-        self._flag_pal_cols = cols
-
-        canvas.bind("<Button-1>", self._on_flag_palette_click)
-        popup.bind("<Escape>", lambda _event: self._hide_flag_palette())
-
-        self.root.update_idletasks()
-        popup.update_idletasks()
-
-        x = self._flag_canvas.winfo_rootx() + self._flag_canvas.winfo_width() + 8
-        y = self._flag_canvas.winfo_rooty()
-
-        screen_w = popup.winfo_screenwidth()
-        screen_h = popup.winfo_screenheight()
-        popup_w = cols * sq + 2
-        popup_h = rows * sq + 2
-
-        if x + popup_w > screen_w:
-            x = max(0, self._flag_canvas.winfo_rootx() - popup_w - 8)
-        if y + popup_h > screen_h:
-            y = max(0, screen_h - popup_h - 8)
-
-        popup.geometry(f"+{x}+{y}")
-        popup.deiconify()
-        popup.lift()
-
-    def _draw_flag_preview(self):
-        if not hasattr(self, "_flag_canvas"):
-            return
-        c = self._flag_canvas
-        c.delete("all")
-        w = int(c["width"])
-        h = int(c["height"])
-        pal = list(_PAL_NORMAL20)
-        type_key = self._flag_last_valid_type
-
-        def _palette_color(idx, fallback="#000000"):
-            if 0 <= idx < len(pal):
-                r, g, b = pal[idx]
-                return f"#{r:02X}{g:02X}{b:02X}"
-            return fallback
-
-        def _band_color(band_idx):
-            idx = self._flag_colors[band_idx] if band_idx < len(self._flag_colors) else 0
-            return _palette_color(idx)
-
-        if type_key == "3v":
-            bw = w // 3
-            for i in range(3):
-                x0 = i * bw
-                x1 = x0 + bw if i < 2 else w
-                col = _band_color(i)
-                outline = "#FFFF00" if self._flag_selected_band == i else ""
-                width = 2 if self._flag_selected_band == i else 0
-                c.create_rectangle(x0, 0, x1, h, fill=col, outline=outline, width=width)
-        elif type_key == "3h":
-            bh = h // 3
-            for i in range(3):
-                y0 = i * bh
-                y1 = y0 + bh if i < 2 else h
-                col = _band_color(i)
-                outline = "#FFFF00" if self._flag_selected_band == i else ""
-                width = 2 if self._flag_selected_band == i else 0
-                c.create_rectangle(0, y0, w, y1, fill=col, outline=outline, width=width)
-        else:
-            c.create_rectangle(0, 0, w, h, fill="#CCCCCC", outline="")
-            c.create_text(
-                w // 2, h // 2, text="?", fill="#888888",
-                font=("Segoe UI", 14, "bold")
-            )
-            return
-
-        title_color = _palette_color(getattr(self, "_flag_font_color", 0), "#FFFFFF")
-        title_selected = self._flag_selected_band == "title"
-        title_x = w // 2
-        title_y = h // 2
-
-        if title_selected:
-            bbox = c.create_text(
-                title_x, title_y, text="title",
-                font=("Segoe UI", 8, "bold"),
-                fill=title_color,
-            )
-            x0, y0, x1, y1 = c.bbox(bbox)
-            pad_x = 4
-            pad_y = 2
-            c.tag_lower(c.create_rectangle(
-                x0 - pad_x, y0 - pad_y, x1 + pad_x, y1 + pad_y,
-                outline=title_color, width=2,
-            ), bbox)
-        else:
-            c.create_text(
-                title_x, title_y, text="title",
-                font=("Segoe UI", 8, "bold"),
-                fill=title_color,
-            )
-
-    def _on_flag_canvas_click(self, event):
-        if not hasattr(self, "_flag_canvas"):
-            return
-
-        c = self._flag_canvas
-        w = int(c["width"])
-        h = int(c["height"])
-        type_key = self._flag_last_valid_type
-
-        if type_key not in {"3v", "3h"}:
-            return
-
-        # The title is a real clickable target placed exactly at the center.
-        # Keep a small hit box around the text so the user does not need to hit
-        # the glyphs pixel-perfectly.
-        center_x = w / 2
-        center_y = h / 2
-        if abs(event.x - center_x) <= 20 and abs(event.y - center_y) <= 8:
-            self._flag_selected_band = "title"
-            self._draw_flag_preview()
-            self._show_flag_palette()
-            return
-
-        if type_key == "3v":
-            bw = w // 3
-            band = min(event.x // bw, 2)
-        else:
-            bh = h // 3
-            band = min(event.y // bh, 2)
-
-        self._flag_selected_band = band
-        self._draw_flag_preview()
-        self._show_flag_palette()
-
-    def _on_flag_palette_click(self, event):
-        if self._flag_selected_band is None:
-            return
-
-        canvas = getattr(self, "_flag_pal_canvas", None)
-        if canvas is None:
-            return
-
-        sq = self._flag_pal_sq
-        cols = self._flag_pal_cols
-        col = event.x // sq
-        row = event.y // sq
-        idx = row * cols + col
-        pal = list(_PAL_NORMAL20)
-        if not 0 <= idx < len(pal):
-            return
-
-        self._commit_flag_color(self._flag_selected_band, idx)
 
     def _supported_loaded(self) -> bool:
         return bool(self.is_supported and self.profile_name and self.profile and self.exe_data)
@@ -1589,254 +880,7 @@ class DOSTranslationEditor:
     def _game_cfg(self) -> dict:
         return get_game_config(self.cfg, self.profile_name)
 
-    def _get_font_for_entry(self, entry: dict) -> str:
-        gcfg = self._game_cfg()
-        mappings = gcfg["string_fonts"]
-        key = entry["string_id"]
-        if key in mappings:
-            return mappings[key]
-        legacy_key = hex(entry.get("original_str_addr", entry["str_addr"]))
-        if legacy_key in mappings:
-            return mappings[legacy_key]
-        ri = self.get_range_index(entry["str_addr"])
-        if ri is None:
-            ri = self._extended_home_range_index(entry)
-        return gcfg["range_font_defaults"].get(str(ri), "FLOW.FON") if ri is not None else "FLOW.FON"
 
-    def _extended_home_range_index(self, entry: dict):
-        if not self.profile:
-            return None
-        extended = extended_layout.layout_for_profile(self.profile)
-        if extended is None or not extended.in_pool(entry["str_addr"]):
-            return None
-        return extended.home_range_index(entry)
-
-    def _charmap_for_entry(self, entry: dict) -> dict:
-        font_key = self._get_font_for_entry(entry)
-        return self._game_cfg().get("charmaps", {}).get(font_key, {})
-
-    def _font_codes_for_entry(self, entry: dict) -> set[int]:
-        font_key = self._get_font_for_entry(entry)
-        try:
-            font_profile = EXE_FONT_PROFILES[self.profile_name]["fonts"][font_key]
-            first = font_profile["ascii_start"]
-            return set(range(first, first + font_profile["num_ptrs"]))
-        except KeyError as exc:
-            raise TextTransactionError(f"No font profile for {font_key}") from exc
-
-    @staticmethod
-    def _raw_text(raw_bytes: bytes) -> str:
-        return raw_bytes.decode("latin-1")
-
-    @staticmethod
-    def _entry_raw_bytes(entry: dict) -> bytes:
-        try:
-            return entry["text"].encode("latin-1")
-        except UnicodeEncodeError as exc:
-            raise TextTransactionError(
-                f"Entry {entry.get('string_id', '?')} contains non-byte Unicode text"
-            ) from exc
-
-    def _decode_raw_for_entry(self, entry: dict, raw_bytes: bytes, *, preserve_controls=False) -> str:
-        charmap = self._charmap_for_entry(entry)
-        if not preserve_controls:
-            return charmap_decode(raw_bytes, charmap)
-
-        raw_text = self._raw_text(raw_bytes)
-        decoded = []
-        cursor = 0
-        for match in CONTROL_TOKEN_PATTERN.finditer(raw_text):
-            decoded.append(charmap_decode(raw_bytes[cursor:match.start()], charmap))
-            decoded.append(match.group(0))
-            cursor = match.end()
-        decoded.append(charmap_decode(raw_bytes[cursor:], charmap))
-        return "".join(decoded)
-
-    def _decode_entry_text(self, entry: dict, *, preserve_controls=False) -> str:
-        return self._decode_raw_for_entry(
-            entry, self._entry_raw_bytes(entry), preserve_controls=preserve_controls
-        )
-
-    def _encode_entry_text(self, entry: dict, display_text: str) -> bytes:
-        charmap = self._charmap_for_entry(entry)
-        allowed = self._font_codes_for_entry(entry)
-        original = self._entry_raw_bytes(entry)
-        encoded = bytearray()
-        cursor = 0
-
-        def encode_segment(segment: str):
-            if not segment:
-                return
-            encoded.extend(charmap_encode(
-                segment,
-                charmap,
-                allowed_bytes=allowed,
-                preserve_bytes=original,
-            ))
-
-        for match in CONTROL_TOKEN_PATTERN.finditer(display_text):
-            encode_segment(display_text[cursor:match.start()])
-            try:
-                token_bytes = match.group(0).encode("ascii")
-            except UnicodeEncodeError as exc:
-                raise CharmapEncodeError(f"Invalid control token: {match.group(0)!r}") from exc
-            if any(byte_value not in allowed for byte_value in token_bytes):
-                raise CharmapEncodeError(f"Control token outside active font: {match.group(0)!r}")
-            encoded.extend(token_bytes)
-            cursor = match.end()
-        encode_segment(display_text[cursor:])
-        for byte_value in set(encoded) - allowed:
-            if encoded.count(byte_value) > original.count(byte_value):
-                raise CharmapEncodeError(
-                    f"Unconfirmed byte 0x{byte_value:02X} was introduced or duplicated"
-                )
-        return bytes(encoded)
-
-    def _suffix_group_ids(self, entries=None) -> set[str]:
-        entries = self.entries if entries is None else entries
-        dynamic = [entry for entry in entries if not entry.get("fixed")]
-        grouped = set()
-        for child in dynamic:
-            child_bytes = self._entry_raw_bytes(child)
-            for parent in dynamic:
-                offset = child["str_addr"] - parent["str_addr"]
-                parent_bytes = self._entry_raw_bytes(parent)
-                if 0 < offset < len(parent_bytes) and child_bytes == parent_bytes[offset:]:
-                    grouped.update((child["string_id"], parent["string_id"]))
-                    break
-        return grouped
-
-    def _layout_reference(self) -> dict:
-        path = os.path.join(DATA_DIR, "layout-reference.json")
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                document = json.load(handle)
-        except (OSError, ValueError):
-            return {}
-        if not isinstance(document, dict):
-            return {}
-        profiles = document.get("profiles")
-        if not isinstance(profiles, dict):
-            return {}
-        reference = profiles.get(self.profile_name)
-        if not isinstance(reference, dict):
-            return {}
-        return {
-            key: value for key, value in reference.items()
-            if isinstance(key, str) and isinstance(value, int) and value >= 0
-        }
-
-    def _string_exchange_arguments(self):
-        game_cfg = self._game_cfg()
-        font_codes = {}
-        for font_name, font_desc in EXE_FONT_PROFILES[self.profile_name]["fonts"].items():
-            first = int(font_desc["ascii_start"])
-            font_codes[font_name] = set(range(first, first + int(font_desc["num_ptrs"])))
-        return {
-            "profile_id": self.profile_name,
-            "profile": self.profile,
-            "entries": self.entries,
-            "charmaps": copy.deepcopy(game_cfg.get("charmaps", {})),
-            "effective_font": self._get_font_for_entry,
-            "font_codes": font_codes,
-            "layout_reference": self._layout_reference(),
-        }
-
-    def _prepare_entry_transaction(self, entry_index: int, display_text: str):
-        source_entry = self.entries[entry_index]
-        new_bytes = self._encode_entry_text(source_entry, display_text)
-        staged_data = bytearray(self.exe_data)
-        staged_entries = copy.deepcopy(self.entries)
-        staged_entry = staged_entries[entry_index]
-
-        if staged_entry.get("fixed"):
-            max_len = staged_entry["max_len"]
-            if len(new_bytes) > max_len - 1:
-                raise TextTransactionError(
-                    f"Fixed string exceeds {max_len - 1} bytes ({len(new_bytes)} bytes)"
-                )
-            staged_entry["text"] = self._raw_text(new_bytes)
-            address = staged_entry["str_addr"]
-            staged_data[address:address + max_len] = (
-                new_bytes + b"\x00" * (max_len - len(new_bytes))
-            )
-            validation = validate_image(
-                staged_data, self.profile, staged_entries, self.relocation_sites
-            )
-            validation["stage"] = "fixed-output"
-            return (staged_data, staged_entries, validation) if validation["ok"] else (None, None, validation)
-
-        staged_entry["text"] = self._raw_text(new_bytes)
-        return repack_transaction(
-            staged_data, self.profile, staged_entries, self.relocation_sites
-        )
-
-    def _prepare_translate_all_transaction(self, translator_func, on_progress=None):
-        staged_data = bytearray(self.exe_data)
-        staged_entries = copy.deepcopy(self.entries)
-        staged_by_id = {entry["string_id"]: entry for entry in staged_entries}
-        suffix_ids = self._suffix_group_ids(self.entries)
-        stats = {"translated": 0, "unchanged": 0, "blank": 0, "suffix_skipped": 0}
-
-        for index, source_entry in enumerate(self.entries):
-            if on_progress:
-                on_progress(index + 1, len(self.entries), self._decode_entry_text(source_entry))
-            if source_entry["string_id"] in suffix_ids:
-                stats["suffix_skipped"] += 1
-                continue
-
-            original = self._decode_entry_text(source_entry, preserve_controls=True)
-            if not original or original.isspace():
-                stats["blank"] += 1
-                continue
-            translated = translator_func(original)
-            if not isinstance(translated, str) or not translated:
-                raise TextTransactionError(
-                    f"Translator returned no text for {source_entry['string_id']}"
-                )
-
-            new_bytes = self._encode_entry_text(source_entry, translated)
-            old_bytes = self._entry_raw_bytes(source_entry)
-            if new_bytes == old_bytes:
-                stats["unchanged"] += 1
-                continue
-
-            staged_entry = staged_by_id[source_entry["string_id"]]
-            staged_entry["text"] = self._raw_text(new_bytes)
-            if staged_entry.get("fixed"):
-                max_len = staged_entry["max_len"]
-                if len(new_bytes) > max_len - 1:
-                    raise TextTransactionError(
-                        f"Fixed string {staged_entry['string_id']} exceeds {max_len - 1} bytes"
-                    )
-                address = staged_entry["str_addr"]
-                staged_data[address:address + max_len] = (
-                    new_bytes + b"\x00" * (max_len - len(new_bytes))
-                )
-            stats["translated"] += 1
-
-        if stats["translated"] == 0:
-            return None, None, {
-                "ok": True,
-                "errors": [],
-                "stage": "no-op",
-                "noop": True,
-            }, stats
-
-        work_data, work_entries, validation = repack_transaction(
-            staged_data, self.profile, staged_entries, self.relocation_sites
-        )
-        return work_data, work_entries, validation, stats
-
-    def _commit_text_transaction(self, work_data, work_entries, validation):
-        self.exe_data[:] = work_data
-        self.entries = work_entries
-        self.validation_errors = []
-        self.integrity_valid = True
-        self.repack_required = False
-        self._recalculate_max_lengths()
-        self._invalidate_diff_preview("text-commit", refresh=False)
-        self._update_save_state()
 
     def _migrate_legacy_font_mappings(self):
         gcfg = self._game_cfg()
@@ -2447,7 +1491,7 @@ class DOSTranslationEditor:
         self.edit_text.insert("1.0", translated_display)
         self.highlight_spaces()
         self.on_text_modified()
-        self.translate_status_label.config(text="✔ Translated", foreground="#27AE60")
+        self.translate_status_label.config(text=self.tr("tr.translated_check"), foreground="#27AE60")
         self.root.after(2000, lambda: self.translate_status_label.config(text="", foreground="#7F8C8D"))
         if btn:
             btn.config(state=tk.NORMAL)
@@ -2476,9 +1520,7 @@ class DOSTranslationEditor:
         prog_win.update()
 
         def update_progress(current, total, display_text):
-            status_lbl.config(text=self.tr("dlg.translate_all.progress",
-                                           current=current, total=total,
-                                           text=display_text[:50]))
+            status_lbl.config(text=self.tr("dlg.translate_all.progress",current=current, total=total,text=display_text[:50]))
             progress_var.set(current)
             prog_win.update()
 
@@ -2959,91 +2001,33 @@ class DOSTranslationEditor:
         )
 
 
-    @staticmethod
-    def _make_preview_tree(parent, columns):
-        frame = ttk.Frame(parent)
-        frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        names = tuple(column[0] for column in columns)
-        tree = ttk.Treeview(frame, columns=names, show="headings")
-        for name, heading, width, anchor in columns:
-            tree.heading(name, text=heading)
-            tree.column(name, width=width, anchor=anchor, stretch=name in {"old", "new", "error"})
-        vertical = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
-        horizontal = ttk.Scrollbar(frame, orient=tk.HORIZONTAL, command=tree.xview)
-        tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
-        vertical.pack(side=tk.RIGHT, fill=tk.Y)
-        horizontal.pack(side=tk.BOTTOM, fill=tk.X)
-        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        tree.tag_configure("FAIL", background="#F5B7B1", foreground="#641E16")
-        tree.tag_configure("PASS", background="#D5F5E3", foreground="#145A32")
-        tree.tag_configure("PENDING", background="#FCF3CF", foreground="#7D6608")
-        tree.tag_configure("READ-ONLY", background="#EAECEE", foreground="#566573")
-        return tree
-
     def _show_preview_dialog(self, snapshot):
-        dialog = tk.Toplevel(self.root)
-        dialog.title(self.tr("dlg.preview.title", profile=snapshot["profile_id"]))
-        dialog.geometry("1200x800")
-        dialog.minsize(900, 520)
-        dialog.transient(self.root)
+        init = self.initial_unpacked_data
 
-        notebook = ttk.Notebook(dialog)
-        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 4))
-        tabs = {name: ttk.Frame(notebook) for name in ("Summary", "Strings", "Blocks", "Pointers", "Fonts")}
-        for name, frame in tabs.items():
-            notebook.add(frame, text="  %s  " % self.tr("preview.tab." + name.lower()))
+        def _bytes_changed(offset, size):
+            return (
+                offset is not None
+                and len(init) >= offset + size
+                and bytes(self.exe_data[offset:offset + size])
+                != bytes(init[offset:offset + size])
+            )
 
-        summary = snapshot["summary"]
-        none_text = self.tr("preview.val.none")
-        yes_text = self.tr("preview.val.yes")
-        no_text = self.tr("preview.val.no")
-
-        def flag(value):
-            return yes_text if value else no_text
-
-        year_offset = self._year_offset()
-        year_changed = (
-            year_offset is not None
-            and len(self.initial_unpacked_data) >= year_offset + 2
-            and bytes(self.exe_data[year_offset:year_offset + 2])
-            != bytes(self.initial_unpacked_data[year_offset:year_offset + 2])
-        )
+        year_offset   = self._year_offset()
         region_offset = self._region_offset()
-        region_changed = (
-            region_offset is not None
-            and len(self.initial_unpacked_data) >= region_offset + 8
-            and bytes(self.exe_data[region_offset:region_offset + 8])
-            != bytes(self.initial_unpacked_data[region_offset:region_offset + 8])
-        )
-
         points_offset = self._points_rule_offset()
-        points_changed = (
-            points_offset is not None
-            and len(self.initial_unpacked_data) >= points_offset + 2
-            and bytes(self.exe_data[points_offset:points_offset + 2])
-            != bytes(self.initial_unpacked_data[points_offset:points_offset + 2])
-        )
-
-        wdl_offset = self._wdl_offset()
-        wdl_changed = (
-            wdl_offset is not None
-            and len(self.initial_unpacked_data) >= wdl_offset + 6
-            and bytes(self.exe_data[wdl_offset:wdl_offset + 6])
-            != bytes(self.initial_unpacked_data[wdl_offset:wdl_offset + 6])
-        )
+        teams_offset  = self._teams_offset()
+        wdl_offset    = self._wdl_offset()
 
         def _match_flag_changed():
             mf = self._match_flag_config()
             if not mf:
                 return False
-
             offsets = []
-            detect_offset = mf.get("detect_offset")
-            color_offsets = mf.get("color_offsets", ())
+            detect_offset     = mf.get("detect_offset")
+            color_offsets     = mf.get("color_offsets", ())
             font_color_offset = mf.get("font_color_offset")
-            band_offsets = mf.get("band_offsets", ())
-            type_sets = mf.get("types", {})
-
+            band_offsets      = mf.get("band_offsets", ())
+            type_sets         = mf.get("types", {})
             if isinstance(detect_offset, int):
                 offsets.append((detect_offset, 2))
             for off in color_offsets:
@@ -3061,149 +2045,28 @@ class DOSTranslationEditor:
                         continue
                     if isinstance(off, int):
                         offsets.append((off, length))
-
             for off, length in offsets:
-                if off < 0 or len(self.initial_unpacked_data) < off + length:
+                if off < 0 or len(init) < off + length:
                     return False
-                if bytes(self.exe_data[off:off + length]) != bytes(self.initial_unpacked_data[off:off + length]):
+                if bytes(self.exe_data[off:off + length]) != bytes(init[off:off + length]):
                     return True
             return False
 
-        match_flag_changed = _match_flag_changed()
-
-        summary_lines = [
-            self.tr("preview.sum.status", value=snapshot["status"]),
-            self.tr("preview.sum.profile", value=snapshot["profile_id"]),
-            "",
-            self.tr("preview.sum.normal", value=summary["normal_changed"]),
-            self.tr("preview.sum.fixed", value=summary["fixed_changed"]),
-            self.tr("preview.sum.codeonly", value=summary["code_only_changed"]),
-            self.tr("preview.sum.pointers",value=summary["pointer_sources_changed"]),
-            self.tr("preview.sum.integrity_fix", value=flag(summary.get("integrity_fix_applied", False))),
-            "",
-            self.tr("preview.sum.glyphs", value=summary["glyphs_changed"]),
-            self.tr("preview.sum.fonts",value=", ".join(summary["fonts_affected"]) or none_text),
-            "",
-            *([self.tr("preview.sum.year", value=flag(year_changed))]
-              if year_offset is not None else []),
-            *([self.tr("preview.sum.region", value=flag(region_changed))]
-              if region_offset is not None else []),
-            *([self.tr("preview.sum.points", value=flag(points_changed))]
-              if points_offset is not None else []),
-            *([f"WDL: {flag(wdl_changed)}"]
-              if wdl_offset is not None else []),
-            *([f"Match Flag: {flag(match_flag_changed)}"]
-              if self._match_flag_config() is not None else []),
-            "",
-            self.tr("preview.sum.extended_layout", value=flag(summary.get("extended_layout_active", False))),
-            "",
-            self.tr("preview.sum.repack_needed",
-                    value=flag(summary["repack_needed"])),
-            self.tr("preview.sum.repack_status", value=summary["repack_status"]),
-            self.tr("preview.sum.validator", value=summary["validator_status"]),
-            self.tr("preview.sum.font_status", value=summary["font_status"]),
-            self.tr("preview.sum.save_possible",
-                    value=flag(summary["save_possible"])),
-        ]
-        if snapshot["errors"]:
-            summary_lines.extend(["", self.tr("preview.sum.reasons")]
-                                 + [f"- {value}" for value in snapshot["errors"]])
-        summary_text = tk.Text(tabs["Summary"], wrap="word", font=("Consolas", 10), padx=12, pady=12)
-        summary_text.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        summary_text.insert("1.0", "\n".join(summary_lines))
-        summary_text.config(state=tk.DISABLED)
-
-        string_tree = self._make_preview_tree(tabs["Strings"], [
-            ("status", self.tr("preview.col.status"), 85, tk.CENTER),
-            ("id", "string_id", 140, tk.W),
-            ("kind", self.tr("preview.col.kind"), 80, tk.CENTER),
-            ("font", self.tr("preview.col.font"), 95, tk.CENTER),
-            ("oldlen", self.tr("preview.col.oldbytes"), 70, tk.E),
-            ("newlen", self.tr("preview.col.newbytes"), 70, tk.E),
-            ("delta", self.tr("preview.col.delta"), 60, tk.E),
-            ("block", self.tr("preview.col.block"), 55, tk.CENTER),
-            ("ptrs", self.tr("preview.col.pointers"), 65, tk.E),
-            ("code", self.tr("preview.col.codeptrs"), 65, tk.E),
-            ("cap", self.tr("preview.col.fixedcap"), 65, tk.E),
-            ("old", self.tr("preview.col.oldtext"), 230, tk.W),
-            ("new", self.tr("preview.col.newtext"), 230, tk.W),
-        ])
-        for row in snapshot["strings"]:
-            block = "—" if row["repack_block"] is None else row["repack_block"] + 1
-            capacity = "—" if row["fixed_capacity_bytes"] is None else row["fixed_capacity_bytes"]
-            string_tree.insert("", tk.END, values=(
-                row["status"], row["string_id"], row["kind"], row["font"],
-                row["old_length"], row["new_length"], f"{row['delta']:+d}", block,
-                row["pointer_count"], row["code_pointer_count"], capacity,
-                row["old_text"], row["new_text"],
-            ), tags=(row["status"],))
-
-        block_tree = self._make_preview_tree(tabs["Blocks"], [
-            ("status", self.tr("preview.col.status"), 80, tk.CENTER),
-            ("block", self.tr("preview.col.block"), 55, tk.CENTER),
-            ("range", self.tr("preview.col.range"), 180, tk.CENTER),
-            ("total", self.tr("preview.col.total"), 80, tk.E),
-            ("base", self.tr("preview.col.baseused"), 100, tk.E),
-            ("preview", self.tr("preview.col.prevused"), 100, tk.E),
-            ("delta", self.tr("preview.col.delta"), 70, tk.E),
-            ("saved", self.tr("preview.col.savings"), 70, tk.E),
-            ("growth", self.tr("preview.col.growth"), 70, tk.E),
-            ("free", self.tr("preview.col.sharedrest"), 90, tk.E),
-            ("missing", self.tr("preview.col.missing"), 70, tk.E),
-            ("error", self.tr("preview.col.reason"), 250, tk.W),
-        ])
-        for row in snapshot["blocks"]:
-            def shown(value): return "—" if value is None else value
-            block_tree.insert("", tk.END, values=(
-                row["status"], row["block"] + 1,
-                f"0x{row['start']:X}–0x{row['end']:X}", row["total"],
-                row["baseline_used"], shown(row["preview_used"]), shown(row["delta"]),
-                shown(row["savings"]), shown(row["growth"]), shown(row["preview_free"]),
-                row["missing_bytes"], row["error"] or "",
-            ), tags=(row["status"],))
-
-        pointer_tree = self._make_preview_tree(tabs["Pointers"], [
-            ("source", self.tr("preview.col.source"), 90, tk.CENTER),
-            ("kind", self.tr("preview.col.type"), 70, tk.CENTER),
-            ("id", "string_id", 150, tk.W),
-            ("oldlow", self.tr("preview.col.oldlowword"), 90, tk.CENTER),
-            ("newlow", self.tr("preview.col.newlowword"), 90, tk.CENTER),
-            ("old", self.tr("preview.col.oldtarget"), 95, tk.CENTER),
-            ("new", self.tr("preview.col.newtarget"), 95, tk.CENTER),
-            ("delta", self.tr("preview.col.targetdelta"), 85, tk.E),
-        ])
-        for row in snapshot["pointers"]:
-            pointer_tree.insert("", tk.END, values=(
-                f"0x{row['source']:X}", row["kind"], row["string_id"],
-                f"0x{row['old_lowword']:04X}", f"0x{row['new_lowword']:04X}",
-                f"0x{row['old_target']:X}", f"0x{row['new_target']:X}",
-                f"{row['target_delta']:+d}",
-            ))
-
-        font_tree = self._make_preview_tree(tabs["Fonts"], [
-            ("status", self.tr("preview.col.status"), 80, tk.CENTER),
-            ("font", self.tr("preview.col.font"), 100, tk.CENTER),
-            ("offset", self.tr("preview.col.glyphoffset"), 90, tk.CENTER),
-            ("code", self.tr("preview.col.canonical"), 75, tk.CENTER),
-            ("aliases", self.tr("preview.col.aliascodes"), 220, tk.W),
-            ("old", self.tr("preview.col.oldwidth"), 75, tk.E),
-            ("new", self.tr("preview.col.newwidth"), 75, tk.E),
-            ("max", self.tr("preview.col.maxwidth"), 75, tk.E),
-            ("bitmap", self.tr("preview.col.bitmap"), 70, tk.CENTER),
-            ("bytes", self.tr("preview.col.changedbytes"), 95, tk.E),
-        ])
-        for row in snapshot["fonts"]:
-            aliases = ", ".join(f"0x{value:02X}" for value in row["alias_codes"]) or "—"
-            font_tree.insert("", tk.END, values=(
-                row["status"], row["font"], f"0x{row['glyph_offset']:X}",
-                f"0x{row['canonical_code']:02X}", aliases, row["old_width"],
-                row["new_width"], row["max_width"],
-                flag(row["bitmap_changed"]),
-                row["changed_physical_bytes"],
-            ), tags=(row["status"],))
-
-        ttk.Button(dialog, text=self.tr("dlg.preview.close"),
-                   command=dialog.destroy).pack(pady=(2, 10))
+        show_preview_dialog(
+            self.root, snapshot, self.tr,
+            year_offset=year_offset,
+            year_changed=_bytes_changed(year_offset, 2),
+            region_offset=region_offset,
+            region_changed=_bytes_changed(region_offset, 8),
+            points_offset=points_offset,
+            points_changed=_bytes_changed(points_offset, 2),
+            teams_offset=teams_offset,
+            teams_changed=_bytes_changed(teams_offset, 16),
+            wdl_offset=wdl_offset,
+            wdl_changed=_bytes_changed(wdl_offset, 6),
+            match_flag_config=self._match_flag_config(),
+            match_flag_changed=_match_flag_changed(),
+        )
 
     def show_changes_preview(self):
         if not self._supported_loaded():
@@ -3298,8 +2161,12 @@ class DOSTranslationEditor:
         self.translation_pending    = False
         self._last_valid_year       = None
         self.year_var.set("")
-        self._last_valid_region_index = None
-        self.region_var.set("")
+        self._last_valid_teams = None
+        self.teams_var.set("")
+        self._last_valid_region_a = None
+        self._last_valid_region_b = None
+        self.region_a_var.set("")
+        self.region_b_var.set("")
         self._converted_to_extended = False
         self._integrity_fixed       = False
         self.filter_records         = ()
@@ -3404,111 +2271,7 @@ class DOSTranslationEditor:
             gaps = find_unknown_gaps(self.exe_data, self.profile, entries, relocation_sites)
         except Exception:
             pass
-        dlg = tk.Toplevel(self.root)
-        dlg.title("Integrity Check Failed")
-        dlg.resizable(True, True)
-        dlg.grab_set()
-        dlg.minsize(660, 300)
-        tk.Label(
-            dlg,
-            text="Editing can be inspected, but Repack and Save are blocked.",
-            font=("Segoe UI", 10, "bold"),
-            fg="#C0392B",
-            anchor="w",
-            padx=12, pady=8,
-        ).pack(fill=tk.X)
-
-        if gaps:
-            tk.Label(
-                dlg,
-                text=f"{len(gaps)} unknown gap(s) found. Auto-fix will zero-fill them.",
-                font=("Segoe UI", 9),
-                fg="#7D6608",
-                anchor="w",
-                padx=12, pady=0,
-            ).pack(fill=tk.X)
-
-        list_frame = tk.Frame(dlg, bg="#FFFFFF", bd=1, relief=tk.SUNKEN)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
-        vsb = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas_inner = tk.Canvas(
-            list_frame, bg="#FFFFFF", highlightthickness=0,
-            yscrollcommand=vsb.set,
-        )
-        canvas_inner.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.config(command=canvas_inner.yview)
-        rows_frame = tk.Frame(canvas_inner, bg="#FFFFFF")
-        canvas_win = canvas_inner.create_window((0, 0), window=rows_frame, anchor="nw")
-
-        def _on_rows_configure(event):
-            canvas_inner.configure(scrollregion=canvas_inner.bbox("all"))
-        def _on_canvas_resize(event):
-            canvas_inner.itemconfig(canvas_win, width=event.width)
-        rows_frame.bind("<Configure>", _on_rows_configure)
-        canvas_inner.bind("<Configure>", _on_canvas_resize)
-
-        if not gaps:
-            tk.Label(
-                rows_frame, text="No correctable gaps found.",
-                font=("Segoe UI", 9), bg="#FFFFFF", fg="#555555",
-                anchor="w", padx=8, pady=6,
-            ).pack(fill=tk.X)
-        else:
-            for i, g in enumerate(gaps):
-                raw = g["raw_bytes"]
-                try:
-                    display = raw.decode("latin-1")
-                    display = "".join(
-                        c if (0x20 <= ord(c) < 0x7F or ord(c) >= 0xA0) else "."
-                        for c in display
-                    ).rstrip(".")
-                except Exception:
-                    display = ""
-                n_bytes = g["gap_end"] - g["gap_start"]
-                line = (
-                    f"{g['label']}: gap {g['gap_start']:#x}–{g['gap_end']:#x}"
-                    f"  ({n_bytes} bytes)"
-                    + (f"  —  Text: {display[:120]}" if display.strip(".") else "")
-                )
-                bg = "#FFFFFF" if i % 2 == 0 else "#F7F9FA"
-                tk.Label(
-                    rows_frame, text=line,
-                    font=("Consolas", 9), bg=bg, fg="#2C3E50",
-                    anchor="w", padx=8, pady=5,
-                ).pack(fill=tk.X)
-                tk.Frame(rows_frame, bg="#E8EAF0", height=1).pack(fill=tk.X)
-        result = tk.BooleanVar(value=False)
-        btn_row = tk.Frame(dlg)
-        btn_row.pack(fill=tk.X, padx=12, pady=(0, 10))
-
-        def _yes():
-            result.set(True)
-            dlg.destroy()
-
-        def _no():
-            result.set(False)
-            dlg.destroy()
-
-        if gaps:
-            tk.Button(
-                btn_row, text="Auto-fix",
-                command=_yes, bg="#27AE60", fg="white",
-                font=("Segoe UI", 9, "bold"), padx=12, pady=4,
-            ).pack(side=tk.LEFT, padx=(0, 8))
-            tk.Button(
-                btn_row, text="Inspect only",
-                command=_no, bg="#C0392B", fg="white",
-                font=("Segoe UI", 9, "bold"), padx=12, pady=4,
-            ).pack(side=tk.LEFT)
-        else:
-            tk.Button(
-                btn_row, text="OK", command=_no,
-                font=("Segoe UI", 9, "bold"), padx=12, pady=4,
-            ).pack(side=tk.LEFT)
-
-        dlg.wait_window()
-        return result.get()
+        return show_integrity_dialog(self.root, gaps)
 
     def _zero_fill_gaps(self, gaps):
         for g in gaps:
@@ -3636,6 +2399,7 @@ class DOSTranslationEditor:
         self._read_year_from_exe()
         self._read_region_from_exe()
         self._read_points_from_exe()
+        self._read_teams_from_exe()
         self._read_wdl_from_exe()
         self._read_flag_from_exe()
         self.notebook.select(self.tab_strings)

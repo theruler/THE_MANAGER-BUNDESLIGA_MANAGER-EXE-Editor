@@ -52,11 +52,16 @@ TEXTS_IT = {
     "region.3": "Francia",
     "region.4": "Inghilterra",
     "header.point": "Punti:",
+    "header.teams": "Squadre per la Serie A:",
+    "header.wdl": "Caratteri Vittoria/Pareggio/Sconfitta:",
+    "header.match": "Bandiera della partita:",
+    "header.region.a": "Regione A:",
+    "header.region.b": "Regione B:",
 
     # ---- areas
     "tab.strings": "  📝 Stringhe  ",
     "tab.fonts": "  🔤 Editor font  ",
-    "tab.settings": "  ⚙ Impostazioni editor  ",
+    "tab.options": "  ⚙ Opzioni  ",
 
     # ---- search / filter
     "filter.search": "🔍 Cerca:",
@@ -103,6 +108,8 @@ TEXTS_IT = {
     "tr.translating": "Traduzione in corso...",
     "tr.error": "Errore: {error}",
     "tr.no_changes": "Nessuna modifica da applicare.",
+    "tr.translated_check": "✔ Tradotto",
+    "tr.translate_play": "▶ Traduci",
 
     # ---- settings
     "settings.charmap_group": " Mappatura caratteri (CharMap) ",
@@ -284,6 +291,9 @@ TEXTS_IT = {
     "preview.sum.points": "Punti per vittoria modificati: {value}",
     "preview.sum.integrity_fix": "Stringhe orfane aggiustate: {value}",
     "preview.sum.extended_layout": "EXE esteso: {value}",
+    "preview.sum.teams": "Numero squadre di Serie A: {value}",
+    "preview.sum.wdl": "Caratteri per Vittoria/Pareggio/Sconfitta: {value}",
+    "preview.sum.match": "Bandiera della partita: {value}",
     
     # ---- preview: shared value words
     "preview.val.none": "nessuno",
@@ -333,4 +343,16 @@ TEXTS_IT = {
     "utils.cfg.damaged": "La configurazione esistente è danneggiata e non è stata sostituita.\nLe modifiche alla configurazione rimangono bloccate finché non viene riparata o rimossa.\n\n{reason}",
     "utils.cfg.locked": "Le modifiche alla configurazione non vengono salvate finché la configurazione esistente è danneggiata.\n\n{reason}",
     "utils.cfg.save_failed": "Impossibile salvare la configurazione: {error}",
+
+    # ---- gruppi wdl (vittoria/pari/sconfitta)
+    "wdl.win": "VITTORIA",
+    "wdl.draw": "PARI",
+    "wdl.loss": "SCONFITTA",
+    "wdl.victory": "vittoria",
+    "wdl.draw_desc": "pari",
+    "wdl.loss_desc": "sconfitta",
+    
+    # ---- tipi di flag
+    "flag.3v": "3 bande verticali",
+    "flag.3h": "3 bande orizzontali",
 }

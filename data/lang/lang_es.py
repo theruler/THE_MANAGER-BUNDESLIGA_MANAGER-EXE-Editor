@@ -52,11 +52,16 @@ TEXTS_ES = {
     "region.3": "Francia",
     "region.4": "Inglaterra",
     "header.point": "Puntaje:",
+    "header.teams": "Equipos de 1.ª división:",
+    "header.wdl": "Caracteres de Victoria/Empate/Derrota:",
+    "header.match": "Bandera del partido:",
+    "header.region.a": "Región A:",
+    "header.region.b": "Región B:",
     
     # ---- areas
     "tab.strings": "  📝 Cadenas  ",
     "tab.fonts": "  🔤 Editor de fuentes  ",
-    "tab.settings": "  ⚙ Configuración del editor  ",
+    "tab.options": "  ⚙ Opciones  ",
 
     # ---- search / filter
     "filter.search": "🔍 Buscar:",
@@ -284,6 +289,9 @@ TEXTS_ES = {
     "preview.sum.points": "Victoria por punto cambiada: {value}",
     "preview.sum.integrity_fix": "Cadenas huérfanas solucionadas: {value}",
     "preview.sum.extended_layout": "EXE extendido: {value}",
+    "preview.sum.teams": "Equipos de 1.ª división: {value}",
+    "preview.sum.wdl": "Caracteres de Victoria/Empate/Derrota: {value}",
+    "preview.sum.match": "Bandera del partido: {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "ninguna",
@@ -333,4 +341,16 @@ TEXTS_ES = {
     "utils.cfg.damaged": "La configuración existente está dañada y no se ha reemplazado.\nLos cambios de configuración permanecen bloqueados hasta que se repare o elimine.\n\n{reason}",
     "utils.cfg.locked": "Los cambios de configuración no se guardan mientras la configuración existente esté dañada.\n\n{reason}",
     "utils.cfg.save_failed": "No se ha podido guardar la configuración: {error}",
+
+    # ---- grupos wdl (victoria/empate/derrota)
+    "wdl.win": "VICTORIA",
+    "wdl.draw": "EMPATE",
+    "wdl.loss": "DERROTA",
+    "wdl.victory": "victoria",
+    "wdl.draw_desc": "empate",
+    "wdl.loss_desc": "derrota",
+    
+    # ---- tipos de bandera
+    "flag.3v": "3 bandas verticales",
+    "flag.3h": "3 bandas horizontales",
 }

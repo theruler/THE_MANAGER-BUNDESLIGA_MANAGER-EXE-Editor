@@ -44,7 +44,21 @@ TM_ENG_EXTENDED = {
     "convertible_from": {"header_ss": 0x555F,},
 }
 
-_LAYOUTS = (BMP_V2_EXTENDED, TM_ITA_EXTENDED, TM_ENG_EXTENDED,)
+TM_FRE_EXTENDED = {
+    "profile_name": "THE MANAGER (FRENCH)",
+    "ds_start": 0x53CB0,
+    "base_const": bytes.fromhex("F64C"),
+    "pool": (0x5F578, 0x63c90),
+    "pool_fill": POOL_FILL,
+    "min_file_size": 0x63caf,
+    "header_minalloc": 0x0386,
+    "header_ss": 0x5D0C,
+    "ptr_range_home": {1: 0, 2: 0, 3: 0, 4: 1, 5: 1, 6: 1, 7: 3},
+    "newspaper_sources": ((0x58c78, 0x58d8C), (0x5cfcc, 0x5d184)),
+    "convertible_from": {"header_ss": 0x5772,},
+}
+
+_LAYOUTS = (BMP_V2_EXTENDED, TM_ITA_EXTENDED, TM_ENG_EXTENDED, TM_FRE_EXTENDED)
 
 
 class ExtendedLayoutError(ValueError):
@@ -217,5 +231,5 @@ __all__ = [
     "can_convert",
     "convert_to_extended",
     "POOL_FILL",
-    "BMP_V2_EXTENDED", "TM_ITA_EXTENDED", "TM_ENG_EXTENDED",
+    "BMP_V2_EXTENDED", "TM_ITA_EXTENDED", "TM_ENG_EXTENDED", "TM_FRE_EXTENDED"
 ]

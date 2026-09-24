@@ -52,11 +52,16 @@ TEXTS_FR = {
     "region.3": "France",
     "region.4": "Angleterre",
     "header.point": "Points:",
+    "header.teams": "Équipes pour la 1re division :",
+    "header.wdl": "Caractères Victoire/Nul/Défaite :",
+    "header.match": "Drapeau du match :",
+    "header.region.a": "Région A :",
+    "header.region.b": "Région B :",
     
     # ---- areas
     "tab.strings": "  📝 Chaînes  ",
     "tab.fonts": "  🔤 Éditeur de polices  ",
-    "tab.settings": "  ⚙ Paramètres de l’éditeur  ",
+    "tab.options": "  ⚙ Options  ",
 
     # ---- search / filter
     "filter.search": "🔍 Rechercher :",
@@ -103,6 +108,8 @@ TEXTS_FR = {
     "tr.translating": "Traduction en cours...",
     "tr.error": "Erreur : {error}",
     "tr.no_changes": "Aucune modification à appliquer.",
+    "tr.translated_check": "✔ Traduit",
+    "tr.translate_play": "▶ Traduire",
 
     # ---- settings
     "settings.charmap_group": " Mappage des caractères (CharMap) ",
@@ -284,6 +291,9 @@ TEXTS_FR = {
     "preview.sum.points": "Victoire par point modifiée : {value}",
     "preview.sum.integrity_fix": "Chaînes orphelines corrigées : {value}",
     "preview.sum.extended_layout": "EXE étendu : {value}",
+    "preview.sum.teams": "Équipes pour la 1re division : {value}",
+    "preview.sum.wdl": "Caractères Victoire/Nul/Défaite : {value}",
+    "preview.sum.match": "Drapeau du match : {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "aucune",
@@ -333,4 +343,16 @@ TEXTS_FR = {
     "utils.cfg.damaged": "La configuration existante est endommagée et n’a pas été remplacée.\nLes modifications de configuration restent bloquées jusqu’à sa réparation ou sa suppression.\n\n{reason}",
     "utils.cfg.locked": "Les modifications de configuration ne sont pas enregistrées tant que la configuration existante est endommagée.\n\n{reason}",
     "utils.cfg.save_failed": "Impossible d’enregistrer la configuration : {error}",
+
+    # ---- groupes wdl (victoire/nul/défaite)
+    "wdl.win": "VICTOIRE",
+    "wdl.draw": "NUL",
+    "wdl.loss": "DÉFAITE",
+    "wdl.victory": "victoire",
+    "wdl.draw_desc": "nul",
+    "wdl.loss_desc": "défaite",
+    
+    # ---- types de drapeaux
+    "flag.3v": "3 bandes verticales",
+    "flag.3h": "3 bandes horizontales",
 }

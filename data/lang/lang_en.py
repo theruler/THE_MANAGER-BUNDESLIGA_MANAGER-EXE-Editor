@@ -51,12 +51,17 @@ TEXTS_EN = {
     "region.2": "Italy",
     "region.3": "France",
     "region.4": "England",
+    "header.teams": "Teams for 1st League:",
+    "header.wdl": "Win/Draw/Loss characters:",
+    "header.match": "Match Flag:",
     "header.point": "Points:",
+    "header.region.a": "Region A:",
+    "header.region.b": "Region B:",
     
     # ---- areas
     "tab.strings": "  📝 Strings  ",
     "tab.fonts": "  🔤 Font Editor  ",
-    "tab.settings": "  ⚙ Editor Settings  ",
+    "tab.options": "  ⚙ Options  ",
 
     # ---- search / filter
     "filter.search": "🔍 Search:",
@@ -103,7 +108,9 @@ TEXTS_EN = {
     "tr.translating": "Translating...",
     "tr.error": "Error: {error}",
     "tr.no_changes": "No changes to apply.",
-
+    "tr.translated_check": "✔ Translated",
+    "tr.translate_play": "▶ Translate",
+    
     # ---- settings
     "settings.charmap_group": " Character mapping (CharMap) ",
     "settings.font_group": " Font assignment ",
@@ -284,6 +291,9 @@ TEXTS_EN = {
     "preview.sum.points": "Victory per point changed: {value}",
     "preview.sum.integrity_fix": "Orphan strings fixed: {value}",
     "preview.sum.extended_layout": "Extended EXE: {value}",
+    "preview.sum.teams": "Teams for 1st League: {value}",
+    "preview.sum.wdl": "Win/Draw/Loss characters: {value}",
+    "preview.sum.match": "Match Flag: {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "none",
@@ -333,4 +343,16 @@ TEXTS_EN = {
     "utils.cfg.damaged": "The existing configuration is damaged and was not replaced.\nConfiguration changes stay blocked until it is repaired or removed.\n\n{reason}",
     "utils.cfg.locked": "Configuration changes are not saved while the existing configuration is damaged.\n\n{reason}",
     "utils.cfg.save_failed": "Could not save config: {error}",
+
+    # ---- wdl (win/draw/loss) groups
+    "wdl.win": "WIN",
+    "wdl.draw": "DRAW",
+    "wdl.loss": "LOSS",
+    "wdl.victory": "victory",
+    "wdl.draw_desc": "draw",
+    "wdl.loss_desc": "loss",
+
+    # ---- flag types
+    "flag.3v": "3 vertical bands",
+    "flag.3h": "3 horizontal bands",
 }

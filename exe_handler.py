@@ -1,6 +1,241 @@
 import hashlib
 import struct
 
+MATCH_FLAG_TYPES = {
+    "3v": {
+        "3v1": "B8EE0050B86A0050B90100",
+        "3v2": "B8EE0050B8D40050B9010051B96B00",
+        "3v3": "B8EE0050B83E0150B8010050B8D500",
+    },
+    "3h": {
+        "3h1": "B84F0050B83E0150B90100",
+        "3h2": "B8A00050B83E0150B9500051B90100",
+        "3h3": "B8EE0050B83E0150B8A10050B80100",
+    },
+    }
+
+_1st_LEAGUE_TEAMS = {
+    "20": "01010100141414002626260004040400",
+    "18": "01010100121414002226260003040400",
+    }
+
+GAME_PROFILES = {
+    "THE MANAGER (ITALIAN)": {
+        "ds_start": 0x53CE0,
+        "base_const": bytes.fromhex("F64C"),
+        "ptr_ranges": [
+            (0x543DC, 0x54474), (0x5511C, 0x55148), (0x5514A, 0x5518A),
+            (0x55190, 0x5536C), (0x55370, 0x55438), (0x58526, 0x58686),
+            (0x5868E, 0x589A0), (0x58932, 0x58F7E), (0x5D1AC, 0x5D364),
+        ],
+        "valid_ranges": [(0x5456E, 0x55088), (0x55444, 0x58525), (0x5890A, 0x58932), (0x59632, 0x5D191)],
+        "code_ptrs":   [(0x2E3BB, 0x5890A), (0x2E402, 0x5891E)],
+        "fixed_strings": [(0x55438, 11)],
+        "code_year": 0x12AF2,
+        "region_offset": 0x5508A,
+        "points_offset": 0x550AD,
+        "teams": {
+            "offset": 0x55096,
+            "number": _1st_LEAGUE_TEAMS,
+        },
+        "wdl_map": 0x55096,
+        "match_flag": {
+            "detect_offset": 0x9fe0,
+            "color_offsets": (0x9fe1, 0xa007, 0xa030),
+            "band_offsets": (0x9fe3, 0xa009, 0xa032),
+            "font_color_offset": 0xa084,
+            "types": MATCH_FLAG_TYPES,
+        },
+        "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
+        "immutable_signature": {
+            "header_size": 0x6D80,
+            "relocation_table_offset": 0x1C,
+            "relocation_count": 7000,
+            "relocation_topology_sha256": [
+                "95235ED9EEB658148E86843DC0381D846BB8FFD91C0515850EE23D590588ED15",  # original MZ
+                "BD94929F6723F899244CB19BDF077AB36E8693126F311F64091468D6DECD5DC3",  # decompressed by EXEPACK
+            ],
+            "entry_cs": 0x3A45,
+            "entry_ip": 0x0018,
+            "diagnostic_stack_ss": 0x578D,
+            "diagnostic_stack_sp": 0x1000,
+            "code_anchors": (
+                (0x0F753, "55 8B EC B8 0A 00 9A C8 02 ?? ?? 2A C0 50 B9 EF 00 51 B9 3F 01 51 B9 2B 00 51 2B C9 51 8E 06 AA"),
+                (0x1F7B7, "55 8B EC B8 68 00 9A C8 02 ?? ?? 57 56 8E 06 2A"),
+                (0x228E0, "55 8B EC B8 0E 00 9A C8 02 ?? ?? 56 C6 46 FA 00"),
+            ),
+        },
+    },
+    "BUNDESLIGA MANAGER PROFESSIONAL": {
+        "ds_start": 0x537E0,
+        "base_const": bytes.fromhex("B34C"),
+        "ptr_ranges": [
+            (0x53EDC, 0x53F74), (0x55AC0, 0x56174), (0x5617C, 0x56184),
+            (0x581F4, 0x58226), (0x58248, 0x58884), (0x5C8B2, 0x5CA6A),
+        ],
+        "valid_ranges": [(0x5406E, 0x55A2C), (0x5618A, 0x581F3), (0x58226, 0x58247), (0x58D38, 0x5C897)],
+        "code_ptrs":   [(0x2DEB3, 0x58226), (0x2DEFA, 0x58236)],
+        "fixed_strings": [(0x56174, 8)],
+        "code_year": 0x12A18,
+        "region_offset": 0x55A2E,
+        "points_offset": 0x55A51,
+        "teams": {
+            "offset": 0x55A3A,
+            "number": _1st_LEAGUE_TEAMS,
+        },
+        "wdl_map": 0x55a5a,
+        "match_flag": {
+            "detect_offset": 0x9f10,
+            "color_offsets": (0x9f11, 0x9f37, 0x9f60),
+            "band_offsets": (0x9f13, 0x9f39, 0x9f62),
+            "font_color_offset": 0x9fb4,
+            "types": MATCH_FLAG_TYPES,
+        },
+        "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
+        "immutable_signature": {
+            "header_size": 0x6CB0,
+            "relocation_table_offset": 0x1C,
+            "relocation_count": 6946,
+            "relocation_topology_sha256": "8D0F8560784383D50D92DB5902B9ABF4ADA29D34035CD6FE18F14E2EEE29611E",
+            "entry_cs": 0x3A01,
+            "entry_ip": 0x0016,
+            "diagnostic_stack_ss": 0x5709,
+            "diagnostic_stack_sp": 0x1000,
+            "code_anchors": (
+                (0x0F749, "55 8B EC B8 0A 00 9A C6 02 ?? ?? 2A C0 50 B9 EF 00 51 B9 3F 01 51 B9 2B 00 51 2B C9 51 8E 06 B0"),
+                (0x1FFFA, "55 8B EC B8 02 00 9A C6 02 ?? ?? 8E 06 20 9E B0"),
+                (0x242CF, "55 8B EC B8 4A 00 9A C6 02 ?? ?? 8E 06 AA 9E 26"),
+            ),
+        },
+    },
+    "THE MANAGER (ENGLISH)": {
+        "ds_start": 0x52320,
+        "base_const": bytes.fromhex("694B"),
+        "ptr_ranges": [
+            (0x535E0, 0x535FC), (0x535FE, 0x53646), (0x5364C, 0x538F4),
+            (0x56182, 0x562BA), (0x562EA, 0x56566), (0x56582, 0x56AB6),
+            (0x56CB8, 0x56DCC), (0x5ADE8, 0x5AFA0),
+        ],
+        "valid_ranges": [(0x52B9A, 0x5354C), (0x538FC, 0x56182), (0x56566, 0x56582), (0x5726E, 0x5ADCD)],
+        "code_ptrs": [(0x2E16B, 0x56566), (0x2E1B2, 0x56574)],
+        "fixed_strings": [(0x538F4, 8)],
+        "code_year": 0x128A2,
+        "region_offset": 0x5354E,
+        "points_offset": 0x53571,
+        "teams": {
+            "offset": 0x5355A,
+            "number": _1st_LEAGUE_TEAMS,
+        },
+        "wdl_map": 0x5357a,
+        "match_flag": {
+            "detect_offset": 0x9ef0,
+            "color_offsets": (0x9ef1, 0x9f17, 0x9f40),
+            "band_offsets": (0x9ef3, 0x9f19, 0x9f42),
+            "font_color_offset": 0x9f94,
+            "types": MATCH_FLAG_TYPES,
+        },
+        "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
+        "immutable_signature": {
+            "header_size": 0x6C90,
+            "relocation_table_offset": 0x1C,
+            "relocation_count": 6941,
+            "relocation_topology_sha256": "802345DB9DD9B8E6C161D36B570BBBE33F4BC14A8753F89F368571DFD6B538BE",
+            "entry_cs": 0x3A23,
+            "entry_ip": 0x0016,
+            "diagnostic_stack_ss": 0x555F,
+            "diagnostic_stack_sp": 0x1000,
+            "code_anchors": (
+                (0x0F5F3, "55 8B EC B8 0A 00 9A C6 02 ?? ?? 2A C0 50 B9 EF 00 51 B9 3F 01 51 B9 2B 00 51 2B C9 51 8E 06 A4"),
+                (0x1F657, "55 8B EC B8 68 00 9A C6 02 ?? ?? 57 56 8E 06 24"),
+                (0x245A7, "55 8B EC B8 4A 00 9A C6 02 ?? ?? 8E 06 AE 98 26"),
+            ),
+        },
+    },
+    "THE MANAGER (FRENCH)": {
+        "ds_start": 0x53CB0,
+        "base_const": bytes.fromhex("F64C"),
+        "ptr_ranges": [
+            (0x543AC, 0x54444), (0x55148, 0x55172), (0x55174, 0x55390),
+            (0x55394, 0x55460), (0x58348, 0x5847c), (0x584ac, 0x58720),
+            (0x58740, 0x58d8c), (0x5cfcc, 0x5d184),
+        ],
+        "valid_ranges": [(0x5453E, 0x550b4), (0x55468, 0x58347), (0x58720, 0x58740), (0x59452, 0x5cfb1)],
+        "code_ptrs":   [(0x2E38B, 0x58720), (0x2E3d2, 0x58730)],
+        "fixed_strings": [(0x55460, 8)],
+        "code_year": 0x12AC2,
+        "region_offset": 0x550B6,
+        "points_offset": 0x550d9,
+        "teams": {
+            "offset": 0x550c2,
+            "number": _1st_LEAGUE_TEAMS,
+        },
+        "wdl_map": 0x550e2,
+        "match_flag": {
+            "detect_offset": 0x9fb0,
+            "color_offsets": (0x9fb1, 0x9fd7, 0xa000),
+            "band_offsets": (0x9fb3, 0x9fd9, 0xa002),
+            "font_color_offset": 0xa054,
+            "types": MATCH_FLAG_TYPES,
+        },
+        "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
+        "immutable_signature": {
+            "header_size": 0x6D50,
+            "relocation_table_offset": 0x1C,
+            "relocation_count": 6986,
+            "relocation_topology_sha256": [
+                "03D7AC04A1F4AA837A0776B701AEA019D955577B937178882D9DF52307D87A75",  # original MZ
+                "FB17C5F60EE0F8901A5273E077B53564AD5372D7ACC79E30EE2D5E8A82BA76B3",  # decompressed by EXEPACK
+            ],
+            "entry_cs": 0x3A45,
+            "entry_ip": 0x0018,
+            "diagnostic_stack_ss": 0x5772,
+            "diagnostic_stack_sp": 0x1000,
+            "code_anchors": (
+                (0x0F753, "55 8B EC B8 0A 00 9A C8 02 ?? ?? 2A C0 50 B9 EF 00 51 B9 3F 01 51 B9 2B 00 51 2B C9 51 8E 06 FA"),
+                (0x1F7B7, "55 8B EC B8 68 00 9A C8 02 ?? ?? 57 56 8E 06 7A"),
+                (0x228E0, "55 8B EC B8 0E 00 9A C8 02 ?? ?? 56 C6 46 FA 00"),
+            ),
+        },
+    },
+}
+
+EXE_FONT_PROFILES = {
+    "BUNDESLIGA MANAGER PROFESSIONAL": {
+        "base_addr": 0x3C770,
+        "fonts": {
+            "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3CF64, "ptr_end": 0x3D022, "glyph_start": 0x3D022, "glyph_end": 0x3D5CE, "num_ptrs": 95, "ascii_start": 0x20},
+            "FLOW.FON":   {"type": "fixed",   "rows": 8,  "bytes_per_char": 9, "ptr_start": 0x3D930, "ptr_end": 0x3D9EE, "glyph_start": 0x3D9EE, "glyph_end": 0x3DD18, "num_ptrs": 95, "ascii_start": 0x20},
+            "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3D5DA, "ptr_end": 0x3D698, "glyph_start": 0x3D698, "glyph_end": 0x3D92A, "num_ptrs": 95, "ascii_start": 0x20},
+        },
+    },
+    "THE MANAGER (ITALIAN)": {
+        "base_addr": 0x3CC80,
+        "fonts": {
+            "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3D46E, "ptr_end": 0x3D52C, "glyph_start": 0x3D52C, "glyph_end": 0x3DAD8, "num_ptrs": 95, "ascii_start": 0x20},
+            "FLOW.FON":   {"type": "fixed",   "rows": 8,  "bytes_per_char": 9, "ptr_start": 0x3DE43, "ptr_end": 0x3DF01, "glyph_start": 0x3DF01, "glyph_end": 0x3E22B, "num_ptrs": 95, "ascii_start": 0x20},
+            "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3DAE4, "ptr_end": 0x3DBA4, "glyph_start": 0x3DBA4, "glyph_end": 0x3DE3D, "num_ptrs": 96, "ascii_start": 0x20},
+        },
+    },
+    "THE MANAGER (ENGLISH)": {
+        "base_addr": 0x3CA30,
+        "fonts": {
+            "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3D102, "ptr_end": 0x3D1C0, "glyph_start": 0x3D1C0, "glyph_end": 0x3D77D, "num_ptrs": 95, "ascii_start": 0x20},
+            "FLOW.FON":   {"type": "fixed",   "rows": 8,  "bytes_per_char": 9, "ptr_start": 0x3DB2B, "ptr_end": 0x3DBE9, "glyph_start": 0x3DBEB, "glyph_end": 0x3DF15, "num_ptrs": 95, "ascii_start": 0x20},
+            "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3D789, "ptr_end": 0x3D849, "glyph_start": 0x3D85B, "glyph_end": 0x3DAF4, "num_ptrs": 96, "ascii_start": 0x20},
+        },
+    },
+    "THE MANAGER (FRENCH)": {
+        "base_addr": 0x3Cc50,
+        "fonts": {
+            "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3D43e, "ptr_end": 0x3D4fc, "glyph_start": 0x3D4fc, "glyph_end": 0x3Daa8, "num_ptrs": 95, "ascii_start": 0x20},
+            "FLOW.FON":   {"type": "fixed",   "rows": 8,  "bytes_per_char": 9, "ptr_start": 0x3De13, "ptr_end": 0x3Ded1, "glyph_start": 0x3Ded1, "glyph_end": 0x3e1fb, "num_ptrs": 95, "ascii_start": 0x20},
+            "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3Dab4, "ptr_end": 0x3Db74, "glyph_start": 0x3Db74, "glyph_end": 0x3De0d, "num_ptrs": 96, "ascii_start": 0x20},
+        },
+    },
+}
+
+
+
 def read_u16(data, offset):
     return struct.unpack_from("<H", data, offset)[0]
 
@@ -187,193 +422,6 @@ def get_mz_relocation_sites(data) -> list[int]:
         sites.add(site)
     return sorted(sites)
 
-GAME_PROFILES = {
-    "THE MANAGER (ITALIAN)": {
-        "ds_start": 0x53CE0,
-        "base_const": bytes.fromhex("F64C"),
-        "ptr_ranges": [
-            (0x543DC, 0x54474), (0x5511C, 0x55148), (0x5514A, 0x5518A),
-            (0x55190, 0x5536C), (0x55370, 0x55438), (0x58526, 0x58686),
-            (0x5868E, 0x589A0), (0x58932, 0x58F7E), (0x5D1AC, 0x5D364),
-        ],
-        "valid_ranges": [(0x5456E, 0x55088), (0x55444, 0x58525), (0x5890A, 0x58932), (0x59632, 0x5D191)],
-        "code_ptrs":   [(0x2E3BB, 0x5890A), (0x2E402, 0x5891E)],
-        "fixed_strings": [(0x55438, 11)],
-        "code_year": 0x12AF2,
-        "region_offset": 0x5508A,
-        "year_disp": 0x07e0,
-        "region_disp": 0x13aa,
-        "points_rule": 0x13cd,
-        "wdl_map": 0x550b6,
-        "match_flag": {
-            "detect_offset": 0x9fe0,
-            "color_offsets": (40929, 40967, 41008),
-            "band_offsets": (40931, 40969, 41010),
-            "font_color_offset": 0xa084,
-            "types": {
-                "3v": {
-                    "3v1": "B8EE0050B86A0050B90100",
-                    "3v2": "B8EE0050B8D40050B9010051B96B00",
-                    "3v3": "B8EE0050B83E0150B8010050B8D500",
-                },
-                "3h": {
-                    "3h1": "B84F0050B83E0150B90100",
-                    "3h2": "B8A00050B83E0150B9500051B90100",
-                    "3h3": "B8EE0050B83E0150B8A10050B80100",
-                },
-            },
-        },
-        "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
-        "immutable_signature": {
-            "header_size": 0x6D80,
-            "relocation_table_offset": 0x1C,
-            "relocation_count": 7000,
-            "relocation_topology_sha256": [
-                "95235ED9EEB658148E86843DC0381D846BB8FFD91C0515850EE23D590588ED15",  # original MZ
-                "BD94929F6723F899244CB19BDF077AB36E8693126F311F64091468D6DECD5DC3",  # decompressed by EXEPACK
-            ],
-            "entry_cs": 0x3A45,
-            "entry_ip": 0x0018,
-            "diagnostic_stack_ss": 0x578D,
-            "diagnostic_stack_sp": 0x1000,
-            "code_anchors": (
-                (0x0F753, "55 8B EC B8 0A 00 9A C8 02 ?? ?? 2A C0 50 B9 EF 00 51 B9 3F 01 51 B9 2B 00 51 2B C9 51 8E 06 AA"),
-                (0x1F7B7, "55 8B EC B8 68 00 9A C8 02 ?? ?? 57 56 8E 06 2A"),
-                (0x228E0, "55 8B EC B8 0E 00 9A C8 02 ?? ?? 56 C6 46 FA 00"),
-            ),
-        },
-    },
-    "BUNDESLIGA MANAGER PROFESSIONAL": {
-        "ds_start": 0x537E0,
-        "base_const": bytes.fromhex("B34C"),
-        "ptr_ranges": [
-            (0x53EDC, 0x53F74), (0x55AC0, 0x56174), (0x5617C, 0x56184),
-            (0x581F4, 0x58226), (0x58248, 0x58884), (0x5C8B2, 0x5CA6A),
-        ],
-        "valid_ranges": [(0x5406E, 0x55A2C), (0x5618A, 0x581F3), (0x58226, 0x58247), (0x58D38, 0x5C897)],
-        "code_ptrs":   [(0x2DEB3, 0x58226), (0x2DEFA, 0x58236)],
-        "fixed_strings": [(0x56174, 8)],
-        "code_year": 0x12A18,
-        "region_offset": 0x55A2E,
-        "year_disp": 0x07e0,
-        "region_disp": 0x224e,
-        "points_rule": 0x2271,
-        "wdl_map": 0x55a5a,
-        "match_flag": {
-            "detect_offset": 0x9f10,
-            "color_offsets": (40721, 40759, 40800),
-            "band_offsets": (40723, 40761, 40802),
-            "font_color_offset": 0x9fb4,
-            "types": {
-                "3v": {
-                    "3v1": "B8EE0050B86A0050B90100",
-                    "3v2": "B8EE0050B8D40050B9010051B96B00",
-                    "3v3": "B8EE0050B83E0150B8010050B8D500",
-                },
-                "3h": {
-                    "3h1": "B84F0050B83E0150B90100",
-                    "3h2": "B8A00050B83E0150B9500051B90100",
-                    "3h3": "B8EE0050B83E0150B8A10050B80100",
-                },
-            },
-        },
-        "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
-        "immutable_signature": {
-            "header_size": 0x6CB0,
-            "relocation_table_offset": 0x1C,
-            "relocation_count": 6946,
-            "relocation_topology_sha256": "8D0F8560784383D50D92DB5902B9ABF4ADA29D34035CD6FE18F14E2EEE29611E",
-            "entry_cs": 0x3A01,
-            "entry_ip": 0x0016,
-            "diagnostic_stack_ss": 0x5709,
-            "diagnostic_stack_sp": 0x1000,
-            "code_anchors": (
-                (0x0F749, "55 8B EC B8 0A 00 9A C6 02 ?? ?? 2A C0 50 B9 EF 00 51 B9 3F 01 51 B9 2B 00 51 2B C9 51 8E 06 B0"),
-                (0x1FFFA, "55 8B EC B8 02 00 9A C6 02 ?? ?? 8E 06 20 9E B0"),
-                (0x242CF, "55 8B EC B8 4A 00 9A C6 02 ?? ?? 8E 06 AA 9E 26"),
-            ),
-        },
-    },
-    "THE MANAGER (ENGLISH)": {
-        "ds_start": 0x52320,
-        "base_const": bytes.fromhex("694B"),
-        "ptr_ranges": [
-            (0x535E0, 0x535FC), (0x535FE, 0x53646), (0x5364C, 0x538F4),
-            (0x56182, 0x562BA), (0x562EA, 0x56566), (0x56582, 0x56AB6),
-            (0x56CB8, 0x56DCC), (0x5ADE8, 0x5AFA0),
-        ],
-        "valid_ranges": [(0x52B9A, 0x5354C), (0x538FC, 0x56182), (0x56566, 0x56582), (0x5726E, 0x5ADCD)],
-        "code_ptrs": [(0x2E16B, 0x56566), (0x2E1B2, 0x56574)],
-        "fixed_strings": [(0x538F4, 8)],
-        "code_year": 0x128A2,
-        "region_offset": 0x5354E,
-        "year_disp": 0x07cc,
-        "region_disp": 0x122e,
-        "points_rule": 0x1251,
-        "wdl_map": 0x5357a,
-        "match_flag": {
-            "detect_offset": 0x9ef0,
-            "color_offsets": (40689, 40727, 40768),
-            "band_offsets": (40691, 40729, 40770),
-            "font_color_offset": 0x9f94,
-            "types": {
-                "3v": {
-                    "3v1": "B8EE0050B86A0050B90100",
-                    "3v2": "B8EE0050B8D40050B9010051B96B00",
-                    "3v3": "B8EE0050B83E0150B8010050B8D500",
-                },
-                "3h": {
-                    "3h1": "B84F0050B83E0150B90100",
-                    "3h2": "B8A00050B83E0150B9500051B90100",
-                    "3h3": "B8EE0050B83E0150B8A10050B80100",
-                },
-            },
-        },
-        "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
-        "immutable_signature": {
-            "header_size": 0x6C90,
-            "relocation_table_offset": 0x1C,
-            "relocation_count": 6941,
-            "relocation_topology_sha256": "802345DB9DD9B8E6C161D36B570BBBE33F4BC14A8753F89F368571DFD6B538BE",
-            "entry_cs": 0x3A23,
-            "entry_ip": 0x0016,
-            "diagnostic_stack_ss": 0x555F,
-            "diagnostic_stack_sp": 0x1000,
-            "code_anchors": (
-                (0x0F5F3, "55 8B EC B8 0A 00 9A C6 02 ?? ?? 2A C0 50 B9 EF 00 51 B9 3F 01 51 B9 2B 00 51 2B C9 51 8E 06 A4"),
-                (0x1F657, "55 8B EC B8 68 00 9A C6 02 ?? ?? 57 56 8E 06 24"),
-                (0x245A7, "55 8B EC B8 4A 00 9A C6 02 ?? ?? 8E 06 AE 98 26"),
-            ),
-        },
-    },
-}
-
-EXE_FONT_PROFILES = {
-    "BUNDESLIGA MANAGER PROFESSIONAL": {
-        "base_addr": 0x3C770,
-        "fonts": {
-            "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3CF64, "ptr_end": 0x3D022, "glyph_start": 0x3D022, "glyph_end": 0x3D5CE, "num_ptrs": 95, "ascii_start": 0x20},
-            "FLOW.FON":   {"type": "fixed",   "rows": 8,  "bytes_per_char": 9, "ptr_start": 0x3D930, "ptr_end": 0x3D9EE, "glyph_start": 0x3D9EE, "glyph_end": 0x3DD18, "num_ptrs": 95, "ascii_start": 0x20},
-            "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3D5DA, "ptr_end": 0x3D698, "glyph_start": 0x3D698, "glyph_end": 0x3D92A, "num_ptrs": 95, "ascii_start": 0x20},
-        },
-    },
-    "THE MANAGER (ITALIAN)": {
-        "base_addr": 0x3CC80,
-        "fonts": {
-            "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3D46E, "ptr_end": 0x3D52C, "glyph_start": 0x3D52C, "glyph_end": 0x3DAD8, "num_ptrs": 95, "ascii_start": 0x20},
-            "FLOW.FON":   {"type": "fixed",   "rows": 8,  "bytes_per_char": 9, "ptr_start": 0x3DE43, "ptr_end": 0x3DF01, "glyph_start": 0x3DF01, "glyph_end": 0x3E22B, "num_ptrs": 95, "ascii_start": 0x20},
-            "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3DAE4, "ptr_end": 0x3DBA4, "glyph_start": 0x3DBA4, "glyph_end": 0x3DE3D, "num_ptrs": 96, "ascii_start": 0x20},
-        },
-    },
-    "THE MANAGER (ENGLISH)": {
-        "base_addr": 0x3CA30,
-        "fonts": {
-            "NORMAL.FON": {"type": "dynamic", "rows": 16, "ptr_start": 0x3D102, "ptr_end": 0x3D1C0, "glyph_start": 0x3D1C0, "glyph_end": 0x3D77D, "num_ptrs": 95, "ascii_start": 0x20},
-            "FLOW.FON":   {"type": "fixed",   "rows": 8,  "bytes_per_char": 9, "ptr_start": 0x3DB2B, "ptr_end": 0x3DBE9, "glyph_start": 0x3DBEB, "glyph_end": 0x3DF15, "num_ptrs": 95, "ascii_start": 0x20},
-            "MICRO4.FON": {"type": "fixed",   "rows": 6,  "bytes_per_char": 7, "ptr_start": 0x3D789, "ptr_end": 0x3D849, "glyph_start": 0x3D85B, "glyph_end": 0x3DAF4, "num_ptrs": 96, "ascii_start": 0x20},
-        },
-    },
-}
 
 def _canonical_mz_relocation_topology(data):
     if len(data) < 0x1C or bytes(data[:2]) != b"MZ":

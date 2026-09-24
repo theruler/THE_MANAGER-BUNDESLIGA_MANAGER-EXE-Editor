@@ -52,11 +52,16 @@ TEXTS_DE = {
     "region.3": "Frankreich",
     "region.4": "England",
     "header.point": "Punkte:",
-    
+    "header.teams": "Mannschaften für die 1. Liga:",
+    "header.wdl": "Siege/Unentschieden/Niederlagen-Zeichen:",
+    "header.match": "Spielflagge:",
+    "header.region.a": "Region A:",
+    "header.region.b": "Region B:",
+  
     # ---- areas
     "tab.strings": "  📝 Strings  ",
     "tab.fonts": "  🔤 Font-Editor  ",
-    "tab.settings": "  ⚙ Editor-Einstellungen  ",
+    "tab.options": "  ⚙ Optionen  ",
 
     # ---- search / filter
     "filter.search": "🔍 Suche:",
@@ -284,6 +289,9 @@ TEXTS_DE = {
     "preview.sum.points": "Sieg pro Punkt geändert: {value}",
     "preview.sum.integrity_fix": "Verwaiste Strings behoben: {value}",
     "preview.sum.extended_layout": "Erweiterte EXE: {value}",
+    "preview.sum.teams": "Mannschaften für die 1. Liga: {value}",
+    "preview.sum.wdl": "Siege/Unentschieden/Niederlagen-Zeichen: {value}",
+    "preview.sum.match": "Spielflagge: {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "keine",
@@ -333,4 +341,16 @@ TEXTS_DE = {
     "utils.cfg.damaged": "Die vorhandene Konfiguration ist beschädigt und wurde nicht ersetzt.\nÄnderungen an der Konfiguration sind gesperrt, bis sie repariert oder entfernt wird.\n\n{reason}",
     "utils.cfg.locked": "Konfigurationsänderungen werden nicht gespeichert, solange die vorhandene Konfiguration beschädigt ist.\n\n{reason}",
     "utils.cfg.save_failed": "Konfiguration konnte nicht gespeichert werden: {error}",
+
+    # ---- WDL-Gruppen (Sieg/Unentschieden/Niederlage)
+    "wdl.win": "SIEG",
+    "wdl.draw": "UNENTSCHIEDEN",
+    "wdl.loss": "NIEDERLAGE",
+    "wdl.victory": "Sieg",
+    "wdl.draw_desc": "Unentschieden",
+    "wdl.loss_desc": "Niederlage",
+    
+    # ---- Flaggentypen
+    "flag.3v": "3 vertikale Streifen",
+    "flag.3h": "3 horizontale Streifen",
 }
