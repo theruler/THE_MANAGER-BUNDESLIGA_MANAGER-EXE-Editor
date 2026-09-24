@@ -7,6 +7,7 @@ By Theruler and Nobody
 
 - THE MANAGER – English version
 - THE MANAGER – Italian version
+- THE MANAGER – French version
 - Bundesliga Manager Professional / BMP 2.0
 
 Executable profiles are detected automatically. File names do not matter.
