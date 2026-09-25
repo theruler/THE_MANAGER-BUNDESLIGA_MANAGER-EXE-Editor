@@ -47,7 +47,7 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.8.11"
+APP_VERSION = "2.8.12"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -90,6 +90,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._last_valid_region_a = None
         self._last_valid_region_b = None
         self._last_valid_points    = None
+        self._last_valid_subst_gk  = None
+        self._last_valid_subst     = None
         self._last_valid_teams = None
         self._converted_to_extended = False
         self._integrity_fixed      = False
@@ -184,10 +186,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         lang_menu = tk.Menu(view_menu, tearoff=0)
         self.language_var = tk.StringVar(value=self.language)
         for code, name in self._languages:
-            lang_menu.add_radiobutton(
-                label=name, value=code, variable=self.language_var,
-                command=self._on_language_change,
-            )
+            lang_menu.add_radiobutton(label=name, value=code, variable=self.language_var,command=self._on_language_change,)
         view_menu.add_cascade(label=self.tr("menu.view.language"), menu=lang_menu)
         self.menubar.add_cascade(label=self.tr("menu.view"), menu=view_menu)
         self.view_menu = view_menu
@@ -525,10 +524,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.year_label = self._reg(ttk.Label(self.year_container, font=("Segoe UI", 9, "bold")), "header.year")
         self.year_label.pack(side=tk.LEFT, padx=(0, 8))
         self.year_var = tk.StringVar()
-        self.year_spinbox = ttk.Spinbox(
-            self.year_container, from_=self._YEAR_MIN, to=self._YEAR_MAX, increment=1,
-            width=6, justify=tk.CENTER, font=("Segoe UI", 9),
-            textvariable=self.year_var, command=self._commit_year,)
+        self.year_spinbox = ttk.Spinbox(self.year_container, from_=self._YEAR_MIN, to=self._YEAR_MAX, increment=1,width=6, justify=tk.CENTER, font=("Segoe UI", 9),textvariable=self.year_var, command=self._commit_year,)
         self.year_spinbox.pack(side=tk.LEFT)
         self.year_spinbox.bind("<Return>", self._commit_year)
         self.year_spinbox.bind("<KP_Enter>", self._commit_year)
@@ -556,6 +552,17 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.points_combo.bind("<Return>", self._commit_points)
         self.points_combo.bind("<KP_Enter>", self._commit_points)
         self.points_combo.bind("<FocusOut>", self._commit_points)
+        self.subst_container = ttk.Frame(settings_frame)
+        self.subst_label = self._reg(ttk.Label(self.subst_container, font=("Segoe UI", 9, "bold")), "header.subst")
+        self.subst_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.subst_gk_var = tk.StringVar()
+        self.subst_gk_combo = ttk.Combobox(self.subst_container, textvariable=self.subst_gk_var, state="readonly",width=3, justify=tk.CENTER, font=("Segoe UI", 9), values=["1", "2"],)
+        self.subst_gk_combo.pack(side=tk.LEFT, padx=(0, 4))
+        self.subst_gk_combo.bind("<<ComboboxSelected>>", self._commit_subst_gk)
+        self.subst_var = tk.StringVar()
+        self.subst_combo = ttk.Combobox(self.subst_container, textvariable=self.subst_var, state="readonly",width=3, justify=tk.CENTER, font=("Segoe UI", 9), values=["2", "3", "4"],)
+        self.subst_combo.pack(side=tk.LEFT)
+        self.subst_combo.bind("<<ComboboxSelected>>", self._commit_subst)
         self.teams_container = ttk.Frame(settings_frame)
         self.teams_label = self._reg(ttk.Label(self.teams_container, font=("Segoe UI", 9, "bold")), "header.teams")
         self.teams_label.pack(side=tk.LEFT, padx=(0, 8))
@@ -653,6 +660,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._sync_year_widget()
         self._sync_region_widget()
         self._sync_points_widget()
+        self._sync_subst_widget()
         self._sync_teams_widget()
         self._sync_wdl_widget()
         self._sync_flag_widget()
@@ -1312,12 +1320,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         for string_id in self.visible_string_ids:
             index = self.entry_index_by_id[string_id]
             entry = self.entries[index]
-            self.tree.insert(
-                "",
-                tk.END,
-                iid=string_id,
-                values=(index + 1, hex(entry["str_addr"]), self._decode_entry_text(entry)),
-            )
+            self.tree.insert("",tk.END,iid=string_id,values=(index + 1, hex(entry["str_addr"]), self._decode_entry_text(entry)),)
         total, shown = len(self.entries), len(self.visible_string_ids)
         self._set_counter(shown, total)
         if self.filter_index_error:
@@ -1625,10 +1628,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
         filepath = filedialog.askopenfilename(
             title=self.tr("fd.import"),
-            filetypes=[
-                ("String Exchange CSV", "*.strings.csv"),
-                ("All CSV", "*.csv"),
-            ],
+            filetypes=[("String Exchange CSV", "*.strings.csv"),("All CSV", "*.csv"),],
         )
         if not filepath:
             return False
@@ -1761,9 +1761,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
         filepath = filedialog.askopenfilename(
             title=self.tr("fd.import_json"),
-            filetypes=[
-                ("String Exchange JSON", "*.strings.json"),
-            ],
+            filetypes=[("String Exchange JSON", "*.strings.json"),],
         )
         if not filepath:
             return False
@@ -1858,10 +1856,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
     def import_newspaper_csv(self):
         if not self._newspaper_ready("dlg.import.blocked"):
             return False
-        filepath = filedialog.askopenfilename(
-            title=self.tr("fd.news_import"),
-            filetypes=[("Newspaper CSV", "*.csv")],
-        )
+        filepath = filedialog.askopenfilename(title=self.tr("fd.news_import"),filetypes=[("Newspaper CSV", "*.csv")],)
         if not filepath:
             return False
         try:
@@ -2004,8 +1999,10 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
         year_offset   = self._year_offset()
         region_offset = self._region_offset()
-        points_offset = self._points_rule_offset()
-        teams_offset  = self._teams_offset()
+        points_offset    = self._points_rule_offset()
+        subst_gk_offset  = self._subst_gk_offset()
+        subst_offset     = self._subst_offset()
+        teams_offset     = self._teams_offset()
         wdl_offset    = self._wdl_offset()
 
         def _match_flag_changed():
@@ -2050,6 +2047,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             region_changed=_bytes_changed(region_offset, 8),
             points_offset=points_offset,
             points_changed=_bytes_changed(points_offset, 2),
+            subst_gk_offset=subst_gk_offset,
+            subst_gk_changed=_bytes_changed(subst_gk_offset, 8),
             teams_offset=teams_offset,
             teams_changed=_bytes_changed(teams_offset, 16),
             wdl_offset=wdl_offset,
@@ -2112,9 +2111,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 self.tr("edit.block_preview", block=block)
             )
         self.current_range_label.config(
-            text=self.tr("edit.range_info", kind=info["kind"], font=info["font"],
-                         old=info["old_length"], new=info["new_length"],
-                         delta=delta, status=info["status"], suffix=suffix),
+            text=self.tr("edit.range_info", kind=info["kind"], font=info["font"],old=info["old_length"], new=info["new_length"],delta=delta, status=info["status"], suffix=suffix),
             foreground={
                 "FAIL": "#C0392B",
                 "PENDING": "#B9770E",
@@ -2151,6 +2148,10 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.translation_pending    = False
         self._last_valid_year       = None
         self.year_var.set("")
+        self._last_valid_subst_gk = None
+        self._last_valid_subst    = None
+        self.subst_gk_var.set("")
+        self.subst_var.set("")
         self._last_valid_teams = None
         self.teams_var.set("")
         self._last_valid_region_a = None
@@ -2269,10 +2270,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             self.exe_data[start:end] = b"\x00" * (end - start)
 
     def load_exe(self):
-        filepath = filedialog.askopenfilename(
-            title=self.tr("fd.open_exe"),
-            filetypes=[("DOS Executable", "*.exe"), ("All Files", "*.*")]
-        )
+        filepath = filedialog.askopenfilename(title=self.tr("fd.open_exe"),filetypes=[("DOS Executable", "*.exe"), ("All Files", "*.*")])
         if not filepath or not self._confirm_discard_for_load():
             return
 
@@ -2389,6 +2387,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._read_year_from_exe()
         self._read_region_from_exe()
         self._read_points_from_exe()
+        self._read_subst_from_exe()
         self._read_teams_from_exe()
         self._read_wdl_from_exe()
         self._read_flag_from_exe()
@@ -2448,10 +2447,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         if not self._can_save():
             messagebox.showwarning(self.tr("dlg.save.blocked"), self._save_block_reason())
             return False
-        filepath = filedialog.asksaveasfilename(
-            title=self.tr("fd.save_exe"),
-            defaultextension=".exe", filetypes=[("DOS Executable", "*.exe")]
-        )
+        filepath = filedialog.asksaveasfilename(title=self.tr("fd.save_exe"),defaultextension=".exe", filetypes=[("DOS Executable", "*.exe")])
         if not filepath:
             return False
 

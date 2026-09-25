@@ -34,6 +34,8 @@ GAME_PROFILES = {
         "code_year": 0x12AF2,
         "region_offset": 0x5508A,
         "points_offset": 0x550AD,
+        "subst_gk_offset": 0x23ee0,
+        "subst_offset": 0x23ee6,
         "teams": {
             "offset": 0x55096,
             "number": _1st_LEAGUE_TEAMS,
@@ -79,6 +81,8 @@ GAME_PROFILES = {
         "code_year": 0x12A18,
         "region_offset": 0x55A2E,
         "points_offset": 0x55A51,
+        "subst_gk_offset": 0x23a06,
+        "subst_offset": 0x23a0c,
         "teams": {
             "offset": 0x55A3A,
             "number": _1st_LEAGUE_TEAMS,
@@ -122,6 +126,8 @@ GAME_PROFILES = {
         "code_year": 0x128A2,
         "region_offset": 0x5354E,
         "points_offset": 0x53571,
+        "subst_gk_offset": 0x23c90,
+        "subst_offset": 0x23c96,
         "teams": {
             "offset": 0x5355A,
             "number": _1st_LEAGUE_TEAMS,
@@ -165,6 +171,8 @@ GAME_PROFILES = {
         "code_year": 0x12AC2,
         "region_offset": 0x550B6,
         "points_offset": 0x550d9,
+        "subst_gk_offset": 0x23eb0,
+        "subst_offset": 0x23eb6,
         "teams": {
             "offset": 0x550c2,
             "number": _1st_LEAGUE_TEAMS,

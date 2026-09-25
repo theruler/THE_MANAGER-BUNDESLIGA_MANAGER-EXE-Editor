@@ -788,7 +788,130 @@ class _20TeamsMixin:
         self._update_save_state()
 
 
-class ExeSettingsMixin(_YearMixin, _RegionMixin, _PointsMixin, _20TeamsMixin, _WdlMixin, _MatchFlagMixin):
+class _SustMixin:
+
+    _SUBST_GK_VALUES = (1, 2)
+    _SUBST_VALUES    = (2, 3, 4)
+
+    def _subst_gk_offset(self):
+        if not self._supported_loaded():
+            return None
+        offset = self.profile.get("subst_gk_offset")
+        if not isinstance(offset, int):
+            return None
+        if offset < 0 or offset + 1 > len(self.exe_data):
+            return None
+        if self.exe_data[offset] not in self._SUBST_GK_VALUES:
+            return None
+        return offset
+
+    def _subst_offset(self):
+        if not self._supported_loaded():
+            return None
+        offset = self.profile.get("subst_offset")
+        if not isinstance(offset, int):
+            return None
+        if offset < 0 or offset + 1 > len(self.exe_data):
+            return None
+        if self.exe_data[offset] not in self._SUBST_VALUES:
+            return None
+        return offset
+
+    def _subst_offsets_valid(self):
+        return self._subst_gk_offset() is not None or self._subst_offset() is not None
+
+    def _sync_subst_widget(self):
+        if not hasattr(self, "subst_gk_combo"):
+            return
+        gk_off   = self._subst_gk_offset()
+        sub_off  = self._subst_offset()
+        if gk_off is not None or sub_off is not None:
+            if not self.subst_container.winfo_manager():
+                self.subst_container.pack(fill=tk.X, pady=6)
+            self.subst_gk_combo.config(state="readonly" if gk_off is not None else tk.DISABLED)
+            self.subst_combo.config(state="readonly" if sub_off is not None else tk.DISABLED)
+            return
+        self.subst_gk_combo.config(state=tk.DISABLED)
+        self.subst_combo.config(state=tk.DISABLED)
+        self.subst_container.pack_forget()
+        self.subst_gk_var.set("")
+        self.subst_var.set("")
+        self._last_valid_subst_gk = None
+        self._last_valid_subst    = None
+
+    def _revert_subst_gk(self):
+        self.subst_gk_var.set(
+            "" if self._last_valid_subst_gk is None else str(self._last_valid_subst_gk)
+        )
+
+    def _revert_subst(self):
+        self.subst_var.set(
+            "" if self._last_valid_subst is None else str(self._last_valid_subst)
+        )
+
+    def _read_subst_from_exe(self):
+        gk_off = self._subst_gk_offset()
+        if gk_off is None:
+            self._last_valid_subst_gk = None
+            self.subst_gk_var.set("")
+        else:
+            val = self.exe_data[gk_off]
+            self._last_valid_subst_gk = val
+            self.subst_gk_var.set(str(val))
+
+        sub_off = self._subst_offset()
+        if sub_off is None:
+            self._last_valid_subst = None
+            self.subst_var.set("")
+        else:
+            val = self.exe_data[sub_off]
+            self._last_valid_subst = val
+            self.subst_var.set(str(val))
+
+        self._sync_subst_widget()
+
+    def _commit_subst_gk(self, event=None):
+        offset = self._subst_gk_offset()
+        if offset is None:
+            return
+        raw = self.subst_gk_var.get().strip()
+        if not raw.isdigit():
+            self._revert_subst_gk()
+            return
+        value = int(raw)
+        if value not in self._SUBST_GK_VALUES:
+            self._revert_subst_gk()
+            return
+        self.subst_gk_var.set(str(value))
+        self._last_valid_subst_gk = value
+        if self.exe_data[offset] == value:
+            return
+        self.exe_data[offset] = value
+        self._invalidate_diff_preview("subst-gk-change")
+        self._update_save_state()
+
+    def _commit_subst(self, event=None):
+        offset = self._subst_offset()
+        if offset is None:
+            return
+        raw = self.subst_var.get().strip()
+        if not raw.isdigit():
+            self._revert_subst()
+            return
+        value = int(raw)
+        if value not in self._SUBST_VALUES:
+            self._revert_subst()
+            return
+        self.subst_var.set(str(value))
+        self._last_valid_subst = value
+        if self.exe_data[offset] == value:
+            return
+        self.exe_data[offset] = value
+        self._invalidate_diff_preview("subst-change")
+        self._update_save_state()
+
+
+class ExeSettingsMixin(_YearMixin, _RegionMixin, _PointsMixin, _SustMixin, _20TeamsMixin, _WdlMixin, _MatchFlagMixin):
     pass
 
 
