@@ -17,11 +17,9 @@ Executable profiles are detected automatically. File names do not matter.
 - Edit game strings
 - Edit embedded fonts
 - CSV/JSON string export / import
-- Translation support
-- Changes / Preview before saving
-- Starting Year editor
-- Region Changer
-- Points per victory rule changer (2/3)
+- String translation support
+- Changes Summary Preview before saving
+- Gameplay options change
 - English, German, Spanish, French and Italian interface
 - Packed EXEPACK input support
 - Standalone Windows release
@@ -46,7 +44,15 @@ Accented letters can be modified and replaced. Width of the single char can be a
 <img width="1280" height="851" alt="image" src="https://github.com/user-attachments/assets/12317ce8-f358-49d2-b196-69476d404c69" />
 
 
-## Region Changer
+## Gameplay options change
+The following rules can be changed directly from the "Options" Tab of the editor for all supported executable profiles.
+
+- Starting Year editor
+- Region Changer
+- Points per victory rule changer (2/3)
+- Maximum in-match substitutions for Goalkeeper and rest of the team
+- Number of teams for the first division legue (18/20)
+- Region Changer:
 
 The Region Changer uses the original country configuration present in the game executables.
 
@@ -63,10 +69,6 @@ Only Germany fetaures:
 
 Only England features:
 - ST, ND, RD, TH added to the date days and match minutes
-
-## Starting Year and Points per victory rule
-
-The starting year and the points rule can be changed directly from the top bar of the editor for all supported executable profiles.
 
 
 ## Newspaper built-in visual editor
