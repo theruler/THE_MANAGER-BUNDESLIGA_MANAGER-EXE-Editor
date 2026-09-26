@@ -47,7 +47,7 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.8.13"
+APP_VERSION = "2.8.14"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -2457,7 +2457,13 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         if not self._can_save():
             messagebox.showwarning(self.tr("dlg.save.blocked"), self._save_block_reason())
             return False
-        filepath = filedialog.asksaveasfilename(title=self.tr("fd.save_exe"),defaultextension=".exe", filetypes=[("DOS Executable", "*.exe")])
+        filepath = filedialog.asksaveasfilename(
+            title=self.tr("fd.save_exe"),
+            defaultextension=".exe",
+            filetypes=[("DOS Executable", "*.exe")],
+            initialfile=os.path.basename(self.source_path) if self.source_path else "",
+            initialdir=os.path.dirname(self.source_path) if self.source_path else "",
+        )
         if not filepath:
             return False
 

@@ -209,6 +209,7 @@ TOOL_PICK       = "pick"
 TOOL_FILL       = "fill"
 TOOL_MOVE_PASTE = "move_paste"
 TOOL_HAND       = "hand"
+TOOL_SOFTEN     = "soften"
 
 ZOOM_LEVELS = [1, 2, 4, 8, 16]
 
@@ -281,8 +282,12 @@ class _ImageCanvas(tk.Frame):
         self._canvas.bind("<Button-1>", self._on_b1_press)
         self._canvas.bind("<B1-Motion>", self._on_b1_motion)
         self._canvas.bind("<ButtonRelease-1>", self._on_b1_release)
-        self._canvas.bind("<Button-2>", self._on_b3_press)
+        self._canvas.bind("<Button-2>", self._on_b2_press)
+        self._canvas.bind("<B2-Motion>", self._on_b2_motion)
+        self._canvas.bind("<ButtonRelease-2>", self._on_b2_release)
         self._canvas.bind("<Button-3>", self._on_b3_press)
+        self._canvas.bind("<B3-Motion>", self._on_b3_motion)
+        self._canvas.bind("<ButtonRelease-3>", self._on_b3_release)
         self._canvas.bind("<Motion>", self._on_motion)
         self._canvas.bind("<Configure>", lambda _e: self._redraw())
         self._canvas.bind("<Escape>", self.deselect)
@@ -383,6 +388,8 @@ class _ImageCanvas(tk.Frame):
     def _update_cursor(self, event=None):
         if self._tool == TOOL_HAND:
             cursor = "hand2"
+        elif self._tool == TOOL_SOFTEN:
+            cursor = "circle"
         elif self._tool == TOOL_DRAW:
             cursor = "pencil"
         elif self._tool == TOOL_PICK:
@@ -790,6 +797,10 @@ class _ImageCanvas(tk.Frame):
             self._last_draw_pt = pt
             self._paint_pixel(*pt)
 
+        elif self._tool == TOOL_SOFTEN:
+            self._notify_stroke_start()
+            self._apply_soften_sharpen(pt, sharpen=False)
+
         elif self._tool == TOOL_PICK:
             rgba = self._pixel_color(pt)
             self._draw_color = rgba
@@ -857,6 +868,8 @@ class _ImageCanvas(tk.Frame):
             else:
                 self._paint_pixel(*pt)
             self._last_draw_pt = pt
+        elif self._tool == TOOL_SOFTEN:
+            self._apply_soften_sharpen(pt, sharpen=False)
         elif self._tool == TOOL_SELECT and self._dragging and self._sel_start:
             x0, y0 = self._sel_start
             self._sel = (x0, y0, pt[0], pt[1])
@@ -880,17 +893,105 @@ class _ImageCanvas(tk.Frame):
             self._paste_resize_corner = None
         self._paste_drag_start = None
 
+    def _on_b2_press(self, event):
+        iw = ih = 0
+        if self._img is not None:
+            iw, ih = self._img.size
+        dw, dh = iw * self._zoom, ih * self._zoom
+        can_pan = dw > self._canvas.winfo_width() or dh > self._canvas.winfo_height()
+        if can_pan:
+            self._pan_start = (event.x, event.y)
+            self._canvas.scan_mark(event.x, event.y)
+        self._canvas.config(cursor="hand2")
+
+    def _on_b2_motion(self, event):
+        if self._pan_start is not None:
+            self._canvas.scan_dragto(event.x, event.y, gain=1)
+            self._redraw()
+
+    def _on_b2_release(self, event):
+        self._pan_start = None
+        self._update_cursor()
+
     def _on_b3_press(self, event):
         pt = self._canvas_to_pixel(event.x, event.y)
         if self._sel is not None and (pt is None or not self._point_in_selection(pt)):
             self.deselect()
             return
-        
+
+        if self._tool == TOOL_SOFTEN:
+            if pt and self._img:
+                self._notify_stroke_start()
+                self._apply_soften_sharpen(pt, sharpen=True)
+            return
+
         if pt and self._img and self._tool in (TOOL_PICK, TOOL_DRAW):
             rgba = self._pixel_color(pt)
             self._draw_color = rgba
             if self._on_color_picked:
                 self._on_color_picked(*rgba)
+
+    def _on_b3_motion(self, event):
+        if self._tool == TOOL_SOFTEN:
+            pt = self._canvas_to_pixel(event.x, event.y)
+            if pt and self._img:
+                self._apply_soften_sharpen(pt, sharpen=True)
+
+    def _on_b3_release(self, event):
+        pass
+
+    def _apply_soften_sharpen(self, pt: tuple[int, int], sharpen: bool = False):
+        if self._img is None:
+            return
+        iw, ih = self._img.size
+        px, py = pt
+
+        def get_idx(x, y):
+            v = self._img.getpixel((x, y))
+            return v[0] if isinstance(v, tuple) else v
+
+        def pal_rgb(idx):
+            if 0 <= idx < len(self._palette):
+                return self._palette[idx]
+            return (0, 0, 0)
+
+        strength = 0.85
+        changed = False
+        for bx in range(px, px + 2):
+            for by in range(py, py + 2):
+                if not (0 <= bx < iw and 0 <= by < ih):
+                    continue
+                center = get_idx(bx, by)
+                neighbours = []
+                for dx, dy in ((-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)):
+                    nx, ny = bx + dx, by + dy
+                    if 0 <= nx < iw and 0 <= ny < ih:
+                        neighbours.append(get_idx(nx, ny))
+                if not neighbours:
+                    continue
+                cr, cg, cb = pal_rgb(center)
+                avg_r = sum(pal_rgb(n)[0] for n in neighbours) / len(neighbours)
+                avg_g = sum(pal_rgb(n)[1] for n in neighbours) / len(neighbours)
+                avg_b = sum(pal_rgb(n)[2] for n in neighbours) / len(neighbours)
+                if sharpen:
+                    nr = cr + strength * (cr - avg_r)
+                    ng = cg + strength * (cg - avg_g)
+                    nb = cb + strength * (cb - avg_b)
+                else:
+                    nr = cr + strength * (avg_r - cr)
+                    ng = cg + strength * (avg_g - cg)
+                    nb = cb + strength * (avg_b - cb)
+                nr = max(0, min(255, int(nr)))
+                ng = max(0, min(255, int(ng)))
+                nb = max(0, min(255, int(nb)))
+                new_idx = _rgb_to_palette_index(nr, ng, nb, self._palette)
+                if new_idx != center:
+                    self._img.putpixel((bx, by), new_idx)
+                    changed = True
+
+        if changed:
+            self._notify_modified()
+            self._redraw()
 
     def _pixel_color(self, pt: tuple[int, int]) -> tuple[int, int, int, int]:
         index = self._img.getpixel(pt)
@@ -1066,7 +1167,7 @@ class PicEditorPanel(ttk.Frame):
         ttk.Radiobutton(f_tools, text="✏ Pencil", variable=self._tool_var, value=TOOL_DRAW, command=self._on_tool_change, style="Toolbutton").grid(row=0, column=0, sticky="ew", padx=1, pady=1)
         ttk.Radiobutton(f_tools, text="▢ Select", variable=self._tool_var, value=TOOL_SELECT, command=self._on_tool_change, style="Toolbutton").grid(row=0, column=1, sticky="ew", padx=1, pady=1)
         ttk.Radiobutton(f_tools, text="🪣 Fill", variable=self._tool_var, value=TOOL_FILL, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=0, sticky="ew", padx=1, pady=1)
-        ttk.Radiobutton(f_tools, text="✋ Hand", variable=self._tool_var, value=TOOL_HAND, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=1, sticky="ew", padx=1, pady=1)
+        ttk.Radiobutton(f_tools, text="〜 Soften", variable=self._tool_var, value=TOOL_SOFTEN, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=1, sticky="ew", padx=1, pady=1)
         f_sel = ttk.LabelFrame(parent, text="Pasted selection", padding=(4, 2))
         f_sel.pack(fill=tk.X, pady=3)
         sel_grid = ttk.Frame(f_sel)
@@ -1247,10 +1348,27 @@ class PicEditorPanel(ttk.Frame):
         self._enable_file_buttons(True)
         self._set_status(f"Loaded: {fpath}  [displayed palette: {self._active_palette_name}]")
 
+    def _confirm_discard(self) -> bool:
+        if not self._modified:
+            return True
+        fname = os.path.basename(self._current_path) if self._current_path else "current file"
+        return messagebox.askyesno(
+            "Unsaved changes",
+            f'"{fname}" has unsaved changes.\nDiscard them and switch file?',
+            icon="warning",
+            default="no",
+        )
+
     def _on_file_selected(self, _event=None):
         fname = self._file_var.get()
         if fname in self._pic_files:
-            self._load_index(self._pic_files.index(fname))
+            new_idx = self._pic_files.index(fname)
+            if new_idx == self._current_idx:
+                return
+            if not self._confirm_discard():
+                self._file_var.set(self._pic_files[self._current_idx] if self._current_idx >= 0 else "")
+                return
+            self._load_index(new_idx)
 
     def _on_file_scroll(self, event):
         if not self._pic_files:
@@ -1263,6 +1381,8 @@ class PicEditorPanel(ttk.Frame):
             return "break"
         new_idx = max(0, min(len(self._pic_files) - 1, self._current_idx + direction))
         if new_idx != self._current_idx:
+            if not self._confirm_discard():
+                return "break"
             self._load_index(new_idx)
         return "break"
 
@@ -1272,6 +1392,8 @@ class PicEditorPanel(ttk.Frame):
         direction = -1 if event.keysym == "Up" else 1
         new_idx = max(0, min(len(self._pic_files) - 1, self._current_idx + direction))
         if new_idx != self._current_idx:
+            if not self._confirm_discard():
+                return "break"
             self._load_index(new_idx)
         return "break"
 
@@ -1279,11 +1401,13 @@ class PicEditorPanel(ttk.Frame):
         img = self._canvas_frame.get_image()
         if img is None:
             return
+        current_fname = os.path.basename(self._current_path) if self._current_path else ""   
         dest = filedialog.asksaveasfilename(
             title="Save Image As…",
             defaultextension=".VGA",
             filetypes=[("VGA/CP Image", "*.VGA *.vga *.CP *.cp"), ("All files", "*.*")],
             initialdir=self._pic_dir or ".",
+            initialfile=current_fname,
         )
         if not dest:
             return
@@ -1576,6 +1700,7 @@ class PicEditorPanel(ttk.Frame):
         TOOL_FILL:   "Fill — Left-click to flood-fill a region with the current color",
         TOOL_HAND:   "Hand — Left-click/drag to pan the canvas  │  Scroll wheel to zoom",
         TOOL_PICK:   "Pick — Left-click to sample a color from the canvas",
+        TOOL_SOFTEN: "Soften/Sharpen — Left-click/drag to soften  │  Right-click/drag to sharpen  │  Middle-click/drag to pan",
     }
 
     def _on_tool_change(self):

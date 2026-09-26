@@ -200,6 +200,21 @@ def serialize_mana(original: bytes, parsed: dict) -> bytes:
 def _clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
+def _balance_list(lst: list, target: int, n: int) -> list:
+    lst = list(lst)
+    diff = target - sum(lst)
+    step = 1 if diff > 0 else -1
+    i = 0
+    while diff != 0:
+        idx = i % n
+        if step == -1 and lst[idx] <= 1:
+            i += 1
+            continue
+        lst[idx] += step
+        diff -= step
+        i += 1
+    return lst
+
 class _FixedEntry(tk.Entry):
     def __init__(self, parent, lo: int, hi, on_change=None, width=3, **kw):
         self._lo = lo
@@ -269,6 +284,13 @@ class _LeagueTab(ttk.Frame):
         self._rank_entries: dict[int, _FixedEntry] = {}
         self._drag_src: int | None = None
         self._drag_moved = False
+        self._drag_target: int | None = None
+        self._drag_overlay = None
+        self._drag_canvas = None
+        self._drag_rect = None
+        self._drag_text = None
+        self._drag_ghost_w = 0
+        self._drag_ghost_h = 0
         self._widgets: dict[int, dict] = {}
         self._logo_cvs: dict[int, tk.Canvas] = {}
         self._cur_team: int | None = None
@@ -294,16 +316,11 @@ class _LeagueTab(ttk.Frame):
         for li, (first, count, rank_max) in enumerate(LEAGUE_BOUNDS):
             self._build_column(li, first, count, rank_max, col_offset)
             col_offset += 1
-            
-        self._ghost = tk.Label(self._grid_frame.winfo_toplevel(), bg="#c8dff7", fg="#1a3a6b", font=("Consolas", 9), relief="groove", padx=6, pady=2)
         self._build_tools_frame()
         self._show_placeholder()
 
     def _pts_max_for_rule(self) -> int:
         return 76 if self._points_rule.get() == 2 else 114
-
-    def _pts_total_for_rule(self) -> int:
-        return self._pts_max_for_rule()
 
     def _build_tools_frame(self):
         if hasattr(self, '_tools_frame') and self._tools_frame.winfo_exists():
@@ -499,28 +516,12 @@ class _LeagueTab(ttk.Frame):
             cur = sum(gls_scored)
             if cur:
                 gls_scored = [max(1, round(g * total_goals / cur)) for g in gls_scored]
-            diff, step, i_iter = total_goals - sum(gls_scored), 0, 0
-            step = 1 if diff > 0 else -1
-            while diff != 0:
-                idx = i_iter % n_sim
-                if step == -1 and gls_scored[idx] <= 1:
-                    i_iter += 1; continue
-                gls_scored[idx] += step
-                diff -= step
-                i_iter += 1
+            gls_scored = _balance_list(gls_scored, total_goals, n_sim)
             total_scored = sum(gls_scored)
             cur = sum(gls_conceded)
             if cur:
                 gls_conceded = [max(1, round(c * total_scored / cur)) for c in gls_conceded]
-            diff, step, i_iter = total_scored - sum(gls_conceded), 0, 0
-            step = 1 if diff > 0 else -1
-            while diff != 0:
-                idx = i_iter % n_sim
-                if step == -1 and gls_conceded[idx] <= 1:
-                    i_iter += 1; continue
-                gls_conceded[idx] += step
-                diff -= step
-                i_iter += 1
+            gls_conceded = _balance_list(gls_conceded, total_scored, n_sim)
             ctf_list = []
             for i in range(n_sim):
                 frac     = i / (n_sim - 1) if n_sim > 1 else 0.0
@@ -537,15 +538,7 @@ class _LeagueTab(ttk.Frame):
                 cur = sum(gls_conceded)
                 if cur:
                     gls_conceded = [max(1, round(c * total_scored / cur)) for c in gls_conceded]
-                diff, step, i_iter = total_scored - sum(gls_conceded), 0, 0
-                step = 1 if diff > 0 else -1
-                while diff != 0:
-                    idx = i_iter % count
-                    if step == -1 and gls_conceded[idx] <= 1:
-                        i_iter += 1; continue
-                    gls_conceded[idx] += step
-                    diff -= step
-                    i_iter += 1
+                gls_conceded = _balance_list(gls_conceded, total_scored, count)
             group = teams[first:first + count]
             for i, t in enumerate(group):
                 t["pts"]  = [pts_list[i], max(0, pts_max_ui - pts_list[i])]
@@ -559,47 +552,181 @@ class _LeagueTab(ttk.Frame):
         if self._on_dirty:
             self._on_dirty()
 
+    def _build_drag_overlay(self):
+        if self._drag_overlay is not None and self._drag_overlay.winfo_exists():
+            return
+
+        top = self.winfo_toplevel()
+        try:
+            overlay = tk.Toplevel(top)
+            overlay.overrideredirect(True)
+            overlay.withdraw()
+            transparent = "#010203"
+            overlay.configure(bg=transparent)
+            try:
+                overlay.wm_attributes("-transparentcolor", transparent)
+            except tk.TclError:
+                pass
+            try:
+                overlay.wm_attributes("-topmost", True)
+            except tk.TclError:
+                pass
+
+            canvas = tk.Canvas(overlay,bg=transparent,highlightthickness=0,bd=0,relief="flat",)
+            canvas.pack(fill="both", expand=True)
+            if os.name == "nt":
+                try:
+                    import ctypes
+                    ctypes.windll.user32.EnableWindow(int(overlay.winfo_id()), False)
+                except Exception:
+                    pass
+
+            self._drag_overlay = overlay
+            self._drag_canvas = canvas
+
+            def _cleanup(*_):
+                self._drag_overlay = None
+                self._drag_canvas = None
+                self._drag_rect = None
+                self._drag_text = None
+                self._drag_ghost_w = 0
+                self._drag_ghost_h = 0
+
+            overlay.bind("<Destroy>", _cleanup, add="+")
+        except tk.TclError:
+            self._drag_overlay = None
+            self._drag_canvas = None
+
+    def _position_drag_overlay(self):
+        overlay = self._drag_overlay
+        if overlay is None or not overlay.winfo_exists():
+            return False
+
+        top = self.winfo_toplevel()
+        top.update_idletasks()
+        x = top.winfo_rootx()
+        y = top.winfo_rooty()
+        w = max(1, top.winfo_width())
+        h = max(1, top.winfo_height())
+        overlay.geometry(f"{w}x{h}+{x}+{y}")
+        return True
+
+    def _show_drag_ghost(self, ti: int, event):
+        canvas = self._drag_canvas
+        overlay = self._drag_overlay
+        if canvas is None or overlay is None:
+            return
+        ox = overlay.winfo_rootx()
+        oy = overlay.winfo_rooty()
+        x = event.x_root - ox + 10
+        y = event.y_root - oy + 10
+
+        if self._drag_rect is None:
+            name = self._parsed["teams"][ti]["name"][:14] or f"Team {ti}"
+            ghost_text = f"  {name}  "
+            font = ("Consolas", 9)
+            self._drag_ghost_w = max(48, len(ghost_text) * 7 + 16)
+            self._drag_ghost_h = 25
+            pad_x, pad_y = 6, 3
+            self._drag_rect = canvas.create_rectangle(x, y,x + self._drag_ghost_w, y + self._drag_ghost_h,fill="#c8dff7", outline="#6f8fad", width=1,)
+            self._drag_text = canvas.create_text(x + pad_x, y + pad_y,text=ghost_text, anchor="nw", fill="#1a3a6b", font=font,)
+            overlay.deiconify()
+            overlay.lift()
+            return
+        canvas.coords(self._drag_rect,x, y,x + self._drag_ghost_w, y + self._drag_ghost_h,)
+        canvas.coords(self._drag_text, x + 6, y + 3)
+
+    def _hide_drag_ghost(self):
+        if self._drag_canvas is not None:
+            try:
+                self._drag_canvas.delete("all")
+            except tk.TclError:
+                pass
+        self._drag_rect = None
+        self._drag_text = None
+        self._drag_ghost_w = 0
+        self._drag_ghost_h = 0
+        if self._drag_overlay is not None:
+            try:
+                self._drag_overlay.withdraw()
+            except tk.TclError:
+                pass
+
+    def _drag_target_at(self, event):
+        top = event.widget.winfo_toplevel()
+        widget = top.winfo_containing(event.x_root, event.y_root)
+        if widget is not None:
+            for idx, btn in self._team_btns.items():
+                if widget is btn:
+                    return idx
+        x, y = event.x_root, event.y_root
+        for idx, btn in self._team_btns.items():
+            bx, by = btn.winfo_rootx(), btn.winfo_rooty()
+            if bx <= x < bx + btn.winfo_width() and by <= y < by + btn.winfo_height():
+                return idx
+        return None
+
+    def _restore_team_button(self, ti: int):
+        btn = self._team_btns.get(ti)
+        if not btn:
+            return
+        li = self._league_of(ti)
+        sel = (ti == self._cur_team)
+        btn.config(relief="sunken" if sel else "flat",bg=LEAGUE_BTN_ACTIVE[li] if sel else LEAGUE_BTN_COLORS[li],fg="white",)
+
     def _btn_press(self, ti: int, event):
         self._drag_src = ti
+        self._drag_target = None
         self._drag_moved = False
+
+        self._build_drag_overlay()
+        self._position_drag_overlay()
 
     def _btn_motion(self, ti: int, event):
         if self._drag_src != ti:
             return
+
         self._drag_moved = True
         btn = self._team_btns.get(ti)
         if btn:
             btn.config(relief="groove", bg="#b0c8e8", fg="#1a3a6b")
-        x = event.widget.winfo_rootx() + event.x
-        y = event.widget.winfo_rooty() + event.y
-        name = self._parsed["teams"][ti]["name"][:14] or f"Team {ti}"
-        self._ghost.config(text=f"  {name}  ")
-        self._ghost.place(x=x - self._ghost.winfo_toplevel().winfo_rootx() + 10, y=y - self._ghost.winfo_toplevel().winfo_rooty() + 10)
-        self._ghost.lift()
+
+        target = self._drag_target_at(event)
+        if target == ti:
+            target = None
+
+        if target != self._drag_target:
+            if self._drag_target is not None:
+                self._restore_team_button(self._drag_target)
+
+            self._drag_target = target
+            if target is not None:
+                target_btn = self._team_btns.get(target)
+                if target_btn:
+                    target_btn.config(relief="groove", bg="#d9e8f5", fg="#1a3a6b")
+
+        self._show_drag_ghost(ti, event)
 
     def _btn_release(self, ti: int, event):
         if self._drag_src != ti:
             return
+
         src = self._drag_src
+        target = self._drag_target if self._drag_moved else None
+
         self._drag_src = None
-        self._ghost.place_forget()
-        b = self._team_btns.get(src)
-        if b:
-            li = self._league_of(src)
-            sel = (src == self._cur_team)
-            b.config(relief="sunken" if sel else "flat", bg=LEAGUE_BTN_ACTIVE[li] if sel else LEAGUE_BTN_COLORS[li], fg="white")
+        self._drag_target = None
+        self._hide_drag_ghost()
+
+        self._restore_team_button(src)
+        if target is not None and target != src:
+            self._restore_team_button(target)
+
         if not self._drag_moved:
             self._show_team(ti)
             self._drag_moved = False
             return
-        x = event.widget.winfo_rootx() + event.x
-        y = event.widget.winfo_rooty() + event.y
-        target = None
-        for idx, btn in self._team_btns.items():
-            bx, by = btn.winfo_rootx(), btn.winfo_rooty()
-            if bx <= x <= bx + btn.winfo_width() and by <= y <= by + btn.winfo_height():
-                target = idx
-                break
+
         if target is not None and target != src:
             self._swap_teams(src, target)
         self._drag_moved = False
@@ -728,7 +855,7 @@ class _LeagueTab(ttk.Frame):
         ttk.Label(rows_f, text="POINTS", width=LABEL_W, anchor="e", foreground=MUTED, font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="e", padx=(0, 4), pady=3)
         w["pts"] = []
         def _pts_conc_from_scored(scored: int) -> int:
-            total = self._pts_total_for_rule()
+            total = self._pts_max_for_rule()
             return 0 if scored == 0 else max(0, total - scored)
         def _update_pts_conc(*_, _ti=ti):
             scored = w["pts"][0].get_int() if w.get("pts") else 0
@@ -798,7 +925,7 @@ class _LeagueTab(ttk.Frame):
         t["rank"] = w["rank"].get_int()
         t["ctf"] = [fe.get_int() for fe in w["ctf"]]
         p0 = w["pts"][0].get_int()
-        total = self._pts_total_for_rule()
+        total = self._pts_max_for_rule()
         p1 = 0 if p0 == 0 else max(0, total - p0)
         t["pts"] = [p0, p1]
         g0, g1 = w["gls"][0].get_int(), w["gls"][1].get_int()
@@ -992,6 +1119,36 @@ class _UefaTab(ttk.Frame):
                 ctf_fes.append(fe)
             self._entries.append((name_var, ctf_fes))
 
+def _apply_ttk_style(widget):
+    s = ttk.Style(widget)
+    try:
+        s.theme_use("clam")
+    except Exception:
+        pass
+    s.configure("TFrame", background=BG)
+    s.configure("TLabel", background=BG, foreground=FG, font=("Segoe UI", 10))
+    s.configure("TLabelframe", background=BG, foreground=FG, font=("Segoe UI", 10, "bold"))
+    s.configure("TLabelframe.Label", background=BG, foreground=FG)
+    s.configure("TButton", font=("Segoe UI", 9, "bold"), padding=5, background=ACCENT, foreground="white", borderwidth=0)
+    s.map("TButton", background=[("active", "#2980B9"), ("disabled", "#BDC3C7")])
+    s.configure("TNotebook", background=BG, tabmargins=[2, 4, 0, 0])
+    s.configure("TNotebook.Tab", font=("Segoe UI", 8), padding=(8, 3), foreground="#aaaaaa", background="#d0d4d8")
+    s.map("TNotebook.Tab", font=[("selected", ("Segoe UI", 13, "bold"))], padding=[("selected", (22, 9))], foreground=[("selected", FG)], background=[("selected", "white")])
+    s.configure("TEntry", fieldbackground="white")
+    s.configure("TCombobox", fieldbackground="white")
+
+
+def _rebuild_notebook_tabs(nb, parsed: dict, filepath: str, on_dirty, league_tab_ref: list, uefa_tab_ref: list):
+    for tab in nb.tabs():
+        nb.forget(tab)
+    league_tab = _LeagueTab(nb, parsed, filepath=filepath, on_dirty=on_dirty)
+    nb.add(league_tab, text="  LEAGUE  ")
+    uefa_tab = _UefaTab(nb, parsed, on_dirty=on_dirty)
+    nb.add(uefa_tab, text="  UEFA  ")
+    league_tab_ref[0] = league_tab
+    uefa_tab_ref[0] = uefa_tab
+
+
 class ManaEditorWindow(tk.Toplevel):
     def __init__(self, parent=None, filepath: str = ""):
         super().__init__(parent)
@@ -1005,27 +1162,11 @@ class ManaEditorWindow(tk.Toplevel):
         self._dirty = False
         self._league_tab: _LeagueTab | None = None
         self._uefa_tab: _UefaTab | None = None
-        self._apply_style()
+        _apply_ttk_style(self)
         self._build_ui()
         if filepath:
             self._load(filepath)
-    def _apply_style(self):
-        s = ttk.Style(self)
-        try:
-            s.theme_use("clam")
-        except Exception:
-            pass
-        s.configure("TFrame", background=BG)
-        s.configure("TLabel", background=BG, foreground=FG, font=("Segoe UI", 10))
-        s.configure("TLabelframe", background=BG, foreground=FG, font=("Segoe UI", 10, "bold"))
-        s.configure("TLabelframe.Label", background=BG, foreground=FG)
-        s.configure("TButton", font=("Segoe UI", 9, "bold"), padding=5, background=ACCENT, foreground="white", borderwidth=0)
-        s.map("TButton", background=[("active", "#2980B9"), ("disabled", "#BDC3C7")])
-        s.configure("TNotebook", background=BG, tabmargins=[2, 4, 0, 0])
-        s.configure("TNotebook.Tab", font=("Segoe UI", 8), padding=(8, 3), foreground="#aaaaaa", background="#d0d4d8")
-        s.map("TNotebook.Tab", font=[("selected", ("Segoe UI", 13, "bold"))], padding=[("selected", (22, 9))], foreground=[("selected", FG)], background=[("selected", "white")])
-        s.configure("TEntry", fieldbackground="white")
-        s.configure("TCombobox", fieldbackground="white")
+
     def _build_ui(self):
         top = ttk.Frame(self, padding=(12, 8, 12, 4))
         top.pack(fill="x")
@@ -1038,29 +1179,32 @@ class ManaEditorWindow(tk.Toplevel):
         ttk.Separator(self, orient="horizontal").pack(fill="x")
         self._nb = ttk.Notebook(self)
         self._nb.pack(fill="both", expand=True, padx=6, pady=6)
+
     def _rebuild_tabs(self):
-        for tab in self._nb.tabs():
-            self._nb.forget(tab)
-        self._league_tab = _LeagueTab(self._nb, self._parsed, filepath=self._filepath, on_dirty=self._mark_dirty)
-        self._nb.add(self._league_tab, text="  LEAGUE  ")
-        self._uefa_tab = _UefaTab(self._nb, self._parsed, on_dirty=self._mark_dirty)
-        self._nb.add(self._uefa_tab, text="  UEFA  ")
+        lt, ut = [None], [None]
+        _rebuild_notebook_tabs(self._nb, self._parsed, self._filepath, self._mark_dirty, lt, ut)
+        self._league_tab, self._uefa_tab = lt[0], ut[0]
+
     def _mark_dirty(self):
         self._dirty = True
         self._dirty_lbl.config(text="⚠ Unsaved changes")
+
     def _clear_dirty(self):
         self._dirty = False
         self._dirty_lbl.config(text="")
+
     def _confirm_discard(self) -> bool:
         if not self._dirty:
             return True
         return messagebox.askyesno("Unsaved changes", "There are unsaved changes.\nContinue without saving?", parent=self)
+
     def cmd_open(self):
         if not self._confirm_discard():
             return
         path = filedialog.askopenfilename(parent=self, title="Open MANA.DAT", filetypes=[("MANA data", "*.DAT *.dat"), ("All files", "*.*")])
         if path:
             self._load(path)
+
     def _load(self, path: str):
         try:
             with open(path, "rb") as fh:
@@ -1076,14 +1220,23 @@ class ManaEditorWindow(tk.Toplevel):
         self._rebuild_tabs()
         abspath = os.path.abspath(path)
         self._file_lbl.config(text=f"{abspath} ({len(raw):,} bytes)")
+
     def cmd_save(self):
         if not self._filepath or not self._original:
             return self.cmd_save_as()
         self._do_save(self._filepath)
+
     def cmd_save_as(self):
-        path = filedialog.asksaveasfilename(parent=self, title="Save MANA.DAT as…", defaultextension=".DAT", filetypes=[("MANA data", "*.DAT *.dat"), ("All files", "*.*")])
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Save MANA.DAT as…",
+            defaultextension=".DAT",
+            filetypes=[("MANA data", "*.DAT *.dat"), ("All files", "*.*")],
+            initialfile=os.path.basename(self._filepath) if self._filepath else "",
+            initialdir=os.path.dirname(self._filepath) if self._filepath else "",)
         if path:
             self._do_save(path)
+
     def _do_save(self, path: str):
         if not self._original:
             messagebox.showwarning("No file", "No file loaded.", parent=self)
@@ -1097,18 +1250,12 @@ class ManaEditorWindow(tk.Toplevel):
             self._clear_dirty()
             abspath = os.path.abspath(path)
             self._file_lbl.config(text=f"{abspath} ({len(new_bytes):,} bytes)")
-            messagebox.showinfo(
-                "MANA.DAT Saved",
-                f"File saved successfully:\n{abspath}",
-                parent=self,
-            )
+            messagebox.showinfo("MANA.DAT Saved",f"File saved successfully:\n{abspath}",parent=self,)
         except Exception as exc:
             messagebox.showerror("Save error", str(exc), parent=self)
 
 
 class ManaEditorPanel(ttk.Frame):
-    pass
-
     def __init__(self, parent, **kw):
         super().__init__(parent, **kw)
         self._filepath: str = ""
@@ -1117,26 +1264,8 @@ class ManaEditorPanel(ttk.Frame):
         self._dirty = False
         self._league_tab: _LeagueTab | None = None
         self._uefa_tab: _UefaTab | None = None
-        self._apply_style()
+        _apply_ttk_style(self)
         self._build_ui()
-
-    def _apply_style(self):
-        s = ttk.Style(self)
-        try:
-            s.theme_use("clam")
-        except Exception:
-            pass
-        s.configure("TFrame", background=BG)
-        s.configure("TLabel", background=BG, foreground=FG, font=("Segoe UI", 10))
-        s.configure("TLabelframe", background=BG, foreground=FG, font=("Segoe UI", 10, "bold"))
-        s.configure("TLabelframe.Label", background=BG, foreground=FG)
-        s.configure("TButton", font=("Segoe UI", 9, "bold"), padding=5,background=ACCENT, foreground="white", borderwidth=0)
-        s.map("TButton",background=[("active", "#2980B9"), ("disabled", "#BDC3C7")])
-        s.configure("TNotebook", background=BG, tabmargins=[2, 4, 0, 0])
-        s.configure("TNotebook.Tab", font=("Segoe UI", 8), padding=(8, 3),foreground="#aaaaaa", background="#d0d4d8")
-        s.map("TNotebook.Tab",font=[("selected", ("Segoe UI", 13, "bold"))],padding=[("selected", (22, 9))],foreground=[("selected", FG)],background=[("selected", "white")])
-        s.configure("TEntry", fieldbackground="white")
-        s.configure("TCombobox", fieldbackground="white")
 
     def _build_ui(self):
         status_bar = ttk.Frame(self, padding=(12, 4, 12, 2))
@@ -1199,7 +1328,8 @@ class ManaEditorPanel(ttk.Frame):
             title="Save MANA.DAT as…",
             defaultextension=".DAT",
             filetypes=[("MANA data", "*.DAT *.dat"), ("All files", "*.*")],
-        )
+            initialfile=os.path.basename(self._filepath) if self._filepath else "",
+            initialdir=os.path.dirname(self._filepath) if self._filepath else "",)
         if path:
             self._do_save(path)
 
@@ -1220,12 +1350,9 @@ class ManaEditorPanel(ttk.Frame):
         self._dirty = False
 
     def _rebuild_tabs(self):
-        for tab in self._nb.tabs():
-            self._nb.forget(tab)
-        self._league_tab = _LeagueTab(self._nb, self._parsed,filepath=self._filepath,on_dirty=self._mark_dirty,)
-        self._nb.add(self._league_tab, text="  LEAGUE  ")
-        self._uefa_tab = _UefaTab(self._nb, self._parsed,on_dirty=self._mark_dirty,)
-        self._nb.add(self._uefa_tab, text="  UEFA  ")
+        lt, ut = [None], [None]
+        _rebuild_notebook_tabs(self._nb, self._parsed, self._filepath, self._mark_dirty, lt, ut)
+        self._league_tab, self._uefa_tab = lt[0], ut[0]
 
     def _mark_dirty(self):
         self._dirty = True
