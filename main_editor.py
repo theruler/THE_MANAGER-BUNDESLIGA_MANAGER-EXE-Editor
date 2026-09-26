@@ -47,7 +47,7 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.8.12"
+APP_VERSION = "2.8.13"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -308,7 +308,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 self.notebook.tab(tab, text=self.tr(key))
             except tk.TclError:
                 pass
-        for name, key in (("num", "col.num"), ("offset", "col.offset"), ("text", "col.text")):
+        for name, key in (("num", "col.num"), ("offset", "col.offset"), ("pointer", "preview.col.pointers"), ("text", "col.text")):
             try:
                 self.tree.heading(name, text=self.tr(key))
             except tk.TclError:
@@ -426,13 +426,15 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         main_frame.pack(fill=tk.BOTH, expand=True)
         table_container = ttk.Frame(main_frame)
         table_container.pack(fill=tk.BOTH, expand=True)
-        self.tree = ttk.Treeview(table_container, columns=("num", "offset", "text"), show="headings", selectmode="browse")
-        self.tree.heading("num",    text=self.tr("col.num"))
-        self.tree.heading("offset", text=self.tr("col.offset"))
-        self.tree.heading("text",   text=self.tr("col.text"))
-        self.tree.column("num",    anchor=tk.CENTER, width=30,  stretch=False)
-        self.tree.column("offset", anchor=tk.CENTER, width=60, stretch=False)
-        self.tree.column("text",   anchor=tk.W,      stretch=True)
+        self.tree = ttk.Treeview(table_container, columns=("num", "offset", "pointer", "text"), show="headings", selectmode="browse")
+        self.tree.heading("num",     text=self.tr("col.num"))
+        self.tree.heading("offset",  text=self.tr("col.offset"))
+        self.tree.heading("pointer", text=self.tr("preview.col.pointers"))
+        self.tree.heading("text",    text=self.tr("col.text"))
+        self.tree.column("num",     anchor=tk.CENTER, width=30,  stretch=False)
+        self.tree.column("offset",  anchor=tk.CENTER, width=75, stretch=False)
+        self.tree.column("pointer", anchor=tk.CENTER, width=75, stretch=False)
+        self.tree.column("text",    anchor=tk.W,      stretch=True)
         v_scrollbar = ttk.Scrollbar(table_container, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscroll=v_scrollbar.set)
         v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1316,11 +1318,19 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             visible = ()
 
         self.tree.delete(*self.tree.get_children())
-        self.visible_string_ids = list(visible)
+
+        def _first_ptr(sid):
+            e = self.entries[self.entry_index_by_id[sid]]
+            addrs = e.get("ptr_addrs") or e.get("code_ptr_addrs") or []
+            return addrs[0] if addrs else 0xFFFFFFFF 
+        
+        self.visible_string_ids = sorted(visible, key=_first_ptr)
         for string_id in self.visible_string_ids:
             index = self.entry_index_by_id[string_id]
             entry = self.entries[index]
-            self.tree.insert("",tk.END,iid=string_id,values=(index + 1, hex(entry["str_addr"]), self._decode_entry_text(entry)),)
+            ptr_addrs = entry.get("ptr_addrs") or entry.get("code_ptr_addrs") or []
+            first_ptr = hex(ptr_addrs[0]) if ptr_addrs else ""
+            self.tree.insert("", tk.END, iid=string_id, values=(index + 1, hex(entry["str_addr"]), first_ptr, self._decode_entry_text(entry)),)
         total, shown = len(self.entries), len(self.visible_string_ids)
         self._set_counter(shown, total)
         if self.filter_index_error:
