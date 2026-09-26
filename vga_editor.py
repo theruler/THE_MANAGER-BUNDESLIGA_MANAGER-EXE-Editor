@@ -4,7 +4,7 @@ import re
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, colorchooser
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw
 
 def _hex_palette(s: str, scale: int = 1) -> list[tuple[int, int, int]]:
     return [
@@ -263,8 +263,8 @@ class _ImageCanvas(tk.Frame):
         view = tk.Frame(self, bg="#1a1a2e")
         view.pack(fill=tk.BOTH, expand=True)
         self._canvas = tk.Canvas(view, bg="#1a1a2e", cursor="crosshair", highlightthickness=0, xscrollincrement=1, yscrollincrement=1)
-        self._vbar = ttk.Scrollbar(view, orient=tk.VERTICAL, command=self._canvas.yview)
-        self._hbar = ttk.Scrollbar(view, orient=tk.HORIZONTAL, command=self._canvas.xview)
+        self._vbar = ttk.Scrollbar(view, orient=tk.VERTICAL, command=self._yview_and_redraw)
+        self._hbar = ttk.Scrollbar(view, orient=tk.HORIZONTAL, command=self._xview_and_redraw)
         self._canvas.configure(xscrollcommand=self._hbar.set, yscrollcommand=self._vbar.set)
         self._canvas.grid(row=0, column=0, sticky="nsew")
         self._vbar.grid(row=0, column=1, sticky="ns")
@@ -291,6 +291,27 @@ class _ImageCanvas(tk.Frame):
         self._canvas.bind("<Button-5>", self._on_mousewheel_zoom)
         self._zoom_changed_callback = None
 
+    def _yview_and_redraw(self, *args):
+        self._canvas.yview(*args)
+        self._redraw()
+
+    def _xview_and_redraw(self, *args):
+        self._canvas.xview(*args)
+        self._redraw()
+
+    def _rescroll_for_zoom(self, anchor_ix: float, anchor_iy: float,screen_x: float, screen_y: float, new_zoom: int):
+        if self._img is None:
+            return
+        iw, ih = self._img.size
+        new_dw, new_dh = iw * new_zoom, ih * new_zoom
+        self._canvas.configure(scrollregion=(0, 0, new_dw + 2, new_dh + 2))
+        left = anchor_ix * new_zoom - screen_x
+        top = anchor_iy * new_zoom - screen_y
+        if new_dw > 0:
+            self._canvas.xview_moveto(max(0.0, left) / (new_dw + 2))
+        if new_dh > 0:
+            self._canvas.yview_moveto(max(0.0, top) / (new_dh + 2))
+
     def _on_mousewheel_zoom(self, event):
         old_zoom = self._zoom
         if getattr(event, 'num', None) == 4 or (hasattr(event, 'delta') and event.delta > 0):
@@ -303,32 +324,26 @@ class _ImageCanvas(tk.Frame):
         if new_zoom == old_zoom:
             return "break"
 
-        canvas_x = self._canvas.canvasx(event.x)
-        canvas_y = self._canvas.canvasy(event.y)
-        img_x = canvas_x / old_zoom
-        img_y = canvas_y / old_zoom
+        img_x = self._canvas.canvasx(event.x) / old_zoom
+        img_y = self._canvas.canvasy(event.y) / old_zoom
         self._zoom = new_zoom
+        self._rescroll_for_zoom(img_x, img_y, event.x, event.y, new_zoom)
         self._redraw()
-        new_canvas_x = img_x * new_zoom
-        new_canvas_y = img_y * new_zoom
-        left = new_canvas_x - event.x
-        top = new_canvas_y - event.y
-        region = self._canvas.cget("scrollregion")
-        if region:
-            parts = region.split()
-            if len(parts) == 4:
-                _, _, x2, y2 = map(float, parts)
-                if x2 > 0:
-                    self._canvas.xview_moveto(left / x2)
-                if y2 > 0:
-                    self._canvas.yview_moveto(top / y2)
         if self._zoom_changed_callback:
             self._zoom_changed_callback(new_zoom)
         return "break"
 
     def set_palette(self, palette: list[tuple[int, int, int]]):
         self._palette = list(palette)
+        self._flat_palette_cache = None
         self._redraw()
+
+    def _flat_palette(self) -> list[int]:
+        cache = getattr(self, "_flat_palette_cache", None)
+        if cache is None:
+            cache = _palette_to_flat_rgb(self._palette)
+            self._flat_palette_cache = cache
+        return cache
 
     def set_image(self, img: Image.Image):
         self._commit_paste()
@@ -392,7 +407,15 @@ class _ImageCanvas(tk.Frame):
         self._draw_color = rgba
 
     def set_zoom(self, z: int):
+        old_zoom = self._zoom
+        if z == old_zoom:
+            return
+        anchor_ix, anchor_iy = 0, 0
+        if self._img is not None and old_zoom > 0:
+            anchor_ix = max(0, int(self._canvas.canvasx(0))) / old_zoom
+            anchor_iy = max(0, int(self._canvas.canvasy(0))) / old_zoom
         self._zoom = z
+        self._rescroll_for_zoom(anchor_ix, anchor_iy, 0, 0, z)
         self._redraw()
 
     def set_show_grid(self, v: bool):
@@ -512,8 +535,9 @@ class _ImageCanvas(tk.Frame):
         self._notify_modified()
 
     def _display_image(self) -> Image.Image:
+        flat_pal = self._flat_palette()
         img = self._img.copy()
-        img.putpalette(_palette_to_flat_rgb(self._palette))
+        img.putpalette(flat_pal)
         if self._paste_buf is not None:
             iw, ih = img.size
             px, py = self._paste_pos
@@ -526,14 +550,29 @@ class _ImageCanvas(tk.Frame):
             dst_y = max(0, py)
             if src_x1 > src_x0 and src_y1 > src_y0:
                 paste = self._paste_buf.crop((src_x0, src_y0, src_x1, src_y1))
-                paste.putpalette(_palette_to_flat_rgb(self._palette))
+                paste.putpalette(flat_pal)
                 img.paste(paste, (dst_x, dst_y))
         return img
 
+    def _with_grid_overlay(self, scaled: Image.Image, iw: int, ih: int, z: int,offset: tuple[int, int] = (0, 0)) -> Image.Image:
+        dw, dh = iw * z, ih * z
+        ox, oy = offset
+        grid_rgb = (51, 51, 51)
+        x_start = (-ox) % z
+        y_start = (-oy) % z
+        scaled = scaled.convert("RGB")
+        draw = ImageDraw.Draw(scaled)
+        for x in range(x_start, dw, z):
+            draw.line((x, 0, x, dh - 1), fill=grid_rgb, width=1)
+        for y in range(y_start, dh, z):
+            draw.line((0, y, dw - 1, y), fill=grid_rgb, width=1)
+        return scaled
+
     def _redraw(self):
         c = self._canvas
-        c.delete("all")
         if self._img is None:
+            c.delete("all")
+            self._tk_img = None
             c.configure(scrollregion=(0, 0, c.winfo_width(), c.winfo_height()))
             c.create_text(
                 c.winfo_width() // 2 or 200,
@@ -541,37 +580,59 @@ class _ImageCanvas(tk.Frame):
                 text="No image loaded",
                 fill="#555",
                 font=("Segoe UI", 12, "italic"),
+                tags="placeholder",
             )
             return
-
+        c.delete("selection", "paste")
+        if c.find_withtag("placeholder"):
+            c.delete("placeholder")
         iw, ih = self._img.size
         z = self._zoom
         dw, dh = iw * z, ih * z
-        self._tk_img = ImageTk.PhotoImage(self._display_image().resize((dw, dh), Image.NEAREST))
-        c.create_image(0, 0, anchor="nw", image=self._tk_img, tags="image")
+        c.configure(scrollregion=(0, 0, dw + 2, dh + 2))
+        avail_w, avail_h = self._update_scrollbars(dw, dh)
+        vx0 = max(0, int(c.canvasx(0)))
+        vy0 = max(0, int(c.canvasy(0)))
+        view_w = max(1, avail_w)
+        view_h = max(1, avail_h)
+        vx1 = min(dw, vx0 + view_w)
+        vy1 = min(dh, vy0 + view_h)
+        margin = z * 2
+        vx0 = max(0, vx0 - margin)
+        vy0 = max(0, vy0 - margin)
+        vx1 = min(dw, vx1 + margin)
+        vy1 = min(dh, vy1 + margin)
 
-        if self._show_grid and z >= 4:
-            for px in range(iw + 1):
-                x = px * z
-                c.create_line(x, 0, x, dh, fill="#333", width=1, tags="grid")
-            for py in range(ih + 1):
-                y = py * z
-                c.create_line(0, y, dw, y, fill="#333", width=1, tags="grid")
+        if vx1 <= vx0 or vy1 <= vy0:
+            c.delete("image")
+            self._tk_img = None
+        else:
+            ix0, iy0 = vx0 // z, vy0 // z
+            ix1 = min(iw, -(-vx1 // z))
+            iy1 = min(ih, -(-vy1 // z))
+            src = self._display_image().crop((ix0, iy0, ix1, iy1))
+            crop_dw = (ix1 - ix0) * z
+            crop_dh = (iy1 - iy0) * z
+            scaled = src.resize((crop_dw, crop_dh), Image.NEAREST)
+            if self._show_grid and z >= 4:
+                scaled = self._with_grid_overlay(scaled, ix1 - ix0, iy1 - iy0, z, offset=(ix0 * z, iy0 * z))
+            self._tk_img = ImageTk.PhotoImage(scaled)
+            existing = c.find_withtag("image")
+            if existing:
+                c.itemconfigure(existing[0], image=self._tk_img)
+                c.coords(existing[0], ix0 * z, iy0 * z)
+            else:
+                c.create_image(ix0 * z, iy0 * z, anchor="nw", image=self._tk_img, tags="image")
+            c.tag_lower("image")
 
         if self._sel is not None:
             x0, y0, x1, y1 = self._normalised_sel()
-            c.create_rectangle(
-                x0 * z, y0 * z, x1 * z, y1 * z,
-                outline=SEL_COLOR, width=2, dash=(4, 2), tags="selection"
-            )
+            c.create_rectangle(x0 * z, y0 * z, x1 * z, y1 * z,outline=SEL_COLOR, width=2, dash=(4, 2), tags="selection")
 
         if self._paste_buf is not None:
             px0, py0 = self._paste_pos
             pw, ph = self._paste_buf.size
-            c.create_rectangle(
-                px0 * z, py0 * z, (px0 + pw) * z, (py0 + ph) * z,
-                outline="#FFD700", width=2, dash=(4, 2), tags="paste"
-            )
+            c.create_rectangle(px0 * z, py0 * z, (px0 + pw) * z, (py0 + ph) * z,outline="#FFD700", width=2, dash=(4, 2), tags="paste")
             r = self._HANDLE_R
             for hx, hy in (
                 (px0 * z,        py0 * z),
@@ -579,20 +640,14 @@ class _ImageCanvas(tk.Frame):
                 (px0 * z,        (py0 + ph) * z),
                 ((px0 + pw) * z, (py0 + ph) * z),
             ):
-                c.create_rectangle(
-                    hx - r, hy - r, hx + r, hy + r,
-                    fill="#FFD700", outline="#000", width=1, tags="paste"
-                )
-
+                c.create_rectangle(hx - r, hy - r, hx + r, hy + r,fill="#FFD700", outline="#000", width=1, tags="paste")
         c.configure(scrollregion=(0, 0, dw + 2, dh + 2))
-        self._update_scrollbars(dw, dh)
 
-    def _update_scrollbars(self, dw: int, dh: int):
+    def _update_scrollbars(self, dw: int, dh: int) -> tuple[int, int]:
         base_w = max(1, self._view.winfo_width())
         base_h = max(1, self._view.winfo_height())
         v_w = max(1, self._vbar.winfo_reqwidth())
         h_h = max(1, self._hbar.winfo_reqheight())
-
         show_h = False
         show_v = False
         for _ in range(4):
@@ -603,7 +658,6 @@ class _ImageCanvas(tk.Frame):
             if (new_h, new_v) == (show_h, show_v):
                 break
             show_h, show_v = new_h, new_v
-
         if show_v:
             self._vbar.grid(row=0, column=1, sticky="ns")
         else:
@@ -616,12 +670,14 @@ class _ImageCanvas(tk.Frame):
             self._corner.grid(row=1, column=1, sticky="nsew")
         else:
             self._corner.grid_remove()
-
         self._canvas.grid(row=0, column=0, sticky="nsew")
         self._canvas.configure(
             xscrollcommand=self._hbar.set if show_h else lambda *args: None,
             yscrollcommand=self._vbar.set if show_v else lambda *args: None,
         )
+        final_avail_w = base_w - (v_w if show_v else 0)
+        final_avail_h = base_h - (h_h if show_h else 0)
+        return max(1, final_avail_w), max(1, final_avail_h)
 
     _HANDLE_R = 5
 
@@ -747,6 +803,7 @@ class _ImageCanvas(tk.Frame):
         if self._tool == TOOL_HAND:
             if self._pan_start is not None:
                 self._canvas.scan_dragto(event.x, event.y, gain=1)
+                self._redraw()
             return
 
         pt = self._canvas_to_pixel(event.x, event.y)
