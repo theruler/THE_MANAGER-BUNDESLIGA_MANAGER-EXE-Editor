@@ -429,15 +429,24 @@ class _MatchFlagMixin:
         first_color = 0 if self.exe_data[detect_offset] == 0x2A else self.exe_data[color_offsets[0]]
         return [first_color, self.exe_data[color_offsets[1]], self.exe_data[color_offsets[2]]]
 
+    def _get_font_color_offsets(self, mf):
+        """Return a list of all font color offsets from the profile (supports singular and plural key)."""
+        raw = mf.get("font_color_offsets") or mf.get("font_color_offset")
+        if raw is None:
+            return []
+        return list(raw) if not isinstance(raw, int) else [raw]
+
     def _detect_flag_font_color(self):
         mf = self._match_flag_config()
         if mf is None or not self._flag_offsets_valid():
             return 0
-        offset = mf.get("font_color_offset")
-        if not isinstance(offset, int) or not (0 <= offset < len(self.exe_data)):
+        offsets = self._get_font_color_offsets(mf)
+        first = next((o for o in offsets if isinstance(o, int) and 0 <= o < len(self.exe_data)), None)
+        if first is None:
             return 0
-        value = self.exe_data[offset]
+        value = self.exe_data[first]
         return value if 0 <= value < len(_PAL_NORMAL20) else 0
+
 
     def _sync_flag_widget(self):
         if not hasattr(self, "flag_container"):
@@ -504,12 +513,17 @@ class _MatchFlagMixin:
         mf = self._match_flag_config()
 
         if band_index == "title":
-            font_color_offset = mf.get("font_color_offset")
-            if not isinstance(font_color_offset, int):
+            offsets = self._get_font_color_offsets(mf)
+            written = False
+            for font_color_offset in offsets:
+                if not isinstance(font_color_offset, int):
+                    continue
+                if not 0 <= font_color_offset < len(self.exe_data):
+                    continue
+                self.exe_data[font_color_offset] = pal_index
+                written = True
+            if not written:
                 return
-            if not 0 <= font_color_offset < len(self.exe_data):
-                return
-            self.exe_data[font_color_offset] = pal_index
             self._flag_font_color = pal_index
         else:
             color_offsets = tuple(mf["color_offsets"])

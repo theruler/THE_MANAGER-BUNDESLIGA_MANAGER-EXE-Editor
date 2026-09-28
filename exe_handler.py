@@ -92,7 +92,7 @@ GAME_PROFILES = {
             "detect_offset": 0x9f10,
             "color_offsets": (0x9f11, 0x9f37, 0x9f60),
             "band_offsets": (0x9f13, 0x9f39, 0x9f62),
-            "font_color_offset": 0x9fb4,
+            "font_color_offsets": (0x9fb4,0x2104b,0x21159,0x21102,0x21093, 0xd3eb, 0xd444, 0xd479, 0xd4ac, 0xd754, 0xd789, 0xd7d5, 0xd80a, 0xd8bb),
             "types": MATCH_FLAG_TYPES,
         },
         "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},

@@ -440,9 +440,18 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
+        self.tree.bind("<Button-3>", self._on_tree_right_click)
+        self._tree_context_menu = tk.Menu(self.root, tearoff=0)
         edit_frame = ttk.LabelFrame(self.tab_strings, padding=15)
-        self._reg(edit_frame, "edit.frame")
+        _lf_header = ttk.Frame(edit_frame)
+        self._edit_frame_title = ttk.Label(_lf_header,text=self.tr("edit.frame"),font=("Segoe UI", 10, "bold"),foreground="#2C3E50",)
+        self._edit_frame_title.pack(side=tk.LEFT)
+        self._copied_label = ttk.Label(_lf_header,text="",font=("Segoe UI", 9, "bold"),foreground="#27AE60",)
+        self._copied_label.pack(side=tk.LEFT, padx=(6, 0))
+        edit_frame.config(labelwidget=_lf_header)
+        self._i18n_widgets.append((self._edit_frame_title, "edit.frame"))
         edit_frame.pack(fill=tk.X, padx=15, pady=(5, 12))
+        self._copied_after_id = None
         self.edit_text = self._make_text_widget(edit_frame)
         self.edit_text.bind("<KeyRelease>", self.on_text_modified)
         self.edit_text.bind("<Return>",         lambda e: [self.apply_edit(), "break"][1])
@@ -575,7 +584,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.teams_combo.bind("<Return>", self._commit_teams)
         self.teams_combo.bind("<KP_Enter>", self._commit_teams)
         self.teams_combo.bind("<FocusOut>", self._commit_teams)
-        self._wdl_char_values = [bytes([i]).decode("cp437") for i in range(0x20, 0x100)]
+        self._wdl_char_values = [bytes([i]).decode("cp437") for i in range(0x20, 0x7e)]
         self.flag_container = ttk.Frame(settings_frame)
         flag_title_row = ttk.Frame(self.flag_container)
         flag_title_row.pack(fill=tk.X, anchor="w", pady=(0, 2))
@@ -1329,8 +1338,15 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             index = self.entry_index_by_id[string_id]
             entry = self.entries[index]
             ptr_addrs = entry.get("ptr_addrs") or entry.get("code_ptr_addrs") or []
-            first_ptr = hex(ptr_addrs[0]) if ptr_addrs else ""
-            self.tree.insert("", tk.END, iid=string_id, values=(index + 1, hex(entry["str_addr"]), first_ptr, self._decode_entry_text(entry)),)
+            if ptr_addrs and len(self.exe_data) >= ptr_addrs[0] + 2:
+                ptr_val = int.from_bytes(self.exe_data[ptr_addrs[0]:ptr_addrs[0] + 2], "little")
+                first_ptr = hex(ptr_val)
+                ds_start = self.profile.get("ds_start", 0) if self.profile else 0
+                ptr_ds_offset = hex(ptr_addrs[0] - ds_start) if ds_start else hex(ptr_addrs[0])
+            else:
+                first_ptr = ""
+                ptr_ds_offset = ""
+            self.tree.insert("", tk.END, iid=string_id, values=(index + 1, ptr_ds_offset, first_ptr, self._decode_entry_text(entry)),)
         total, shown = len(self.entries), len(self.visible_string_ids)
         self._set_counter(shown, total)
         if self.filter_index_error:
@@ -2030,8 +2046,11 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             for off in color_offsets:
                 if isinstance(off, int):
                     offsets.append((off, 1))
-            if isinstance(font_color_offset, int):
-                offsets.append((font_color_offset, 1))
+            raw_fc = mf.get("font_color_offsets") or mf.get("font_color_offset")
+            fc_offsets = [raw_fc] if isinstance(raw_fc, int) else list(raw_fc or [])
+            for off in fc_offsets:
+                if isinstance(off, int):
+                    offsets.append((off, 1))
             for patches in type_sets.values():
                 if not isinstance(patches, dict):
                     continue
@@ -2447,6 +2466,29 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                     finally:
                         self._selection_guard = False
                     self._display_entry(first_index)
+
+    def _on_tree_right_click(self, event):
+        row_id = self.tree.identify_row(event.y)
+        col_id = self.tree.identify_column(event.x)
+        if not row_id or not col_id:
+            return
+        col_map = {"#1": "num", "#2": "offset", "#3": "pointer", "#4": "text"}
+        col_name = col_map.get(col_id)
+        if col_name not in ("offset", "pointer", "text"):
+            return
+        values = self.tree.item(row_id, "values")
+        col_index = ("num", "offset", "pointer", "text").index(col_name)
+        try:
+            cell_text = values[col_index]
+        except IndexError:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(cell_text)
+        label_text = self.tr("font.copied")
+        self._copied_label.config(text=label_text)
+        if self._copied_after_id is not None:
+            self.root.after_cancel(self._copied_after_id)
+        self._copied_after_id = self.root.after(2000, lambda: self._copied_label.config(text=""))
 
     def save_exe(self):
         if not self._supported_loaded():
