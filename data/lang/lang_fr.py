@@ -51,13 +51,14 @@ TEXTS_FR = {
     "region.2": "Italie",
     "region.3": "France",
     "region.4": "Angleterre",
-    "header.point": "Points par victoire:",
+    "header.point": "Points par victoire :",
     "header.teams": "Équipes pour la 1re division :",
-    "header.wdl": "Caractères Victoire/Nul/Défaite :",
+    "header.wdl": "Caractères Victoire/Défaite/Nul :",
     "header.match": "Drapeau du match :",
     "header.region.a": "Région A :",
     "header.region.b": "Région B :",
-    
+    "header.subst": "Remplacements max. gardien / équipe :",
+
     # ---- areas
     "tab.strings": "  📝 Chaînes  ",
     "tab.fonts": "  🔤 Éditeur de polices  ",
@@ -294,6 +295,7 @@ TEXTS_FR = {
     "preview.sum.teams": "Équipes pour la 1re division : {value}",
     "preview.sum.wdl": "Caractères Victoire/Nul/Défaite : {value}",
     "preview.sum.match": "Drapeau du match : {value}",
+    "preview.sum.substitutions": "Remplacements max. modifiés : {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "aucune",
@@ -345,7 +347,7 @@ TEXTS_FR = {
     "utils.cfg.save_failed": "Impossible d’enregistrer la configuration : {error}",
 
     # ---- groupes wdl (victoire/nul/défaite)
-    "wdl.awayhome":  "Extérieur - Domicile",
+    "wdl.awayhome":  "Domicile - Extérieur",
     
     # ---- types de drapeaux
     "flag.3v": "3 bandes verticales",

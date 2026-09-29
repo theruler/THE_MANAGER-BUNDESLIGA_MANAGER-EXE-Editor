@@ -52,12 +52,13 @@ TEXTS_EN = {
     "region.3": "France",
     "region.4": "England",
     "header.teams": "Teams for 1st League:",
-    "header.wdl": "Win/Draw/Loss characters:",
+    "header.wdl": "Win/Loss/Draw characters:",
     "header.match": "Match Flag:",
     "header.point": "Points per victory:",
     "header.region.a": "Region A:",
     "header.region.b": "Region B:",
-    
+    "header.subst": "Max substitutions for Goalkeeper / rest of the Team:",
+
     # ---- areas
     "tab.strings": "  📝 Strings  ",
     "tab.fonts": "  🔤 Font Editor  ",
@@ -294,6 +295,7 @@ TEXTS_EN = {
     "preview.sum.teams": "Teams for 1st League: {value}",
     "preview.sum.wdl": "Win/Draw/Loss characters: {value}",
     "preview.sum.match": "Match Flag: {value}",
+    "preview.sum.substitutions": "Max substitutions changed: {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "none",
@@ -345,7 +347,7 @@ TEXTS_EN = {
     "utils.cfg.save_failed": "Could not save config: {error}",
 
     # ---- wdl (win/draw/loss) groups
-    "wdl.awayhome":  "Away - Home",
+    "wdl.awayhome":  "Home - Away",
 
     # ---- flag types
     "flag.3v": "3 vertical bands",

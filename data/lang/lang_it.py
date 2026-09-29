@@ -53,10 +53,11 @@ TEXTS_IT = {
     "region.4": "Inghilterra",
     "header.point": "Punti per vittoria:",
     "header.teams": "Squadre per la Serie A:",
-    "header.wdl": "Caratteri Vittoria/Pareggio/Sconfitta:",
+    "header.wdl": "Caratteri di Vittoria/Sconfitta/Pareggio:",
     "header.match": "Bandiera della partita:",
     "header.region.a": "Regione A:",
     "header.region.b": "Regione B:",
+    "header.subst": "Sostituzioni max. portiere / squadra:",
 
     # ---- areas
     "tab.strings": "  📝 Stringhe  ",
@@ -294,6 +295,7 @@ TEXTS_IT = {
     "preview.sum.teams": "Numero squadre di Serie A: {value}",
     "preview.sum.wdl": "Caratteri per Vittoria/Pareggio/Sconfitta: {value}",
     "preview.sum.match": "Bandiera della partita: {value}",
+    "preview.sum.substitutions": "Sostituzioni max. modificate: {value}",
     
     # ---- preview: shared value words
     "preview.val.none": "nessuno",
@@ -345,7 +347,7 @@ TEXTS_IT = {
     "utils.cfg.save_failed": "Impossibile salvare la configurazione: {error}",
 
     # ---- gruppi wdl (vittoria/pari/sconfitta)
-    "wdl.awayhome":  "Trasferta - Casa",
+    "wdl.awayhome":  "Casa - Trasferta",
 
     # ---- tipi di flag
     "flag.3v": "3 bande verticali",

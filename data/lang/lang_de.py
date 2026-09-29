@@ -53,10 +53,11 @@ TEXTS_DE = {
     "region.4": "England",
     "header.point": "Punkte pro sieg:",
     "header.teams": "Mannschaften für die 1. Liga:",
-    "header.wdl": "Siege/Unentschieden/Niederlagen-Zeichen:",
+    "header.wdl": "Siege/Niederlagen/Unentschieden Zeichen:",
     "header.match": "Spielflagge:",
     "header.region.a": "Region A:",
     "header.region.b": "Region B:",
+    "header.subst": "Max. Auswechslungen Torwart / Mannschaft:",
   
     # ---- areas
     "tab.strings": "  📝 Strings  ",
@@ -292,6 +293,7 @@ TEXTS_DE = {
     "preview.sum.teams": "Mannschaften für die 1. Liga: {value}",
     "preview.sum.wdl": "Siege/Unentschieden/Niederlagen-Zeichen: {value}",
     "preview.sum.match": "Spielflagge: {value}",
+    "preview.sum.substitutions": "Max. Auswechslungen geändert: {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "keine",
@@ -343,7 +345,7 @@ TEXTS_DE = {
     "utils.cfg.save_failed": "Konfiguration konnte nicht gespeichert werden: {error}",
 
     # ---- WDL-Gruppen (Sieg/Unentschieden/Niederlage)
-    "wdl.awayhome":  "Auswärt - Heim",
+    "wdl.awayhome":  "Heim - Auswärt",
     
     # ---- Flaggentypen
     "flag.3v": "3 vertikale Streifen",

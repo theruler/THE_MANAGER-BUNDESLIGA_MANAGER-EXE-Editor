@@ -53,10 +53,11 @@ TEXTS_ES = {
     "region.4": "Inglaterra",
     "header.point": "Puntos por victoria:",
     "header.teams": "Equipos de 1.ª división:",
-    "header.wdl": "Caracteres de Victoria/Empate/Derrota:",
+    "header.wdl": "Caracteres de Victoria/Derrota/Empate:",
     "header.match": "Bandera del partido:",
     "header.region.a": "Región A:",
     "header.region.b": "Región B:",
+    "header.subst": "Sustituciones máx. portero / equipo:",
     
     # ---- areas
     "tab.strings": "  📝 Cadenas  ",
@@ -292,6 +293,7 @@ TEXTS_ES = {
     "preview.sum.teams": "Equipos de 1.ª división: {value}",
     "preview.sum.wdl": "Caracteres de Victoria/Empate/Derrota: {value}",
     "preview.sum.match": "Bandera del partido: {value}",
+    "preview.sum.substitutions": "Sustituciones máx. modificadas: {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "ninguna",
@@ -343,7 +345,7 @@ TEXTS_ES = {
     "utils.cfg.save_failed": "No se ha podido guardar la configuración: {error}",
 
     # ---- grupos wdl (victoria/empate/derrota)
-    "wdl.awayhome":  "Visitante - Local",
+    "wdl.awayhome":  "Local - Visitante",
     
     # ---- tipos de bandera
     "flag.3v": "3 bandas verticales",
