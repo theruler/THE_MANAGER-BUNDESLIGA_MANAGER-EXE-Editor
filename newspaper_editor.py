@@ -312,9 +312,10 @@ class _ComponentEditor:
         self._populate(component["source_text"])
         self._push_undo()
 
-    def translate_content(self, translate_fn: Callable):
+    def translate_content(self, translate_fn: Callable) -> list[str]:
         tokens = self._tokenise(self.widget)
         changed = False
+        errors: list[str] = []
         for i, (kind, val) in enumerate(tokens):
             if kind == "text" and val.strip():
                 lspace = len(val) - len(val.lstrip())
@@ -325,13 +326,14 @@ class _ComponentEditor:
                         translated = translate_fn(stripped)
                         tokens[i] = ("text", val[:lspace] + translated + (val[-rspace:] if rspace else ""))
                         changed = True
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        errors.append(str(exc) or type(exc).__name__)
         if changed:
             self._populate(_tokens_to_display(tokens))
             self._push_undo()
             if self._on_change:
                 self._on_change()
+        return errors
 
     def _apply_char_map(self, text: str) -> str:
         return self._decode_fn(text)
@@ -747,8 +749,11 @@ class NewspaperEditorPanel(ttk.Frame):
         self._build_pool()
 
     def _translate_all_components(self, translate_fn):
+        errors = []
         for ed in self._editors:
-            ed.translate_content(translate_fn)
+            errors.extend(ed.translate_content(translate_fn))
+        if errors:
+            raise RuntimeError(errors[0])
 
     def _build_pool(self):
         for w in self._pool_inner.winfo_children():

@@ -1,14 +1,5 @@
-# -*- coding: utf-8 -*-
-"""Shared translation toolbar (engine / from / to / translate button / status).
-
-One widget used by both the main editor and the newspaper panel, so the
-controls, the runtime translation (``i18n``) and the run/status logic exist
-exactly once.
-"""
-
 import tkinter as tk
 from tkinter import ttk
-
 import i18n
 from translator import TRANSLATION_ENGINES, translate_string
 
@@ -22,13 +13,6 @@ COLOR_ERR = "#C0392B"
 
 
 class TranslationBar(ttk.Frame):
-    """Engine/From/To selectors, a translate button and a status label.
-
-    ``reg(widget, key)`` sets the widget text from ``key`` and enrolls it for
-    live language switching (the editor's ``_reg``).  Without it the text is
-    set once through ``i18n.tr``.  ``share_with`` reuses another bar's
-    variables so several bars always show the same settings.
-    """
 
     def __init__(self, parent, on_translate, reg=None, share_with=None,
                  pady=(8, 0), max_error_len=80):
