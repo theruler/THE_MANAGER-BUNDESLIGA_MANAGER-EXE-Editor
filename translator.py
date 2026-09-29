@@ -1,7 +1,10 @@
+import os
 import re
 import json
 import urllib.parse
 import urllib.request
+
+from utils import DEEPL_KEY_FILE
 
 CONTROL_TOKEN_PATTERN = re.compile(
     r"%x[0-9A-Fa-f]{1,2}|%[A-Za-z0-9]|#|\$|\^|%"
@@ -98,18 +101,14 @@ def mymemory_translate(text: str, source_lang: str = "auto", target_lang: str = 
     raise RuntimeError(f"MyMemory error {data.get('responseStatus')}: {data.get('responseDetails', '')}")
 
 
-import os as _os
-
-from utils import DEEPL_KEY_FILE
-
 def deepl_translate(text: str, source_lang: str = "auto", target_lang: str = "it") -> str:
     if not text or text.isspace():
         return text
 
-    api_key = _os.environ.get("DEEPL_API_KEY", "").strip()
+    api_key = os.environ.get("DEEPL_API_KEY", "").strip()
     if not api_key:
         key_file = DEEPL_KEY_FILE
-        if _os.path.isfile(key_file):
+        if os.path.isfile(key_file):
             with open(key_file, encoding="utf-8") as f:
                 api_key = f.read().strip()
     if not api_key:

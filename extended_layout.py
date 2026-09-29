@@ -205,7 +205,6 @@ def convert_to_extended(data, profile):
         raise ExtendedLayoutError("This EXE is not convertible to extended layout")
 
     result = bytearray(data)
-    import struct
     pool_start, pool_end = descriptor["pool"]
     needed = descriptor["min_file_size"]
     if len(result) < needed:

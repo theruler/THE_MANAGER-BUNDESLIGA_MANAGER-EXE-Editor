@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable
 import newspaper_grammar as NG
+from translation_bar import TranslationBar
 from charmap import CharmapEncodeError
 from repack_validator import repack_transaction, validate_image
 
@@ -721,60 +722,11 @@ class NewspaperEditorPanel(ttk.Frame):
         self._status_lbl.pack(side=tk.RIGHT, padx=(0, 8))
         self._err_lbl = ttk.Label(self._hdr, text="",font=("Segoe UI", 9, "italic"),foreground="#C0392B")
         self._err_lbl.pack(side=tk.RIGHT, padx=(0, 8))
-        self._tr_frame = tk.Frame(self, bg="#F4F6F9")
-        from translator import TRANSLATION_ENGINES
-        engine_var = tk.StringVar(value="Google Translate")
-        eng_cb = ttk.Combobox(self._tr_frame, textvariable=engine_var, values=list(TRANSLATION_ENGINES.keys()), width=18, state="readonly", font=("Segoe UI", 9))
-        eng_cb.pack(side=tk.LEFT, padx=(0, 8), pady=4)
-        src_lbl = ttk.Label(self._tr_frame, text="From", font=("Segoe UI", 9))
-        src_lbl.pack(side=tk.LEFT, padx=(0, 3))
-        src_var = tk.StringVar(value="auto")
-        src_cb = ttk.Combobox(self._tr_frame, textvariable=src_var, values=["auto","de","en","fr","es","it"], width=6, state="readonly", font=("Segoe UI", 9))
-        src_cb.pack(side=tk.LEFT, padx=(0, 8), pady=4)
-        tgt_lbl = ttk.Label(self._tr_frame, text="To", font=("Segoe UI", 9))
-        tgt_lbl.pack(side=tk.LEFT, padx=(0, 3))
-        tgt_default = "it"
-        try:
-            if hasattr(self._editor, "target_lang_var"):
-                tgt_default = self._editor.target_lang_var.get()
-        except Exception:
-            pass
-        tgt_var = tk.StringVar(value=tgt_default)
-        tgt_cb = ttk.Combobox(self._tr_frame, textvariable=tgt_var, values=["it","en","de","fr","es"], width=6, state="readonly", font=("Segoe UI", 9))
-        tgt_cb.pack(side=tk.LEFT, padx=(0, 8), pady=4)
-        tr_status_lbl = ttk.Label(self._tr_frame, text="", font=("Segoe UI", 9, "italic"), foreground="#7F8C8D")
-
-        def _apply_global_tr():
-            from translator import translate_string as _ts, TranslationIntegrityError
-            engine = engine_var.get()
-            src = src_var.get()
-            tgt = tgt_var.get()
-            tr_status_lbl.config(text="…", foreground="#1565C0")
-            apply_btn.config(state=tk.DISABLED)
-            self._tr_frame.update_idletasks()
-
-            def do_tr(text):
-                return _ts(text, target_lang=tgt, source_lang=src, engine=engine)
-
-            errors = []
-            for ed in self._editors:
-                try:
-                    ed.translate_content(do_tr)
-                except TranslationIntegrityError as exc:
-                    errors.append(str(exc))
-                except Exception as exc:
-                    errors.append(str(exc))
-
-            apply_btn.config(state=tk.NORMAL)
-            if errors:
-                tr_status_lbl.config(text=f"⚠ {errors[0][:60]}", foreground="#C0392B")
-            else:
-                tr_status_lbl.config(text="✔ Translated", foreground="#27AE60")
-                self.after(2000, lambda: tr_status_lbl.config(text="", foreground="#7F8C8D"))
-
-        apply_btn = ttk.Button(self._tr_frame, text="▶ Translate", command=_apply_global_tr)
-        apply_btn.pack(side=tk.LEFT, padx=(0, 6), pady=4)
-        tr_status_lbl.pack(side=tk.LEFT, padx=(0, 4), pady=4)
+        self._tr_frame = TranslationBar(
+            self, on_translate=self._translate_all_components,
+            reg=getattr(self._editor, "_reg", None),
+            share_with=getattr(self._editor, "translation_bar", None),
+            pady=4)
         self._pool_frame = tk.Frame(self, bg="#E8EAF6", bd=1, relief="groove")
         self._pool_frame.pack(fill=tk.X, padx=4, pady=(0, 4))
         self._pool_inner = tk.Frame(self._pool_frame, bg="#E8EAF6")
@@ -793,6 +745,10 @@ class NewspaperEditorPanel(ttk.Frame):
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
             self._canvas.bind(seq, self._scroll)
         self._build_pool()
+
+    def _translate_all_components(self, translate_fn):
+        for ed in self._editors:
+            ed.translate_content(translate_fn)
 
     def _build_pool(self):
         for w in self._pool_inner.winfo_children():
@@ -1262,9 +1218,6 @@ class NewspaperEditorPanel(ttk.Frame):
             except Exception:
                 pass
             self._build_layout(False, None)
-        else:
-            for ed in self._editors:
-                ed.discard()
         self._dirty_hint = False
         self._err_lbl.config(text="")
         self._status_lbl.config(text="")
