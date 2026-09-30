@@ -10,11 +10,6 @@ Dieses Handbuch beschreibt den Editor aus Sicht eines Endnutzers. Programmierken
 
 Der Editor kann Texte, eingebettete Fonts und ausgewählte Spieleinstellungen in unterstützten DOS-EXE-Dateien bearbeiten.
 
-Unterstützte Spielversionen:
-
-- THE MANAGER – englische Fassung
-- THE MANAGER – italienische Fassung
-- Bundesliga Manager Professional / BMP 2.0
 
 Der Editor kann:
 

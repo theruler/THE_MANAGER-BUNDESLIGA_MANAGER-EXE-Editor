@@ -6,11 +6,6 @@ This manual describes the program as an end user sees it. It assumes no programm
 
 The editor changes texts, embedded fonts and selected game settings inside supported DOS executables.
 
-Supported game versions:
-
-- THE MANAGER – English version
-- THE MANAGER – Italian version
-- Bundesliga Manager Professional / BMP 2.0
 
 The editor can:
 
