@@ -967,8 +967,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         if source:
             self.translation_bar.set_default_source_from_profile(self.profile_name)
         if target:
-            code = self.language.replace("-", "_").split("_")[0].lower()
-            self.translation_bar.set_default_target(code)
+            self.translation_bar.set_default_target_from_language(self.language)
 
     def on_translate_toggle(self):
         self._update_translate_all_state()

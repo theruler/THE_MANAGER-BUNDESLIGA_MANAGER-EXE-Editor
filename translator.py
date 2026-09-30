@@ -14,6 +14,22 @@ PROTECTED_SPAN_PATTERN = re.compile(
 )
 MARKER_PATTERN = re.compile(r"\uE100([0-9A-F]{4})\uE101")
 
+SOURCE_LANGS = ["auto", "de", "en", "fr", "es", "it"]
+TARGET_LANGS = ["it", "en", "de", "fr", "es"]
+
+PROFILE_SOURCE_LANG = {
+    "BUNDESLIGA MANAGER PROFESSIONAL": "de",
+    "THE MANAGER (ITALIAN)": "it",
+    "THE MANAGER (ENGLISH)": "en",
+    "THE MANAGER (FRENCH)": "fr",
+}
+
+def default_source_lang(profile_name):
+    return PROFILE_SOURCE_LANG.get((profile_name or "").strip().upper(), "auto")
+
+def default_target_lang(language_code):
+    return (language_code or "").replace("-", "_").split("_")[0].lower()
+
 
 class TranslationIntegrityError(RuntimeError):
     """Raised when a translator damages a protected token or layout span."""

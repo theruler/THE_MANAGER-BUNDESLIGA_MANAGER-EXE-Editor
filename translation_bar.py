@@ -1,17 +1,7 @@
 import tkinter as tk
 from tkinter import ttk
 import i18n
-from translator import TRANSLATION_ENGINES, translate_string
-
-SOURCE_LANGS = ["auto", "de", "en", "fr", "es", "it"]
-TARGET_LANGS = ["it", "en", "de", "fr", "es"]
-
-PROFILE_SOURCE_LANG = {
-    "BUNDESLIGA MANAGER PROFESSIONAL": "de",
-    "THE MANAGER (ITALIAN)": "it",
-    "THE MANAGER (ENGLISH)": "en",
-    "THE MANAGER (FRENCH)": "fr",
-}
+from translator import (TRANSLATION_ENGINES, translate_string, SOURCE_LANGS, TARGET_LANGS, default_source_lang, default_target_lang)
 
 COLOR_IDLE = "#7F8C8D"
 COLOR_BUSY = "#1565C0"
@@ -30,8 +20,10 @@ class TranslationBar(ttk.Frame):
             self.target_lang_var.set(lang)
 
     def set_default_source_from_profile(self, profile_name):
-        key = (profile_name or "").strip().upper()
-        self.set_default_source(PROFILE_SOURCE_LANG.get(key, "auto"))
+        self.set_default_source(default_source_lang(profile_name))
+    
+    def set_default_target_from_language(self, language_code):
+        self.set_default_target(default_target_lang(language_code))
 
     def __init__(self, parent, on_translate, reg=None, share_with=None,
                  pady=(8, 0), max_error_len=80):
