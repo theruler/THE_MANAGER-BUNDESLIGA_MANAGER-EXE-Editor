@@ -208,16 +208,19 @@ class StringCodecMixin:
             staged_data, self.profile, staged_entries, self.relocation_sites
         )
 
-    def _prepare_translate_all_transaction(self, translator_func, on_progress=None):
+    def _prepare_translate_all_transaction(self, translator_func, on_progress=None,only_ids=None):
         staged_data    = bytearray(self.exe_data)
         staged_entries = copy.deepcopy(self.entries)
         staged_by_id   = {entry["string_id"]: entry for entry in staged_entries}
         suffix_ids     = self._suffix_group_ids(self.entries)
-        stats          = {"translated": 0, "unchanged": 0, "blank": 0, "suffix_skipped": 0}
+        stats          = {"translated": 0, "unchanged": 0, "blank": 0,"suffix_skipped": 0, "excluded": 0}
+        targets = [entry for entry in self.entries
+                   if only_ids is None or entry["string_id"] in only_ids]
+        stats["excluded"] = len(self.entries) - len(targets)
 
-        for index, source_entry in enumerate(self.entries):
+        for position, source_entry in enumerate(targets):
             if on_progress:
-                on_progress(index + 1, len(self.entries),
+                on_progress(position + 1, len(targets),
                             self._decode_entry_text(source_entry))
             if source_entry["string_id"] in suffix_ids:
                 stats["suffix_skipped"] += 1

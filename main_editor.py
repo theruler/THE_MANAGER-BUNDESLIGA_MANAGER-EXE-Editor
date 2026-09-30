@@ -199,7 +199,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             (tools_menu, 8), (tools_menu, 9) 
         ]
         self.supported_menu_entries = [
-            (tools_menu, 0), (tools_menu, 11), (tools_menu, 12),
+            (tools_menu, 0), (tools_menu, 11),
             (view_menu, 0), (view_menu, 1), (view_menu, 2), (view_menu, 3) 
         ]
         self.root.config(menu=self.menubar)
@@ -249,6 +249,10 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 menu.entryconfig(index, state=state)
             except tk.TclError:
                 pass
+    
+    def _update_translate_all_state(self):
+        enabled = bool(getattr(self, "is_supported", False)) and self.translate_enabled_var.get()
+        self._set_menu_state([(self.tools_menu, 12)], enabled)
 
     def _reg(self, widget, key):
         widget.config(text=self.tr(key))
@@ -301,6 +305,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             return
         self.language = chosen
         i18n.set_language(chosen)
+        self._apply_translation_defaults(target=True)
         self._retranslate_menu()
         for widget, key in self._i18n_widgets:
             try:
@@ -501,6 +506,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.translate_now_button = self.translation_bar.button
         self.translate_status_label = self.translation_bar.status_label
         self.supported_controls.extend(self.translation_bar.controls)
+        self._apply_translation_defaults(target=True)
         self.newspaper_panel = _ne.NewspaperEditorPanel(edit_frame, self,on_show=self._hide_edit_text,on_hide=self._show_edit_text,)
         self.tab_fonts = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_fonts, text=self.tr("tab.fonts"))
@@ -639,6 +645,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         for tab in (self.tab_strings, self.tab_fonts, self.tab_settings, self.tab_mana, self.tab_vga):
             self.notebook.tab(tab, state=state)
         self._set_menu_state(self.supported_menu_entries, self.is_supported)
+        self._update_translate_all_state()
         for widget in self.supported_controls:
             widget.config(state="readonly" if self.is_supported and isinstance(widget, ttk.Combobox) else state)
         self.edit_text.config(state=state)
@@ -956,7 +963,15 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         elif not active and section.winfo_manager():
             section.pack_forget()
 
+    def _apply_translation_defaults(self, source=False, target=False):
+        if source:
+            self.translation_bar.set_default_source_from_profile(self.profile_name)
+        if target:
+            code = self.language.replace("-", "_").split("_")[0].lower()
+            self.translation_bar.set_default_target(code)
+
     def on_translate_toggle(self):
+        self._update_translate_all_state()
         panel = self._active_newspaper_panel()
         if panel is not None:
             enabled = self.translate_enabled_var.get()
@@ -1243,13 +1258,13 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             index = self.entry_index_by_id[string_id]
             entry = self.entries[index]
             ptr_addrs = _ptr_addrs(entry)
+            first_ptr = ""
+            ptr_ds_offset = ""
             if ptr_addrs and len(self.exe_data) >= ptr_addrs[0] + 2:
                 ptr_val = int.from_bytes(self.exe_data[ptr_addrs[0]:ptr_addrs[0] + 2], "little")
                 first_ptr = hex(ptr_val)
-                ptr_ds_offset = hex(ptr_addrs[0] - ds_start) if ds_start else hex(ptr_addrs[0])
-            else:
-                first_ptr = ""
-                ptr_ds_offset = ""
+                if entry.get("ptr_addrs"):
+                    ptr_ds_offset = hex(ptr_addrs[0] - ds_start) if ds_start else hex(ptr_addrs[0])
             self.tree.insert("", tk.END, iid=string_id, values=(index + 1, ptr_ds_offset, first_ptr, self._decode_entry_text(entry)),)
         total, shown = len(self.entries), len(self.visible_string_ids)
         self._set_counter(shown, total)
@@ -1276,8 +1291,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._filter_callbacks_suspended = True
         try:
             self.search_var.set("")
-            for var in (self.kind_filter_var, self.font_filter_var,
-                        self.change_filter_var, self.status_filter_var):
+            for var in (self.kind_filter_var, self.font_filter_var,self.change_filter_var, self.status_filter_var):
                 var.set("All")
         finally:
             self._filter_callbacks_suspended = False
@@ -1349,10 +1363,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                     entry, self.edit_text.get("1.0", "1.0 lineend")
                 )
             except (CharmapEncodeError, TextTransactionError) as exc:
-                self.current_range_label.config(
-                    text=self.tr("edit.encoding_blocked", error=exc),
-                    foreground="#C0392B",
-                )
+                self.current_range_label.config(text=self.tr("edit.encoding_blocked", error=exc),foreground="#C0392B",)
                 self._update_save_state()
                 return
             live_override = (entry, self._raw_text(current_raw_bytes))
@@ -1407,11 +1418,93 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.on_text_modified()
         self._update_save_state()
 
+    def _ask_translate_all_scope(self):
+        try:
+            newspaper_ids = self._newspaper_ids(strict=True)
+        except Exception as exc:
+            messagebox.showerror(self.tr("dlg.translate_all.blocked"),self.tr("dlg.translate_all.nochange", detail=exc))
+            return None
+        kinds = {}
+        for entry in self.entries:
+            try:
+                kinds[entry["string_id"]] = self._entry_filter_kind(entry, newspaper_ids)
+            except SearchFilterError:
+                pass
+        total = len(self.entries)
+        engine = self.engine_var.get()
+        win = tk.Toplevel(self.root)
+        win.title(self.tr("dlg.translate_all.scope_title"))
+        win.resizable(False, False)
+        win.transient(self.root)
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+        from_var, to_var = tk.StringVar(), tk.StringVar()
+        normal_var, news_var = tk.BooleanVar(value=True), tk.BooleanVar(value=False)
+        ttk.Label(frm, text=self.tr("dlg.translate_all.range", total=total)).grid(row=0, column=0, columnspan=4, sticky="w")
+        ttk.Label(frm, text=self.tr("dlg.translate_all.from")).grid(row=1, column=0, sticky="w", pady=6)
+        ttk.Entry(frm, textvariable=from_var, width=8).grid(row=1, column=1, padx=(4, 12))
+        ttk.Label(frm, text=self.tr("dlg.translate_all.to")).grid(row=1, column=2, sticky="w")
+        ttk.Entry(frm, textvariable=to_var, width=8).grid(row=1, column=3, padx=(4, 0))
+        ttk.Label(frm, text=self.tr("dlg.translate_all.kinds")).grid(row=2, column=0, columnspan=4, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(frm, text=self.tr("dlg.translate_all.kind_normal"),variable=normal_var).grid(row=3, column=0, columnspan=4, sticky="w")
+        ttk.Checkbutton(frm, text=self.tr("dlg.translate_all.kind_newspaper"),variable=news_var).grid(row=4, column=0, columnspan=4, sticky="w")
+        ttk.Label(frm, text=self.tr("dlg.translate_all.excluded_note"),foreground="#7F8C8D").grid(row=5, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        info_lbl = ttk.Label(frm, text="", font=("Segoe UI", 9, "bold"))
+        info_lbl.grid(row=6, column=0, columnspan=4, sticky="w", pady=(8, 8))
+        btn_row = ttk.Frame(frm)
+        btn_row.grid(row=7, column=0, columnspan=4, sticky="e")
+        ok_btn = ttk.Button(btn_row, text=self.tr("dlg.translate_all.start"))
+        ok_btn.pack(side=tk.LEFT, padx=(0, 6))
+        result = {"ids": None}
+
+        def compute():
+            try:
+                lo = int(from_var.get().strip().lstrip("#") or 1)
+                hi = int(to_var.get().strip().lstrip("#") or total)
+            except ValueError:
+                return None
+            if lo < 1 or hi < lo:
+                return None
+            allowed = set()
+            if normal_var.get():
+                allowed.add("normal")
+            if news_var.get():
+                allowed.add("newspaper")
+            return {entry["string_id"] for number, entry in enumerate(self.entries, 1)
+                    if lo <= number <= hi and kinds.get(entry["string_id"]) in allowed}
+
+        def update(*_):
+            ids = compute()
+            if ids is None:
+                info_lbl.config(text=self.tr("dlg.translate_all.invalid_range"), foreground="#C0392B")
+                ok_btn.config(state=tk.DISABLED)
+                return
+            info_lbl.config(text=self.tr("dlg.translate_all.selected", n=len(ids), total=total, engine=engine),foreground="#1565C0")
+            ok_btn.config(state=tk.NORMAL if ids else tk.DISABLED)
+
+        def accept(*_):
+            ids = compute()
+            if ids:
+                result["ids"] = ids
+                win.destroy()
+
+        ok_btn.config(command=accept)
+        ttk.Button(btn_row, text=self.tr("dlg.translate_all.cancel"), command=win.destroy).pack(side=tk.LEFT)
+        for var in (from_var, to_var, normal_var, news_var):
+            var.trace_add("write", update)
+        win.bind("<Return>", accept)
+        win.bind("<Escape>", lambda _e: win.destroy())
+        update()
+        win.grab_set()
+        win.wait_window()
+        return result["ids"]
+
     def translate_all(self):
         if not self._supported_loaded() or not self.entries:
             messagebox.showinfo(self.tr("dlg.translate_all.title"), self.tr("dlg.translate_all.none"))
             return
-        if not messagebox.askyesno(self.tr("dlg.translate_all.title"), self.tr("dlg.translate_all.confirm", n=len(self.entries), engine=self.engine_var.get())):
+        selected = self._ask_translate_all_scope()
+        if not selected:
             return
 
         prog_win = tk.Toplevel(self.root)
@@ -1420,7 +1513,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         prog_win.grab_set()
         ttk.Label(prog_win, text=self.tr("tr.translating"), font=("Segoe UI", 10, "bold"), padding=10).pack()
         progress_var = tk.IntVar(value=0)
-        bar = ttk.Progressbar(prog_win, maximum=len(self.entries), variable=progress_var, length=360)
+        bar = ttk.Progressbar(prog_win, maximum=len(selected), variable=progress_var, length=360)
         bar.pack(padx=20, pady=(0, 6))
         status_lbl = ttk.Label(prog_win, text="", font=("Segoe UI", 9, "italic"), padding=(10, 0, 10, 10))
         status_lbl.pack()
@@ -1433,9 +1526,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
         try:
             work_data, work_entries, validation, stats = self._prepare_translate_all_transaction(
-                self._make_translate_fn(),
-                on_progress=update_progress,
-            )
+                self._make_translate_fn(),on_progress=update_progress,only_ids=selected,)
         except Exception as exc:
             prog_win.destroy()
             messagebox.showerror(self.tr("dlg.translate_all.blocked"), self.tr("dlg.translate_all.nochange", detail=exc))
@@ -1524,24 +1615,15 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         try:
             newspaper_ids = self._newspaper_ids(strict=True)
             exchange_args = self._string_exchange_arguments()
-            exchange_args["entries"] = [
-                e for e in self.entries if e.get("string_id") not in newspaper_ids
-            ]
+            exchange_args["entries"] = [e for e in self.entries if e.get("string_id") not in newspaper_ids]
             payload = export_csv_bytes(**exchange_args)
             normal_count = sum(1 for e in exchange_args["entries"] if not e.get("fixed"))
         except (StringExchangeError, newspaper_csv.NewspaperCsvError, KeyError, ValueError) as exc:
             messagebox.showerror(self.tr("dlg.export.blocked"), str(exc))
             return False
-
-        filepath = filedialog.asksaveasfilename(
-            title=self.tr("fd.export"),
-            initialfile="translations.strings.csv",
-            defaultextension=".csv",
-            filetypes=[("String Exchange CSV", "*.csv")],
-        )
+        filepath = filedialog.asksaveasfilename(title=self.tr("fd.export"),initialfile="translations.strings.csv",defaultextension=".csv",filetypes=[("String Exchange CSV", "*.csv")],)
         if not filepath or not self._write_export(filepath, payload):
             return False
-
         self._set_status("dlg.export.status", n=normal_count, file=os.path.basename(filepath))
         messagebox.showinfo(self.tr("dlg.export.done"), self.tr("dlg.export.done_msg", n=normal_count, path=filepath))
         return True
@@ -1550,9 +1632,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         if not self._exchange_allowed("dlg.import.blocked"):
             return False
         filepath = filedialog.askopenfilename(
-            title=self.tr("fd.import"),
-            filetypes=[("String Exchange CSV", "*.strings.csv"), ("All CSV", "*.csv")],
-        )
+            title=self.tr("fd.import"),filetypes=[("String Exchange CSV", "*.strings.csv"), ("All CSV", "*.csv")],)
         if not filepath:
             return False
 
@@ -1575,12 +1655,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 if row["string_id"] in newspaper_ids or translated is None:
                     continue
                 entry = entries_by_id[row["string_id"]]
-                desired_raw, _, _ = exchange_text_to_raw(
-                    translated,
-                    self._charmap_for_entry(entry),
-                    self._font_codes_for_entry(entry),
-                    source_mode=True,
-                )
+                desired_raw, _, _ = exchange_text_to_raw(translated,self._charmap_for_entry(entry),self._font_codes_for_entry(entry),source_mode=True,)
                 if desired_raw != self._entry_raw_bytes(entry):
                     replacements[row["string_id"]] = desired_raw
         except (OSError, StringExchangeError, newspaper_csv.NewspaperCsvError, KeyError, ValueError, CharmapEncodeError) as exc:
@@ -1611,12 +1686,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
     def export_all_json(self):
         if not self._exchange_allowed("dlg.export.blocked"):
             return False
-        filepath = filedialog.asksaveasfilename(
-            title=self.tr("menu.tools.export_json"),
-            initialfile="backup.strings.json",
-            defaultextension=".json",
-            filetypes=[("String Exchange JSON", "*.json")],
-        )
+        filepath = filedialog.asksaveasfilename(title=self.tr("menu.tools.export_json"),initialfile="backup.strings.json",defaultextension=".json",filetypes=[("String Exchange JSON", "*.json")],)
         if not filepath:
             return False
         try:
@@ -1635,10 +1705,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
     def import_all_json(self):
         if not self._exchange_allowed("dlg.import.blocked"):
             return False
-        filepath = filedialog.askopenfilename(
-            title=self.tr("fd.import_json"),
-            filetypes=[("String Exchange JSON", "*.strings.json")],
-        )
+        filepath = filedialog.askopenfilename(title=self.tr("fd.import_json"),filetypes=[("String Exchange JSON", "*.strings.json")],)
         if not filepath:
             return False
 
@@ -1687,17 +1754,11 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             rows = newspaper_csv.build_rows(
                 self.profile_name, self.entries, self._decode_entry_text)
             count = len(newspaper_csv.collect(self.profile_name, self.entries))
-        except (newspaper_csv.NewspaperCsvError, NewspaperGrammarError,
-                CharmapEncodeError, KeyError, ValueError) as exc:
+        except (newspaper_csv.NewspaperCsvError, NewspaperGrammarError,CharmapEncodeError, KeyError, ValueError) as exc:
             messagebox.showerror(self.tr("dlg.export.blocked"), str(exc))
             return False
 
-        filepath = filedialog.asksaveasfilename(
-            title=self.tr("fd.news_export"),
-            initialfile="newspaper.csv",
-            defaultextension=".csv",
-            filetypes=[("Newspaper CSV", "*.csv")],
-        )
+        filepath = filedialog.asksaveasfilename(title=self.tr("fd.news_export"),initialfile="newspaper.csv",defaultextension=".csv",filetypes=[("Newspaper CSV", "*.csv")],)
         if not filepath or not self._write_export(filepath, payload):
             return False
         self._set_status("dlg.news.status_export", n=count, file=os.path.basename(filepath))
@@ -1905,9 +1966,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 cached_snapshot=self.diff_preview_cache.get(),
             )
         except (DiffPreviewError, KeyError, ValueError) as exc:
-            self.current_range_label.config(
-                text=self.tr("edit.diff_unavailable", error=exc), foreground="#C0392B"
-            )
+            self.current_range_label.config(text=self.tr("edit.diff_unavailable", error=exc), foreground="#C0392B")
             return
         delta = f"{info['delta']:+d}"
         if info["kind"] == "fixed":
@@ -1939,8 +1998,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
     def _reset_state(self):
         self._invalidate_diff_preview("reset", refresh=False)
         self._init_document_state()
-        for var in (self.year_var, self.subst_gk_var, self.subst_var,
-                    self.teams_var, self.region_a_var, self.region_b_var):
+        for var in (self.year_var, self.subst_gk_var, self.subst_var,self.teams_var, self.region_a_var, self.region_b_var):
             var.set("")
         self._reset_filter_vars()
         self.filter_combos[1].config(values=("All",))
@@ -2106,6 +2164,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
         self.profile_name = detected
         self.profile = GAME_PROFILES[detected]
+        self._apply_translation_defaults(source=True)
         is_extended = extended_layout.detect(self.exe_data, self.profile) is not None
         self._set_profile(value=f"{detected} [EXTENDED]" if is_extended else detected)
         gcfg = self._game_cfg()

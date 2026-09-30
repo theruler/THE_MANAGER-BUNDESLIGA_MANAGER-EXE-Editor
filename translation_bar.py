@@ -6,6 +6,13 @@ from translator import TRANSLATION_ENGINES, translate_string
 SOURCE_LANGS = ["auto", "de", "en", "fr", "es", "it"]
 TARGET_LANGS = ["it", "en", "de", "fr", "es"]
 
+PROFILE_SOURCE_LANG = {
+    "BUNDESLIGA MANAGER PROFESSIONAL": "de",
+    "THE MANAGER (ITALIAN)": "it",
+    "THE MANAGER (ENGLISH)": "en",
+    "THE MANAGER (FRENCH)": "fr",
+}
+
 COLOR_IDLE = "#7F8C8D"
 COLOR_BUSY = "#1565C0"
 COLOR_OK = "#27AE60"
@@ -13,6 +20,18 @@ COLOR_ERR = "#C0392B"
 
 
 class TranslationBar(ttk.Frame):
+
+    def set_default_source(self, lang):
+        if lang in SOURCE_LANGS:
+            self.source_lang_var.set(lang)
+    
+    def set_default_target(self, lang):
+        if lang in TARGET_LANGS:
+            self.target_lang_var.set(lang)
+
+    def set_default_source_from_profile(self, profile_name):
+        key = (profile_name or "").strip().upper()
+        self.set_default_source(PROFILE_SOURCE_LANG.get(key, "auto"))
 
     def __init__(self, parent, on_translate, reg=None, share_with=None,
                  pady=(8, 0), max_error_len=80):
