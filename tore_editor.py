@@ -178,40 +178,37 @@ def _mir(seq):
 DIRS = ["E", "NE", "N", "NW", "W", "SW", "S", "SE"]
 DIR_LABEL = {"E": "East", "NE": "North-East", "N": "North", "NW": "North-West",
              "W": "West", "SW": "South-West", "S": "South", "SE": "South-East"}
-MOVE_E = {
-    "E": [3, 4, 5], "SE": [6, 7, 8], "NE": [0, 1, 2],
-    "W": [53, 54, 55], "SW": [50, 51, 52], "NW": [56, 57, 58],
-    "N": [28, 29, 30], "S": [31, 32, 33],
+
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+ACTIONS_FILE = os.path.join(APP_DIR, "tore_actions.json")
+POSES_FILE = os.path.join(APP_DIR, "tore_pose_sets.json")
+KICKOFF_FILE = os.path.join(APP_DIR, "tore_kickoff.json")
+POSE_NOTE = "Red ids; blue = red+59 (same k). Mirror E<->W is k -> 58-k. Sets marked (?) are unverified."
+
+DEF_ORDER = ["dive", "header", "bicycle", "fall", "getup", "cele", "moonwalk"]
+DEF_ACTIONS = {
+    "dive":    {"label": "Dive", "E": [12, 13, 14, 14, 14, 14, 13], "W": [46, 45, 44, 44, 44, 44, 45]},
+    "header":  {"label": "Header", "E": [15, 16, 17, 18, 19, 20], "W": [43, 42, 41, 40, 39, 38]},
+    "bicycle": {"label": "Bicycle kick", "E": [21, 22, 23, 23, 24, 24], "W": [37, 36, 35, 35, 34, 34]},
+    "fall":    {"label": "Collision fall", "E": [22, 23, 24, 24, 24], "W": [36, 35, 34, 34, 34]},
+    "getup":   {"label": "Get up", "E": [14, 13], "W": [44, 45]},
+    "cele":    {"label": "Celebration", "E": [25, 26, 27, 26, 27, 26, 27], "W": [25, 26, 27, 26, 27, 26, 27], "single": True},
+    "moonwalk": {"label": "Moonwalk", "travel": True, "E": [55, 54, 53, 52, 51, 50], "W": [3, 4, 5, 6, 7, 8]},
 }
-STAND_K = {"E": 0, "W": 58}
-ACTION_ORDER = ["dive", "header", "bicycle", "fall", "getup"]
-ACTIONS = {
-    "dive":    {"label": "Dive (tuffo)",
-                "E": [12, 13, 14, 14, 14, 14, 13], "W": [46, 45, 44, 44, 44, 44, 45]},
-    "header":  {"label": "Header (colpo di testa)",
-                "E": [11, 11], "W": [47, 47]},
-    "bicycle": {"label": "Bicycle kick (rovesciata)",
-                "E": [11, 10, 23, 24, 24, 24], "W": [47, 48, 35, 34, 34, 34]},
-    "fall":    {"label": "Collision fall (scontro + caduta)",
-                "E": [22, 23, 24, 24, 24], "W": [36, 35, 34, 34, 34]},
-    "getup":   {"label": "Get up",
-                "E": [14, 13], "W": [44, 45]},
-}
-REF_MOVE = {"E": [121, 122, 123], "W": [135, 136]}
-REF_STAND = 126
-UNKNOWN_K = [("Other / unknown (?) 21,37", [21, 37]),
-             ("Facing camera (?) 25", [25]),
-             ("Arms up / celebration (?) 26,27", [26, 27]),
-             ("Unknown run type A (?) 15-20", list(range(15, 21))),
-             ("Unknown run type B (?) 38-43", list(range(38, 44)))]
-_ov_act = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tore_actions.json")
-if os.path.isfile(_ov_act):
-    try:
-        _j = json.load(open(_ov_act, encoding="utf-8"))
-        ACTIONS.update(_j.get("actions", {}))
-        MOVE_E.update(_j.get("moves", {}))
-    except (OSError, ValueError):
-        pass
+DEF_MOVES = {"E": [3, 4, 5], "SE": [6, 7, 8], "NE": [0, 1, 2], "W": [53, 54, 55], "SW": [50, 51, 52],
+             "NW": [56, 57, 58], "N": [28, 29, 30], "S": [31, 32, 33]}
+DEF_STAND = {"E": 0, "W": 58}
+DEF_REF = {"move": {"E": [121, 122, 123], "W": [135, 136]}, "stand": 126}
+DEF_UNKNOWN = [("Unassigned (?) 10,11,47,48", [10, 11, 47, 48])]
+DEF_REF_CATS = [("Referee walk E", [121, 122, 123]), ("Referee walk W (A)", [135, 136]),
+                ("Referee walk W (B) 132-134", [132, 133, 134]), ("Referee standing", [126]),
+                ("Referee - side A (all)", list(range(118, 129))), ("Referee - side B (all)", list(range(129, 142)))]
+DEF_BALL = [("rotation", [142, 143, 144]), ("shadow", [145])]
+
+ACTIONS, ACTION_ORDER, MOVE_E, STAND_K = {}, [], {}, {}
+REF_MOVE, REF_STAND, BALL_ROT = {}, 126, [142, 143, 144]
+PLAYER_CATS, REF_CATS, BALL_CATS, BALL_ALL = [], [], [], []
+DATA_WARNINGS = []
 
 
 def _uniq(seq):
@@ -222,32 +219,155 @@ def _uniq(seq):
     return out
 
 
-def _build_player_cats():
-    c = [("Stand - facing E", [STAND_K["E"]]), ("Stand - facing W", [STAND_K["W"]])]
+def action_sides(key, acts=None):
+    return ["E"] if (acts if acts is not None else ACTIONS)[key].get("single") else ["E", "W"]
+
+
+def action_label(key, side, acts=None):
+    a = (acts if acts is not None else ACTIONS)[key]
+    return a["label"] if a.get("single") else "%s -> %s" % (a["label"], side)
+
+
+def parse_ids(text, lo, hi):
+    out = []
+    for tok in re.split(r"[,\s;]+", re.sub(r"\s*-\s*", "-", text.strip())):
+        if not tok:
+            continue
+        m = re.fullmatch(r"(\d+)-(\d+)", tok)
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            out += list(range(a, b + 1)) if a <= b else list(range(a, b - 1, -1))
+        elif tok.isdigit():
+            out.append(int(tok))
+        else:
+            raise ValueError("Bad value: %r" % tok)
+    if not out:
+        raise ValueError("Enter at least one id")
+    bad = [v for v in out if not lo <= v <= hi]
+    if bad:
+        raise ValueError("Ids out of range %d-%d: %s" % (lo, hi, bad))
+    return out
+
+
+def ids_text(ids):
+    return ",".join(str(i) for i in ids)
+
+
+def _read_json(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def _dump(path, obj):
+    txt = json.dumps(obj, indent=1, ensure_ascii=False)
+    txt = re.sub(r"\[\s*([\d,\s-]*?)\s*\]", lambda m: "[" + re.sub(r"\s+", " ", m.group(1)) + "]", txt)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(txt + "\n")
+
+
+def _ks(v, lo, hi):
+    out = [int(x) for x in v]
+    if not out or any(not lo <= k <= hi for k in out):
+        raise ValueError("ids must be %d-%d and not empty" % (lo, hi))
+    return out
+
+
+def _cats(d, lo, hi):
+    if not isinstance(d, dict):
+        raise ValueError("expected an object of name -> [ids]")
+    return [(str(n), _ks(v, lo, hi)) for n, v in d.items()]
+
+
+def default_actions_file():
+    return {"order": list(DEF_ORDER), "actions": copy.deepcopy(DEF_ACTIONS), "moves": copy.deepcopy(DEF_MOVES),
+            "stand": dict(DEF_STAND), "referee": copy.deepcopy(DEF_REF)}
+
+
+def default_poses_file():
+    c = [("Stand - facing E", [DEF_STAND["E"]]), ("Stand - facing W", [DEF_STAND["W"]])]
     for d in DIRS:
-        c.append(("Run %s (%s)" % (d, DIR_LABEL[d]), list(MOVE_E[d])))
+        c.append(("Run %s (%s)" % (d, DIR_LABEL[d]), list(DEF_MOVES[d])))
     c.append(("Run E - long cycle", list(range(3, 10))))
     c.append(("Run W - long cycle", list(range(49, 56))))
-    for key in ACTION_ORDER:
-        a = ACTIONS[key]
-        for side in "EW":
-            c.append(("%s -> %s" % (a["label"], side), _uniq(a[side])))
-    c += UNKNOWN_K
-    return c
+    for key in DEF_ORDER:
+        for side in action_sides(key, DEF_ACTIONS):
+            c.append((action_label(key, side, DEF_ACTIONS), _uniq(DEF_ACTIONS[key][side])))
+    c += DEF_UNKNOWN
+    return _poses_file(dict(c), dict(DEF_REF_CATS), dict(DEF_BALL))
 
 
-PLAYER_CATS = _build_player_cats()
-REF_CATS = [("Referee walk E", REF_MOVE["E"]), ("Referee walk W (A)", REF_MOVE["W"]),
-            ("Referee walk W (B) 132-134", [132, 133, 134]), ("Referee standing", [REF_STAND]),
-            ("Referee - side A (all)", list(range(118, 129))), ("Referee - side B (all)", list(range(129, 142)))]
-BALL_ROT = [142, 143, 144]
-BALL_CATS = [("Ball (rotation)", BALL_ROT)]
-_ov = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tore_poses.json")
-if os.path.isfile(_ov):
+def _poses_file(red, referee, ball):
+    return {"red": red, "blue": {n: [k + 59 for k in v] for n, v in red.items()}, "referee": referee,
+            "ball": ball, "goals": {"left": [1000], "right": [1024]}, "_note": POSE_NOTE}
+
+
+def _clean_actions(raw):
+    if not isinstance(raw, dict):
+        raise ValueError("unreadable or not a JSON object")
+    acts = {}
+    for key, a in raw["actions"].items():
+        e = _ks(a["E"], 0, 58)
+        d = {"label": str(a.get("label", key)), "E": e, "W": _ks(a["W"], 0, 58) if a.get("W") else [58 - k for k in e]}
+        if a.get("single"):
+            d["single"] = True
+        if a.get("travel"):
+            d["travel"] = True
+        acts[str(key)] = d
+    order = [k for k in raw.get("order", []) if k in acts]
+    order += [k for k in acts if k not in order]
+    mv = raw.get("moves", {})
+    moves = {d: _ks(mv[d], 0, 58) if d in mv else list(DEF_MOVES[d]) for d in DIRS}
+    st = raw.get("stand", {})
+    stand = {s: int(st.get(s, DEF_STAND[s])) for s in "EW"}
+    rf = raw.get("referee", {})
+    rm = rf.get("move", {})
+    ref = {"move": {s: _ks(rm[s], 118, 141) if s in rm else list(DEF_REF["move"][s]) for s in "EW"},
+           "stand": int(rf.get("stand", DEF_REF["stand"]))}
+    return acts, order, moves, stand, ref
+
+
+def load_data():
+    global ACTIONS, ACTION_ORDER, MOVE_E, STAND_K, REF_MOVE, REF_STAND, BALL_ROT
+    global PLAYER_CATS, REF_CATS, BALL_CATS, BALL_ALL
+    warn = []
+    for path, default in ((ACTIONS_FILE, default_actions_file), (POSES_FILE, default_poses_file)):
+        if not os.path.isfile(path):
+            try:
+                _dump(path, default())
+            except OSError as ex:
+                warn.append("%s: cannot create (%s)" % (os.path.basename(path), ex))
     try:
-        PLAYER_CATS = [(k, list(v)) for k, v in json.load(open(_ov, encoding="utf-8")).items()]
-    except (OSError, ValueError):
-        pass
+        acts, order, moves, stand, ref = _clean_actions(_read_json(ACTIONS_FILE))
+    except (TypeError, ValueError, KeyError, AttributeError) as ex:
+        warn.append("%s: %s - built-in defaults used" % (os.path.basename(ACTIONS_FILE), ex))
+        acts, order, moves, stand, ref = _clean_actions(default_actions_file())
+    ACTIONS, ACTION_ORDER, MOVE_E, STAND_K = acts, order, moves, stand
+    REF_MOVE, REF_STAND = ref["move"], ref["stand"]
+    raw = _read_json(POSES_FILE)
+    try:
+        red = _cats(raw["red"], 0, 58)
+        refc = _cats(raw["referee"], 118, 141)
+        ball = _cats(raw["ball"], 142, 145)
+    except (TypeError, ValueError, KeyError, AttributeError) as ex:
+        warn.append("%s: %s - built-in defaults used" % (os.path.basename(POSES_FILE), ex))
+        raw = default_poses_file()
+        red, refc, ball = _cats(raw["red"], 0, 58), _cats(raw["referee"], 118, 141), _cats(raw["ball"], 142, 145)
+    PLAYER_CATS, REF_CATS, BALL_ALL = red, refc, ball
+    BALL_CATS = [(n, v) for n, v in ball if n != "shadow"]
+    BALL_ROT = dict(ball).get("rotation") or [142, 143, 144]
+    DATA_WARNINGS[:] = warn
+    return warn
+
+
+def save_data_files(pg, ad):
+    _dump(ACTIONS_FILE, {"order": ad["order"], "actions": ad["actions"], "moves": ad["moves"], "stand": ad["stand"], "referee": ad["referee"]})
+    _dump(POSES_FILE, _poses_file(pg["red"], pg["referee"], pg["ball"]))
+
+
+load_data()
 
 
 def cls(sid):
@@ -360,16 +480,6 @@ def action_ids(sid, key, side=None):
         return []
     off = 0 if t == "R" else 59
     return [off + k for k in ACTIONS[key][side or facing_of(sid)]]
-
-
-def full_pose_sets():
-    out = {}
-    for colour, off in (("red", 0), ("blue", 59)):
-        out[colour] = {n: [k + off for k in ks] for n, ks in PLAYER_CATS}
-    out["referee"] = {n: list(ks) for n, ks in REF_CATS}
-    out["ball"] = {"rotation": list(BALL_ROT), "shadow": [145]}
-    out["goals"] = {"left": [1000], "right": [1024]}
-    return out
 
 
 def poly_len(p):
@@ -539,6 +649,95 @@ def _match(prev, recs, prev2=None):
     return m
 
 
+KICKOFF_CX = FW // 2 - CELL_W // 2
+KICKOFF_CY = 24
+KICKOFF_SCROLL = (FW // 2 - WIN_W // 2, 12)
+
+
+def kickoff_figs():
+    ys = [KICKOFF_CY - 21, KICKOFF_CY - 7, KICKOFF_CY + 7, KICKOFF_CY + 21]
+    red = [(28, KICKOFF_CY)]
+    red += [(64, y) for y in ys]
+    red += [(104, y) for y in ys]
+    red += [(KICKOFF_CX - 8, KICKOFF_CY), (KICKOFF_CX - 20, KICKOFF_CY + 14)]
+    figs = [[x, y, stand_id(0, "E")] for x, y in red]
+    figs += [[FW - CELL_W - x, y, stand_id(59, "W")] for x, y in red]
+    figs.append([KICKOFF_CX, 6, REF_STAND])
+    bx = FW // 2 - 2
+    figs.append([bx, KICKOFF_CY + 1, 145])
+    figs.append([bx, KICKOFF_CY, 142])
+    figs.append([bx, 28, 1000])
+    figs.append([bx, 28, 1024])
+    assert len(figs) == N_RECORDS
+    return figs
+
+
+KICKOFF_COUNTS = [11, 11, 1, 1, 1, 1, 1]
+KICKOFF_NOTE = "Kick-off formation used by New scene: 27 records [x, y, sprite id] (red, blue, referee, shadow, ball, goals)."
+
+
+def _grp(sid):
+    if sid == 1000:
+        return 5
+    if sid > 1000:
+        return 6
+    if sid == 145:
+        return 3
+    if sid >= 142:
+        return 4
+    return 0 if sid <= 58 else 1 if sid <= 117 else 2
+
+
+def _kick_check(figs):
+    cnt = [0] * 7
+    for g in figs:
+        if len(g) != 3 or not 0 <= g[2] <= 1024:
+            return "invalid record %s" % (g,)
+        cnt[_grp(g[2])] += 1
+    if len(figs) != N_RECORDS or cnt != KICKOFF_COUNTS:
+        return "needs 11 red + 11 blue players, referee, shadow, ball and 2 goals (found %s)" % cnt
+    return None
+
+
+def save_kickoff(figs, scroll):
+    figs = [[int(v) for v in g] for g in figs]
+    err = _kick_check(figs)
+    if err:
+        return err
+    ordered = [g for _, g in sorted(enumerate(figs), key=lambda t: (_grp(t[1][2]), t[0]))]
+    try:
+        _dump(KICKOFF_FILE, {"_note": KICKOFF_NOTE, "scroll": [int(scroll[0]), int(scroll[1])], "figs": ordered})
+    except OSError as ex:
+        return str(ex)
+    return None
+
+
+def reset_kickoff():
+    _dump(KICKOFF_FILE, {"_note": KICKOFF_NOTE, "scroll": list(KICKOFF_SCROLL), "figs": kickoff_figs()})
+
+
+def load_kickoff():
+    if not os.path.isfile(KICKOFF_FILE):
+        try:
+            reset_kickoff()
+        except OSError:
+            pass
+        return list(KICKOFF_SCROLL), kickoff_figs()
+    raw = _read_json(KICKOFF_FILE)
+    try:
+        if not isinstance(raw, dict):
+            raise ValueError("unreadable JSON")
+        figs = [[int(v) for v in g] for g in raw["figs"]]
+        err = _kick_check(figs)
+        if err:
+            raise ValueError(err)
+        sc = [max(0, min(FW - WIN_W, int(raw["scroll"][0]))), max(0, min(FH - WIN_H, int(raw["scroll"][1])))]
+        return sc, figs
+    except (TypeError, ValueError, KeyError, IndexError) as ex:
+        DATA_WARNINGS.append("%s: %s - default formation used" % (os.path.basename(KICKOFF_FILE), ex))
+        return list(KICKOFF_SCROLL), kickoff_figs()
+
+
 class Scene:
     def __init__(self):
         self.sig = SIGNATURES[1]
@@ -550,7 +749,8 @@ class Scene:
     @staticmethod
     def new():
         s = Scene()
-        s.frames = [Frame((110, 0), [])]
+        sc, figs = load_kickoff()
+        s.frames = [Frame(sc, figs)]
         return s
 
     @staticmethod
@@ -796,7 +996,7 @@ def run_gui(path=None):
             for lbl, cmd, acc in (("New scene", self.new_scene, "Ctrl+N"), ("Open...", self.open_dialog, "Ctrl+O"),
                                   ("Save", self.save, "Ctrl+S"), ("Save As...", self.save_as, "Ctrl+Shift+S"),
                                   ("Save as numbered scene (update ANZAHL)...", self.save_numbered, ""),
-                                  (None, None, None), ("Export pose sets (JSON)...", self.export_sets, ""),
+                                  (None, None, None), 
                                   ("PIC folder...", self.choose_pic, ""), ("Delete file...", self.delete_file, ""),
                                   (None, None, None), ("Exit", self.quit_app, "")):
                 self._add(f, lbl, cmd, acc)
@@ -851,6 +1051,14 @@ def run_gui(path=None):
             v.add_command(label="Zoom in", command=lambda: self.set_zoom(1), accelerator="Ctrl++")
             v.add_command(label="Zoom out", command=lambda: self.set_zoom(-1), accelerator="Ctrl+-")
             m.add_cascade(label="View", menu=v)
+
+            dm = tk.Menu(m, tearoff=0)
+            for lbl, cmd in (("Edit pose sets, actions & movement...", self.edit_data),
+                             ("Reload data files", self.reload_data), (None, None),
+                             ("Save current frame as kick-off formation", self.save_kickoff_here),
+                             ("Reset kick-off formation to default", self.reset_kickoff_file)):
+                self._add(dm, lbl, cmd, "")
+            m.add_cascade(label="Data", menu=dm)
 
             h = tk.Menu(m, tearoff=0)
             h.add_command(label="Quick help", command=self.help)
@@ -985,12 +1193,9 @@ def run_gui(path=None):
             nb.add(af, text="Actions")
             ttk.Label(af, text="Applied at the current frame to the\nselected player (team colour is automatic).",
                       foreground="#555").pack(anchor="w", padx=6, pady=(4, 2))
-            grid = ttk.Frame(af)
-            grid.pack(fill="x", padx=6)
-            for r, key in enumerate(ACTION_ORDER):
-                ttk.Label(grid, text=ACTIONS[key]["label"], width=30).grid(row=r, column=0, sticky="w", pady=1)
-                ttk.Button(grid, text="< W", width=4, command=lambda k=key: self.do_action(k, "W")).grid(row=r, column=1, padx=1)
-                ttk.Button(grid, text="E >", width=4, command=lambda k=key: self.do_action(k, "E")).grid(row=r, column=2, padx=1)
+            self.act_grid = ttk.Frame(af)
+            self.act_grid.pack(fill="x", padx=6)
+            self.build_action_grid()
             ttk.Checkbutton(af, text="then resume running automatically", variable=self.resume).pack(anchor="w", padx=6, pady=(4, 2))
             ttk.Label(af, text="Run direction (sprites, until end of film):", foreground="#555").pack(anchor="w", padx=6)
             cp = ttk.Frame(af)
@@ -1679,7 +1884,8 @@ def run_gui(path=None):
                 " (Rope softness = how many frames are pulled). Shift = move only that point.\n"
                 " 'pin current frame' keeps the current frame in place. Path menu: smooth / even speed / freeze.\n\n"
                 "ACTIONS (right-click a player, Figure menu or Actions tab)\n"
-                " Dive, Header, Bicycle kick, Collision fall, Get up - each with E/W, colour automatic.\n\n"
+                " Dive, Header, Bicycle kick, Collision fall, Get up, Celebration, Moonwalk - colour automatic.\n"
+                " E/W = direction of the action (for Moonwalk: direction of travel, sprites face the other way).\n\n"
                 "CAMERA\n Path/Camera > Camera follows ball/figure generates the scroll keyframes for you.\n\n"
                 "MOUSE\n Drag figure: move (Ctrl+click or box-select for groups; Shift on the ball = height only).\n"
                 " Drag the cyan window edge: scroll (also live while playing). Box select: leader = rule in the bar; click a selected figure to change it.\n"
@@ -1687,7 +1893,11 @@ def run_gui(path=None):
                 " Wheel / PgUp / PgDn: change frame. Timeline: click, right-click.\n\n"
                 "KEYS\n Arrows: move 1 px (Shift = 5) | [ ]: previous/next pose | Space: play | Ins/Del: frame\n"
                 " Ctrl+Z/Y undo/redo | Ctrl+S save | Ctrl+A select all players | Ctrl +/-: zoom | Esc: cancel/deselect\n\n"
-                "Pose sets marked (?) are still unverified; override with tore_poses.json / tore_actions.json.")
+                "A new scene holds ALL 27 sprites in kick-off formation; sprites can never be deleted.\n\n"
+                "DATA FILES (next to the script, read at start-up)\n"
+                " tore_pose_sets.json / tore_actions.json / tore_kickoff.json - edit them by hand or with the Data menu:\n"
+                " Edit pose sets, actions & movement (add / edit ids) and Save current frame as kick-off formation.\n"
+                " Pose sets marked (?) are still unverified.")
 
         def sel_sid(self):
             return None if self.sel is None else self.fr.figs[self.sel][2]
@@ -1798,19 +2008,7 @@ def run_gui(path=None):
                 self.set_pose_to(self.sel, sid)
                 self.refresh()
                 return
-
-            if len(self.fr.figs) >= N_RECORDS:
-                return self.note("Select a figure to assign a sprite ID.")
-
-            self.snap()
-            x = max(0, min(FW - sprite_w(sid), self.fr.scroll[0] + WIN_W // 2 - sprite_w(sid) // 2))
-            y = max(0, min(MAX_Y, self.fr.scroll[1] + WIN_H // 2 - Y_OFFSET - CELL_H // 2))
-            for i in self.frames_in_scope():
-                f = self.scene.frames[i]
-                f.figs.append([x, y, sid])
-                f.touch()
-            self.sel = len(self.fr.figs) - 1
-            self.refresh()
+            return self.note("Select a figure first to assign a sprite ID.")
 
         def load_gfx(self, p=None):
             pic = locate_pic(p)
@@ -2077,8 +2275,8 @@ def run_gui(path=None):
         def _action_menu(self, parent):
             am = tk.Menu(parent, tearoff=0)
             for key in ACTION_ORDER:
-                for side in "EW":
-                    am.add_command(label="%s -> %s" % (ACTIONS[key]["label"], side),
+                for side in action_sides(key):
+                    am.add_command(label=action_label(key, side),
                                    command=lambda k=key, s=side: self.do_action(k, s))
                 am.add_separator()
             return am
@@ -2408,7 +2606,7 @@ def run_gui(path=None):
             if self.resume.get() and self.idx + n < len(fs):
                 self.auto_sprites([self.sel], self.idx + n, len(fs) - 1, force=False)
             self.refresh()
-            self.note("%s (%s): %d frames from frame %d" % (ACTIONS[key]["label"], side, n, self.idx + 1))
+            self.note("%s: %d frames from frame %d" % (action_label(key, side), n, self.idx + 1))
 
 
         def tween_to(self, end):
@@ -2625,16 +2823,360 @@ def run_gui(path=None):
                 c.create_rectangle(d["x0"], d["y0"], d["x1"], d["y1"], outline="#00e5ff", dash=(3, 3), tags="ov")
 
 
-        def export_sets(self):
-            p = filedialog.asksaveasfilename(title="Export pose sets", defaultextension=".json", initialfile="tore_pose_sets.json",
-                                             filetypes=[("JSON", "*.json")])
-            if p:
-                with open(p, "w", encoding="utf-8") as fh:
-                    json.dump(full_pose_sets(), fh, indent=1)
-                self.note("Pose sets written to %s" % p)
+        def build_action_grid(self):
+            grid = self.act_grid
+            for wd in grid.winfo_children():
+                wd.destroy()
+            for r, key in enumerate(ACTION_ORDER):
+                ttk.Label(grid, text=ACTIONS[key]["label"], width=30).grid(row=r, column=0, sticky="w", pady=1)
+                if ACTIONS[key].get("single"):
+                    ttk.Button(grid, text="Go", width=10, command=lambda k=key: self.do_action(k, "E")).grid(row=r, column=1, columnspan=2, padx=1)
+                    continue
+                ttk.Button(grid, text="< W", width=4, command=lambda k=key: self.do_action(k, "W")).grid(row=r, column=1, padx=1)
+                ttk.Button(grid, text="E >", width=4, command=lambda k=key: self.do_action(k, "E")).grid(row=r, column=2, padx=1)
+
+        def after_data_change(self):
+            self._menus()
+            self.build_action_grid()
+            self.cat_var.set("")
+            self.refresh()
+
+        def reload_data(self):
+            warn = load_data()
+            self.after_data_change()
+            self.note("Data files reloaded" + (" - " + "; ".join(warn) if warn else ""))
+
+        def save_kickoff_here(self):
+            if not messagebox.askyesno("Kick-off formation", "Save the sprites, positions and window of the CURRENT frame as the kick-off\n"
+                                       "formation used by 'New scene'?\n\n%s" % KICKOFF_FILE):
+                return
+            err = save_kickoff(self.fr.figs, self.fr.scroll)
+            if err:
+                return messagebox.showerror("Kick-off formation", "Cannot save this frame: %s" % err)
+            self.note("Kick-off formation saved to %s" % KICKOFF_FILE)
+
+        def reset_kickoff_file(self):
+            if messagebox.askyesno("Kick-off formation", "Restore the built-in kick-off formation in\n%s ?" % KICKOFF_FILE):
+                try:
+                    reset_kickoff()
+                except OSError as ex:
+                    return messagebox.showerror("Kick-off formation", str(ex))
+                self.note("Kick-off formation reset to default")
+
+        def edit_data(self):
+            if getattr(self, "_dw", None) is not None and self._dw.winfo_exists():
+                return self._dw.lift()
+            w = self._dw = tk.Toplevel(self)
+            w.title("Edit pose sets, actions & movement")
+            w.transient(self)
+            pg = {"red": {n: list(v) for n, v in PLAYER_CATS}, "referee": {n: list(v) for n, v in REF_CATS},
+                  "ball": {n: list(v) for n, v in BALL_ALL}}
+            ad = {"order": list(ACTION_ORDER), "actions": copy.deepcopy(ACTIONS),
+                  "moves": {d: list(v) for d, v in MOVE_E.items()}, "stand": dict(STAND_K),
+                  "referee": {"move": {s: list(v) for s, v in REF_MOVE.items()}, "stand": REF_STAND}}
+            nb = ttk.Notebook(w)
+            nb.pack(fill="both", expand=True, padx=6, pady=6)
+
+            def err(title, ex):
+                messagebox.showerror(title, str(ex), parent=w)
+
+            def preview(cv, rows):
+                cv.delete("all")
+                cv._ph = []
+                for r, (lab, ids) in enumerate(rows):
+                    y = r * 46
+                    cv.create_text(2, y + 22, anchor="w", text=lab, fill="#333")
+                    for n, pid in enumerate(ids[:14]):
+                        x = 40 + n * 38
+                        spr = sprite_of(self.gfx, pid)
+                        if spr is not None:
+                            ph = ImageTk.PhotoImage(spr.resize((spr.width * 3, spr.height * 3), Image.NEAREST))
+                            cv._ph.append(ph)
+                            cv.create_image(x + 18, y + 20, image=ph)
+                        cv.create_text(x + 18, y + 42, text=str(pid), fill="#555", font=("TkDefaultFont", 7))
+
+            def safe_ids(text, lo, hi):
+                try:
+                    return parse_ids(text, lo, hi)
+                except ValueError:
+                    return []
+
+            t1 = ttk.Frame(nb)
+            nb.add(t1, text="Pose sets")
+            grp = tk.StringVar(value="red")
+            top = ttk.Frame(t1)
+            top.pack(fill="x", pady=4)
+            ttk.Label(top, text="Group:").pack(side="left")
+            gcb = ttk.Combobox(top, textvariable=grp, values=["red", "referee", "ball"], state="readonly", width=10)
+            gcb.pack(side="left", padx=4)
+            ttk.Label(top, text="red: ids 0-58 (blue = +59 automatic) | referee: 118-141 | ball: 142-145", foreground="#666").pack(side="left", padx=8)
+            body = ttk.Frame(t1)
+            body.pack(fill="both", expand=True)
+            lb = tk.Listbox(body, width=36, height=16, exportselection=False)
+            lb.pack(side="left", fill="y")
+            form = ttk.Frame(body)
+            form.pack(side="left", fill="both", expand=True, padx=8)
+            name_v, ids_v = tk.StringVar(), tk.StringVar()
+            ttk.Label(form, text="Name").grid(row=0, column=0, sticky="w")
+            ttk.Entry(form, textvariable=name_v, width=44).grid(row=0, column=1, sticky="we", pady=2)
+            ttk.Label(form, text="IDs").grid(row=1, column=0, sticky="w")
+            ttk.Entry(form, textvariable=ids_v, width=44).grid(row=1, column=1, sticky="we", pady=2)
+            ttk.Label(form, text="e.g.  3,4,5   or   15-20   or   43-38 (descending ok)",
+                      foreground="#666").grid(row=2, column=1, sticky="w")
+            pv = tk.Canvas(form, width=40 + 14 * 38, height=46, highlightthickness=0)
+            pv.grid(row=3, column=0, columnspan=2, pady=8, sticky="w")
+            bt = ttk.Frame(form)
+            bt.grid(row=4, column=0, columnspan=2, sticky="w")
+
+            def rng():
+                return {"red": (0, 58), "referee": (118, 141), "ball": (142, 145)}[grp.get()]
+
+            def fill_list(sel=None):
+                lb.delete(0, "end")
+                for n in pg[grp.get()]:
+                    lb.insert("end", n)
+                if sel is not None and 0 <= sel < lb.size():
+                    lb.selection_set(sel)
+                    lb.see(sel)
+
+            def show_prev(*_):
+                preview(pv, [("", safe_ids(ids_v.get(), *rng()))])
+
+            def on_sel(_e=None):
+                s = lb.curselection()
+                if s:
+                    n = lb.get(s[0])
+                    name_v.set(n)
+                    ids_v.set(ids_text(pg[grp.get()][n]))
+
+            def p_read(exclude=None):
+                nm = name_v.get().strip()
+                if not nm:
+                    raise ValueError("Enter a name")
+                if nm != exclude and nm in pg[grp.get()]:
+                    raise ValueError("'%s' already exists - select it and use Update" % nm)
+                return nm, parse_ids(ids_v.get(), *rng())
+
+            def p_add():
+                try:
+                    nm, ids = p_read()
+                except ValueError as ex:
+                    return err("Pose set", ex)
+                pg[grp.get()][nm] = ids
+                fill_list(len(pg[grp.get()]) - 1)
+
+            def p_upd():
+                s = lb.curselection()
+                if not s:
+                    return err("Pose set", "Select a set in the list first")
+                d = pg[grp.get()]
+                old = lb.get(s[0])
+                try:
+                    nm, ids = p_read(exclude=old)
+                except ValueError as ex:
+                    return err("Pose set", ex)
+                items = list(d.items())
+                items[s[0]] = (nm, ids)
+                d.clear()
+                d.update(items)
+                fill_list(s[0])
+
+            def p_del():
+                s = lb.curselection()
+                if s and messagebox.askyesno("Delete", "Delete '%s'?" % lb.get(s[0]), parent=w):
+                    del pg[grp.get()][lb.get(s[0])]
+                    fill_list(min(s[0], lb.size() - 2))
+
+            def p_move(delta):
+                s = lb.curselection()
+                if not s:
+                    return
+                d = pg[grp.get()]
+                items = list(d.items())
+                i, j = s[0], s[0] + delta
+                if 0 <= j < len(items):
+                    items[i], items[j] = items[j], items[i]
+                    d.clear()
+                    d.update(items)
+                    fill_list(j)
+
+            for txt, cmd in (("Add new", p_add), ("Update selected", p_upd), ("Delete", p_del),
+                             ("Up", lambda: p_move(-1)), ("Down", lambda: p_move(1))):
+                ttk.Button(bt, text=txt, command=cmd).pack(side="left", padx=2)
+            lb.bind("<<ListboxSelect>>", on_sel)
+            ids_v.trace_add("write", show_prev)
+            gcb.bind("<<ComboboxSelected>>", lambda e: (fill_list(), name_v.set(""), ids_v.set(""), show_prev()))
+            fill_list()
+            show_prev()
+            t2 = ttk.Frame(nb)
+            nb.add(t2, text="Actions")
+            body2 = ttk.Frame(t2)
+            body2.pack(fill="both", expand=True, pady=4)
+            lb2 = tk.Listbox(body2, width=36, height=16, exportselection=False)
+            lb2.pack(side="left", fill="y")
+            f2 = ttk.Frame(body2)
+            f2.pack(side="left", fill="both", expand=True, padx=8)
+            key_v, lab_v, e_v, w_v = tk.StringVar(), tk.StringVar(), tk.StringVar(), tk.StringVar()
+            single_v, travel_v = tk.BooleanVar(), tk.BooleanVar()
+            for r, (txt, var) in enumerate((("Key", key_v), ("Label", lab_v), ("Sequence E", e_v), ("Sequence W", w_v))):
+                ttk.Label(f2, text=txt).grid(row=r, column=0, sticky="w")
+                ttk.Entry(f2, textvariable=var, width=44).grid(row=r, column=1, sticky="we", pady=2)
+            ttk.Label(f2, text="Red ids 0-58 (blue +59 automatic). Empty W = mirror of E (k -> 58-k). Repeat ids to hold a pose.",
+                      foreground="#666", wraplength=420, justify="left").grid(row=4, column=0, columnspan=2, sticky="w")
+            ttk.Checkbutton(f2, text="No direction (single entry, W = E)", variable=single_v).grid(row=5, column=0, columnspan=2, sticky="w")
+            ttk.Checkbutton(f2, text="E/W is the direction of travel (e.g. moonwalk)", variable=travel_v).grid(row=6, column=0, columnspan=2, sticky="w")
+            pv2 = tk.Canvas(f2, width=40 + 14 * 38, height=92, highlightthickness=0)
+            pv2.grid(row=7, column=0, columnspan=2, pady=6, sticky="w")
+            bt2 = ttk.Frame(f2)
+            bt2.grid(row=8, column=0, columnspan=2, sticky="w")
+
+            def fill2(sel=None):
+                lb2.delete(0, "end")
+                for k in ad["order"]:
+                    lb2.insert("end", "%s  (%s)" % (k, ad["actions"][k]["label"]))
+                if sel is not None and 0 <= sel < lb2.size():
+                    lb2.selection_set(sel)
+                    lb2.see(sel)
+
+            def show_prev2(*_):
+                e = safe_ids(e_v.get(), 0, 58)
+                wv = [58 - k for k in e] if single_v.get() is False and not w_v.get().strip() else safe_ids(w_v.get(), 0, 58)
+                if single_v.get():
+                    wv = e
+                preview(pv2, [("E", e), ("W", wv)])
+
+            def on_sel2(_e=None):
+                s = lb2.curselection()
+                if s:
+                    k = ad["order"][s[0]]
+                    a = ad["actions"][k]
+                    key_v.set(k)
+                    lab_v.set(a["label"])
+                    e_v.set(ids_text(a["E"]))
+                    w_v.set(ids_text(a["W"]))
+                    single_v.set(bool(a.get("single")))
+                    travel_v.set(bool(a.get("travel")))
+
+            def a_read(exclude=None):
+                key = key_v.get().strip()
+                if not re.fullmatch(r"[a-z0-9_]+", key):
+                    raise ValueError("Key: lowercase letters, digits and _ only")
+                if key != exclude and key in ad["actions"]:
+                    raise ValueError("Key '%s' already exists - select it and use Update" % key)
+                e = parse_ids(e_v.get(), 0, 58)
+                if single_v.get():
+                    wv = list(e)
+                elif w_v.get().strip():
+                    wv = parse_ids(w_v.get(), 0, 58)
+                else:
+                    wv = [58 - k for k in e]
+                d = {"label": lab_v.get().strip() or key, "E": e, "W": wv}
+                if single_v.get():
+                    d["single"] = True
+                if travel_v.get():
+                    d["travel"] = True
+                return key, d
+
+            def a_add():
+                try:
+                    key, d = a_read()
+                except ValueError as ex:
+                    return err("Action", ex)
+                ad["actions"][key] = d
+                ad["order"].append(key)
+                fill2(len(ad["order"]) - 1)
+
+            def a_upd():
+                s = lb2.curselection()
+                if not s:
+                    return err("Action", "Select an action in the list first")
+                old = ad["order"][s[0]]
+                try:
+                    key, d = a_read(exclude=old)
+                except ValueError as ex:
+                    return err("Action", ex)
+                del ad["actions"][old]
+                ad["actions"][key] = d
+                ad["order"][s[0]] = key
+                fill2(s[0])
+
+            def a_del():
+                s = lb2.curselection()
+                if s and messagebox.askyesno("Delete", "Delete action '%s'?" % ad["order"][s[0]], parent=w):
+                    del ad["actions"][ad["order"].pop(s[0])]
+                    fill2(min(s[0], lb2.size() - 2))
+
+            def a_move(delta):
+                s = lb2.curselection()
+                if s and 0 <= s[0] + delta < len(ad["order"]):
+                    o, i, j = ad["order"], s[0], s[0] + delta
+                    o[i], o[j] = o[j], o[i]
+                    fill2(j)
+
+            for txt, cmd in (("Add new", a_add), ("Update selected", a_upd), ("Delete", a_del),
+                             ("Up", lambda: a_move(-1)), ("Down", lambda: a_move(1))):
+                ttk.Button(bt2, text=txt, command=cmd).pack(side="left", padx=2)
+            lb2.bind("<<ListboxSelect>>", on_sel2)
+            for v in (e_v, w_v, single_v):
+                v.trace_add("write", show_prev2)
+            fill2()
+            show_prev2()
+
+            t3 = ttk.Frame(nb)
+            nb.add(t3, text="Movement / stand")
+            ttk.Label(t3, text="Run cycles (red ids; used by Draw path / Auto-sprites / Run), stand ids and referee ids.",
+                      foreground="#666").grid(row=0, column=0, columnspan=2, sticky="w", pady=4)
+            mv = {}
+            rows = [("Run %s (%s)" % (d, DIR_LABEL[d]), "m:" + d, ad["moves"][d], (0, 58)) for d in DIRS]
+            rows += [("Stand E", "s:E", [ad["stand"]["E"]], (0, 58)), ("Stand W", "s:W", [ad["stand"]["W"]], (0, 58)),
+                     ("Referee walk E", "rm:E", ad["referee"]["move"]["E"], (118, 141)),
+                     ("Referee walk W", "rm:W", ad["referee"]["move"]["W"], (118, 141)),
+                     ("Referee stand", "rs", [ad["referee"]["stand"]], (118, 141))]
+            for r, (lab, key, val, (lo, hi)) in enumerate(rows, start=1):
+                ttk.Label(t3, text=lab).grid(row=r, column=0, sticky="w", padx=4)
+                var = tk.StringVar(value=ids_text(val))
+                ttk.Entry(t3, textvariable=var, width=30).grid(row=r, column=1, sticky="w", pady=1)
+                mv[key] = (var, lo, hi)
+
+            def apply_all():
+                try:
+                    for k, (var, lo, hi) in mv.items():
+                        vals = parse_ids(var.get(), lo, hi)
+                        if k.startswith("m:"):
+                            ad["moves"][k[2:]] = vals
+                        elif k.startswith("rm:"):
+                            ad["referee"]["move"][k[3:]] = vals
+                        else:
+                            if len(vals) != 1:
+                                raise ValueError("Stand ids need exactly one id (%s)" % k)
+                            if k.startswith("s:"):
+                                ad["stand"][k[2:]] = vals[0]
+                            else:
+                                ad["referee"]["stand"] = vals[0]
+                except ValueError as ex:
+                    return err("Movement / stand", ex)
+                ad2 = dict(ad, actions={k: ad["actions"][k] for k in ad["order"]})
+                try:
+                    save_data_files(pg, ad2)
+                except OSError as ex:
+                    return err("Save", ex)
+                load_data()
+                w.destroy()
+                self.after_data_change()
+                self.note("Saved %s and %s" % (os.path.basename(POSES_FILE), os.path.basename(ACTIONS_FILE)))
+
+            bar = ttk.Frame(w)
+            bar.pack(fill="x", padx=6, pady=(0, 6))
+            ttk.Label(bar, text="Add/Update change the lists; 'Save to files' writes the JSON files and applies them now.",
+                      foreground="#666").pack(side="left")
+            ttk.Button(bar, text="Close", command=w.destroy).pack(side="right")
+            ttk.Button(bar, text="Save to files", command=apply_all).pack(side="right", padx=4)
 
 
-    Editor().mainloop()
+    ed = Editor()
+    if DATA_WARNINGS:
+        ed.after(300, lambda: messagebox.showwarning("Data files", "\n".join(DATA_WARNINGS)))
+    ed.mainloop()
 
 
 if __name__ == "__main__":
