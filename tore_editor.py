@@ -16,6 +16,7 @@ CELL_W, CELL_H = 12, 11
 SHEET_COLS = 24
 Y_OFFSET = 35
 WIN_W, WIN_H = 182, 96
+SCROLL_MAX_X, SCROLL_MAX_Y = 137, 15
 SIGNATURES = (b"BM-Ed1.0-WK\x00", b"BM-Ed1.3-WK\x00")
 GOAL_L = ((0, 0, 24, 20), (0, 54)) 
 GOAL_R = ((24, 0, 46, 20), (296, 54))
@@ -180,9 +181,10 @@ DIR_LABEL = {"E": "East", "NE": "North-East", "N": "North", "NW": "North-West",
              "W": "West", "SW": "South-West", "S": "South", "SE": "South-East"}
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-ACTIONS_FILE = os.path.join(APP_DIR, "tore_actions.json")
-POSES_FILE = os.path.join(APP_DIR, "tore_pose_sets.json")
-KICKOFF_FILE = os.path.join(APP_DIR, "tore_kickoff.json")
+DATA_DIR = os.path.join(APP_DIR, "data")
+ACTIONS_FILE = os.path.join(DATA_DIR, "tore_actions.json")
+POSES_FILE = os.path.join(DATA_DIR, "tore_pose_sets.json")
+KICKOFF_FILE = os.path.join(DATA_DIR, "tore_kickoff.json")
 POSE_NOTE = "Red ids; blue = red+59 (same k). Mirror E<->W is k -> 58-k. Sets marked (?) are unverified."
 
 DEF_ORDER = ["dive", "header", "bicycle", "fall", "getup", "cele", "moonwalk"]
@@ -264,6 +266,7 @@ def _read_json(path):
 def _dump(path, obj):
     txt = json.dumps(obj, indent=1, ensure_ascii=False)
     txt = re.sub(r"\[\s*([\d,\s-]*?)\s*\]", lambda m: "[" + re.sub(r"\s+", " ", m.group(1)) + "]", txt)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(txt + "\n")
 
@@ -731,7 +734,7 @@ def load_kickoff():
         err = _kick_check(figs)
         if err:
             raise ValueError(err)
-        sc = [max(0, min(FW - WIN_W, int(raw["scroll"][0]))), max(0, min(FH - WIN_H, int(raw["scroll"][1])))]
+        sc = [max(0, min(SCROLL_MAX_X, int(raw["scroll"][0]))), max(0, min(SCROLL_MAX_Y, int(raw["scroll"][1])))]
         return sc, figs
     except (TypeError, ValueError, KeyError, IndexError) as ex:
         DATA_WARNINGS.append("%s: %s - default formation used" % (os.path.basename(KICKOFF_FILE), ex))
@@ -768,7 +771,7 @@ class Scene:
         prev = prev2 = None
         for i in range(n):
             w = struct.unpack("<82H", d[17 + i * FRAME_SIZE:17 + (i + 1) * FRAME_SIZE])
-            scroll = (w[0] & 255, w[0] >> 8)
+            scroll = (min(w[0] & 255, SCROLL_MAX_X), min(w[0] >> 8, SCROLL_MAX_Y))
             recs = [list(w[1 + 3 * k:4 + 3 * k]) for k in range(N_RECORDS)]
             if prev is None:
                 f = Frame(scroll, recs, list(range(N_RECORDS)))
@@ -837,7 +840,7 @@ def transform_frame(f, flip, swap):
         for g in f.figs:
             if cls(g[2]) in "LR" and b is not None:
                 g[0] = f.figs[b][0]
-        f.scroll[0] = max(0, FW - WIN_W - f.scroll[0])
+        f.scroll[0] = max(0, min(SCROLL_MAX_X, FW - WIN_W - f.scroll[0]))
 
 
 def find_anzahl(path):
@@ -925,7 +928,6 @@ def sprite_w(sid):
     return 4 if sid >= 142 else CELL_W
 
 
-LEADER_RULES = ("North", "South", "West", "East")
 
 
 def run_gui(path=None):
@@ -942,6 +944,9 @@ def run_gui(path=None):
             self.idx, self.sel = 0, None
             self.multi = set()
             self.playing = False
+            self._play_mode = "here"
+            self.loop_a, self.loop_b = 0, None
+            self._tl_drag = None
             self.undo_s, self.redo_s = [], []
             self.modified = False
             self.drag = None
@@ -951,6 +956,7 @@ def run_gui(path=None):
             self._photo = None
             self._thumbs = []
             self.pal = None
+            self._pal_job = None
             self.scope = tk.StringVar(value="frame")
             self.lock_ball = tk.BooleanVar(value=True)
             self.show_win = tk.BooleanVar(value=True)
@@ -966,6 +972,9 @@ def run_gui(path=None):
             self.cat_var = tk.StringVar()
             self.snd_var = tk.IntVar(value=-1)
             self.tool = tk.StringVar(value="select")
+            self.tool_main = tk.StringVar(value="select")
+            self.path_kind = tk.StringVar(value="draw")
+            self.cam_whole = tk.BooleanVar(value=False)
             self.pmode = tk.StringVar(value="speed")
             self.pframes = tk.IntVar(value=20)
             self.smooth = tk.BooleanVar(value=True)
@@ -974,9 +983,6 @@ def run_gui(path=None):
             self.rope = tk.DoubleVar(value=5.0)
             self.pin = tk.BooleanVar(value=True)
             self.resume = tk.BooleanVar(value=True)
-            self.cam_ball = tk.BooleanVar(value=False)
-            self.ball_off = [0, 0]
-            self.leader_rule = tk.StringVar(value=LEADER_RULES[0])
             self._t_pan = 0.0
             self.title("TORE Editor")
             self._menus()
@@ -988,6 +994,12 @@ def run_gui(path=None):
                 self.open_path(path)
             else:
                 self.refresh()
+            self.after(100, self.startup)
+
+        def startup(self):
+            self.choose_pic()
+            if DATA_WARNINGS:
+                messagebox.showwarning("Data files", "\n".join(DATA_WARNINGS), parent=self)
 
 
         def _menus(self):
@@ -1034,18 +1046,16 @@ def run_gui(path=None):
                                   ("Freeze here (stop figure)", self.freeze_here, ""),
                                   ("Interpolate position to frame...", self.tween, ""),
                                   (None, None, None),
-                                  ("Camera follows ball/figure (from this frame)", self.auto_camera, ""),
-                                  ("Camera follows ball/figure (whole film)", lambda: self.auto_camera(True), ""),
+                                  ("Camera follows selected sprite (from this frame)", self.auto_camera, ""),
+                                  ("Camera follows selected sprite (whole film)", lambda: self.auto_camera(True), ""),
                                   ("Interpolate scroll to frame...", self.tween_scroll, ""),
                                   ("Continue current scroll to end of film", self.scroll_to_end, "")):
                 self._add(p, lbl, cmd, acc)
-            p.add_separator()
-            p.add_checkbutton(label="Window locked to ball", variable=self.cam_ball, command=self.toggle_cam_ball)
             m.add_cascade(label="Path / Camera", menu=p)
 
             v = tk.Menu(m, tearoff=0)
             v.add_checkbutton(label="Show trajectory", variable=self.show_path, command=self.refresh)
-            v.add_checkbutton(label="Show visible window (182x96)", variable=self.show_win, command=self.refresh)
+            v.add_checkbutton(label="Show camera view (182x96)", variable=self.show_win, command=self.refresh)
             v.add_checkbutton(label="Show sprite ids", variable=self.show_ids, command=self.refresh)
             v.add_separator()
             v.add_command(label="Zoom in", command=lambda: self.set_zoom(1), accelerator="Ctrl++")
@@ -1075,6 +1085,58 @@ def run_gui(path=None):
 
         def _layout(self):
             z = self.z()
+            # ---- tool bar (top): main tools + sprite sheet
+            tb = ttk.Frame(self)
+            tb.pack(fill="x", padx=8, pady=(6, 0))
+            self.tool_btns = {}
+            for key, txt in (("select", "Select move (V)"), ("path", "Path (D / P)"), ("pan", "Camera (H)")):
+                b = ttk.Button(tb, text=txt, width=14, takefocus=False, command=lambda k=key: self.pick_main(k))
+                b.pack(side="left", padx=(0, 4))
+                self.tool_btns[key] = b
+            ttk.Button(tb, text="Sprite sheet", width=14, takefocus=False, command=self.open_palette).pack(side="left", padx=(8, 0))
+
+            # ---- contextual options: only the group of the active tool is shown
+            self.opt = ttk.LabelFrame(self, text="Options")
+            self.opt.pack(fill="x", padx=8, pady=(6, 0))
+            self.opt_frames = {}
+
+            o = ttk.Frame(self.opt)                       # Select move
+            self.opt_frames["select"] = o
+            ttk.Label(o, text="Rope softness").pack(side="left", padx=(6, 0))
+            ttk.Spinbox(o, from_=0.5, to=40, increment=0.5, width=4, textvariable=self.rope).pack(side="left", padx=2)
+            ttk.Checkbutton(o, text="pin current frame", variable=self.pin).pack(side="left", padx=8)
+
+            o = ttk.Frame(self.opt)                       # Path (draw / click)
+            self.opt_frames["path"] = o
+            ttk.Radiobutton(o, text="Draw", value="draw", variable=self.path_kind, command=self.on_path_kind).pack(side="left", padx=(6, 0))
+            ttk.Radiobutton(o, text="Click", value="way", variable=self.path_kind, command=self.on_path_kind).pack(side="left", padx=(6, 0))
+            ttk.Separator(o, orient="vertical").pack(side="left", fill="y", padx=8)
+            ttk.Radiobutton(o, text="speed", value="speed", variable=self.pmode).pack(side="left")
+            ttk.Spinbox(o, from_=0.5, to=40, increment=0.5, width=5, textvariable=self.speed).pack(side="left", padx=2)
+            ttk.Label(o, text="px/frame").pack(side="left")
+            ttk.Radiobutton(o, text="duration", value="frames", variable=self.pmode).pack(side="left", padx=(10, 0))
+            ttk.Spinbox(o, from_=1, to=MAX_FRAMES, width=4, textvariable=self.pframes).pack(side="left", padx=2)
+            ttk.Label(o, text="frames").pack(side="left")
+            self.timing_slot = ttk.Frame(o)               # "as drawn" exists only for freehand
+            self.timing_slot.pack(side="left")
+            self.rb_timing = ttk.Radiobutton(self.timing_slot, text="as drawn (real timing)", value="timing", variable=self.pmode)
+            ttk.Separator(o, orient="vertical").pack(side="left", fill="y", padx=8)
+            ttk.Checkbutton(o, text="smooth curves", variable=self.smooth).pack(side="left")
+            ttk.Checkbutton(o, text="auto run sprites", variable=self.auto_spr).pack(side="left", padx=4)
+            ttk.Checkbutton(o, text="diagonal sprites", variable=self.diag).pack(side="left")
+            ttk.Checkbutton(o, text="later frames follow", variable=self.follow).pack(side="left", padx=4)
+
+            o = ttk.Frame(self.opt)                       # Camera
+            self.opt_frames["pan"] = o
+            ttk.Label(o, text="Scroll X").pack(side="left", padx=(6, 0))
+            ttk.Spinbox(o, from_=0, to=SCROLL_MAX_X, width=4, textvariable=self.sx, command=self.set_scroll).pack(side="left")
+            ttk.Label(o, text="Y").pack(side="left", padx=(6, 0))
+            ttk.Spinbox(o, from_=0, to=SCROLL_MAX_Y, width=3, textvariable=self.sy, command=self.set_scroll).pack(side="left")
+            ttk.Separator(o, orient="vertical").pack(side="left", fill="y", padx=8)
+            ttk.Button(o, text="Camera follow selected sprite", command=lambda: self.auto_camera(self.cam_whole.get())).pack(side="left")
+            ttk.Checkbutton(o, text="whole film", variable=self.cam_whole).pack(side="left", padx=6)
+
+            # ---- general bar
             t1 = ttk.Frame(self)
             t1.pack(fill="x", padx=8, pady=(6, 0))
             ttk.Label(t1, text="Changes apply to:").pack(side="left")
@@ -1088,46 +1150,11 @@ def run_gui(path=None):
             cb.pack(side="left", padx=4)
             cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
             ttk.Checkbutton(t1, text="trajectory", variable=self.show_path, command=self.refresh).pack(side="left", padx=4)
-            ttk.Checkbutton(t1, text="window", variable=self.show_win, command=self.refresh).pack(side="left")
+            ttk.Checkbutton(t1, text="camera", variable=self.show_win, command=self.refresh).pack(side="left")
             ttk.Checkbutton(t1, text="ids", variable=self.show_ids, command=self.refresh).pack(side="left", padx=4)
-            ttk.Label(t1, text=" Scroll X").pack(side="left")
-            ttk.Spinbox(t1, from_=0, to=FW - WIN_W, width=4, textvariable=self.sx, command=self.set_scroll).pack(side="left")
-            ttk.Label(t1, text="Y").pack(side="left")
-            ttk.Spinbox(t1, from_=0, to=FH - WIN_H, width=3, textvariable=self.sy, command=self.set_scroll).pack(side="left")
 
-            t2 = ttk.LabelFrame(self, text="Path & animation")
-            t2.pack(fill="x", padx=8, pady=(4, 0))
-            ttk.Radiobutton(t2, text="speed", value="speed", variable=self.pmode).pack(side="left", padx=(6, 0))
-            ttk.Spinbox(t2, from_=0.5, to=40, increment=0.5, width=5, textvariable=self.speed).pack(side="left", padx=2)
-            ttk.Label(t2, text="px/frame").pack(side="left")
-            ttk.Radiobutton(t2, text="duration", value="frames", variable=self.pmode).pack(side="left", padx=(10, 0))
-            ttk.Spinbox(t2, from_=1, to=MAX_FRAMES, width=4, textvariable=self.pframes).pack(side="left", padx=2)
-            ttk.Label(t2, text="frames").pack(side="left")
-            ttk.Radiobutton(t2, text="as drawn (real timing)", value="timing", variable=self.pmode).pack(side="left", padx=10)
-            ttk.Separator(t2, orient="vertical").pack(side="left", fill="y", padx=6)
-            ttk.Checkbutton(t2, text="smooth curves", variable=self.smooth).pack(side="left")
-            ttk.Checkbutton(t2, text="auto run sprites", variable=self.auto_spr).pack(side="left", padx=4)
-            ttk.Checkbutton(t2, text="diagonal sprites", variable=self.diag).pack(side="left")
-            ttk.Checkbutton(t2, text="later frames follow", variable=self.follow).pack(side="left", padx=4)
-            ttk.Separator(t2, orient="vertical").pack(side="left", fill="y", padx=6)
-            ttk.Label(t2, text="Rope softness").pack(side="left")
-            ttk.Spinbox(t2, from_=0.5, to=40, increment=0.5, width=4, textvariable=self.rope).pack(side="left", padx=2)
-            ttk.Checkbutton(t2, text="pin current frame", variable=self.pin).pack(side="left", padx=4)
-            t3 = ttk.Frame(self)
-            t3.pack(fill="x", padx=8, pady=(4, 0))
-            ttk.Checkbutton(t3, text="window locked to ball", variable=self.cam_ball, command=self.toggle_cam_ball).pack(side="left")
-            ttk.Separator(t3, orient="vertical").pack(side="left", fill="y", padx=8)
-            ttk.Label(t3, text="Box-select leader:").pack(side="left")
-            lc = ttk.Combobox(t3, textvariable=self.leader_rule, values=LEADER_RULES, state="readonly", width=7)
-            lc.pack(side="left", padx=4)
-            lc.bind("<<ComboboxSelected>>", lambda e: self.regroup_leader())
-            ttk.Label(t3, text="(or click / right-click a selected figure to make it the leader)",foreground="#555").pack(side="left", padx=4)
             body = ttk.Frame(self)
             body.pack(fill="both", expand=True, padx=8, pady=6)
-            tools = ttk.Frame(body)
-            tools.pack(side="left", fill="y", padx=(0, 6))
-            for key, txt in (("select", "Select move (V)"), ("draw", "Draw path (D)"), ("way", "Click path (P)"), ("pan", "Pan window (H)")):
-                ttk.Radiobutton(tools, text=txt, value=key, variable=self.tool, style="Toolbutton", command=self.set_tool, width=14).pack(fill="x", pady=2)
             left = ttk.Frame(body)
             left.pack(side="left", fill="both", expand=True)
             self.canvas = tk.Canvas(left, bg="black", highlightthickness=0, width=FW * z, height=FH * z, cursor="arrow")
@@ -1135,12 +1162,13 @@ def run_gui(path=None):
             bar = ttk.Frame(left)
             bar.pack(fill="x", pady=(6, 0))
             for t, c, w in (("|<", lambda: self.goto(0), 3), ("<", lambda: self.step(-1), 3)):
-                ttk.Button(bar, text=t, width=w, command=c).pack(side="left")
-            self.btn = ttk.Button(bar, text="Play all", width=9, command=lambda: self.toggle(0))
+                ttk.Button(bar, text=t, width=w, takefocus=False, command=c).pack(side="left")
+            self.btn = ttk.Button(bar, text="Play all", width=9, takefocus=False, command=lambda: self.toggle("all"))
             self.btn.pack(side="left")
-            ttk.Button(bar, text="Play from here", width=13, command=lambda: self.toggle(self.idx)).pack(side="left")
+            self.btn2 = ttk.Button(bar, text="Play from here", width=13, takefocus=False, command=lambda: self.toggle("here"))
+            self.btn2.pack(side="left")
             for t, c, w in ((">", lambda: self.step(1), 3), (">|", lambda: self.goto(len(self.scene.frames) - 1), 3)):
-                ttk.Button(bar, text=t, width=w, command=c).pack(side="left")
+                ttk.Button(bar, text=t, width=w, takefocus=False, command=c).pack(side="left")
             ttk.Button(bar, text="+ Frame", command=self.ins_frame).pack(side="left", padx=(12, 0))
             ttk.Button(bar, text="- Frame", command=self.del_frame).pack(side="left")
             ttk.Checkbutton(bar, text="Loop", variable=self.loop).pack(side="left", padx=8)
@@ -1148,20 +1176,20 @@ def run_gui(path=None):
             ttk.Spinbox(bar, from_=1, to=60, width=4, textvariable=self.fps).pack(side="left", padx=(2, 8))
             ttk.Label(bar, text="zoom").pack(side="left")
             ttk.Spinbox(bar, from_=1, to=6, width=3, textvariable=self.zoom, command=self.rezoom).pack(side="left", padx=2)
-            self.tl = tk.Canvas(left, height=58, bg="#f2f2f2", highlightthickness=1, highlightbackground="#bbb")
+            self.tl = tk.Canvas(left, height=78, bg="#f2f2f2", highlightthickness=1, highlightbackground="#bbb")
             self.tl.pack(fill="x", pady=(6, 0))
-            self.tl.bind("<Button-1>", self.on_tl)
-            self.tl.bind("<B1-Motion>", self.on_tl)
+            self.tl.bind("<Button-1>", self.on_tl_press)
+            self.tl.bind("<B1-Motion>", self.on_tl_drag)
+            self.tl.bind("<ButtonRelease-1>", self.on_tl_release)
             for b in ("<Button-3>", "<Button-2>"):
                 self.tl.bind(b, self.on_tl_right)
             self.tl.bind("<Configure>", lambda e: self.draw_timeline())
-            ttk.Label(left, text="Timeline: green = running, grey = standing, orange = special action (selected figure)", foreground="#777").pack(anchor="w")
+            ttk.Label(left, text="Timeline: green = running, grey = standing, orange = special action (selected figure) | drag the two bottom markers to set the play/loop range", foreground="#777").pack(anchor="w")
             right = ttk.Frame(body)
             right.pack(side="right", fill="y", padx=(8, 0))
             hdr = ttk.Frame(right)
             hdr.pack(fill="x")
             ttk.Label(hdr, text="Figures (Ctrl+click = multi-select)").pack(side="left")
-            ttk.Button(hdr, text="Sprite sheet", command=self.open_palette).pack(side="right")
             tf = ttk.Frame(right)
             tf.pack(fill="x")
             self.tree = ttk.Treeview(tf, columns=("x", "y", "pose"), height=8, selectmode="browse")
@@ -1242,7 +1270,11 @@ def run_gui(path=None):
                     self.tool.set(t)
                     self.set_tool()
                 return f
-            for k, fn in ((("<space>"), lambda e: self.toggle(0)), ("<Left>", lambda e: self.nudge(-1, 0, e)),
+            def space_key(e):
+                if isinstance(e.widget, (tk.Entry, ttk.Entry, ttk.Spinbox, ttk.Combobox)):
+                    return
+                self.toggle("here")
+            for k, fn in ((("<space>"), space_key), ("<Left>", lambda e: self.nudge(-1, 0, e)),
                           ("<Right>", lambda e: self.nudge(1, 0, e)), ("<Up>", lambda e: self.nudge(0, -1, e)),
                           ("<Down>", lambda e: self.nudge(0, 1, e)), ("<Prior>", lambda e: self.step(-1)),
                           ("<Next>", lambda e: self.step(1)), ("<comma>", lambda e: self.step(-1)),
@@ -1330,6 +1362,33 @@ def run_gui(path=None):
                 f.touch()
 
 
+        def targets(self):
+            ids = set(self.multi)
+            if self.sel is not None:
+                ids.add(self.sel)
+            ids = [s for s in sorted(ids) if s < len(self.fr.figs) and cls(self.fr.figs[s][2]) not in "LR"]
+            if self.sel in ids:
+                ids.remove(self.sel)
+                ids.insert(0, self.sel)
+            return ids
+
+        @staticmethod
+        def conv_pose(pid, tgt_sid):
+            tp, tt = team_of(pid), team_of(tgt_sid)
+            if tp in ("R", "B") and tt in ("R", "B"):
+                return pid - (0 if tp == "R" else 59) + (0 if tt == "R" else 59)
+            if tp == "A" and tt == "A":
+                return pid
+            if tp is None and tt is None and cls(pid) == cls(tgt_sid):
+                return pid
+            return None
+
+        def set_pose_all(self, pid):
+            for sl in self.targets():
+                p = pid if sl == self.sel else self.conv_pose(pid, self.fr.figs[sl][2])
+                if p is not None:
+                    self.set_pose_to(sl, p)
+
         def set_pose_to(self, sl, pid):
             pid = max(0, min(145, pid))
             for i in self.frames_in_scope():
@@ -1351,7 +1410,7 @@ def run_gui(path=None):
             for _, ids in cats_for(cur):
                 if cur in ids:
                     self.snap()
-                    self.set_pose_to(self.sel, ids[(ids.index(cur) + d) % len(ids)])
+                    self.set_pose_all(ids[(ids.index(cur) + d) % len(ids)])
                     return self.refresh()
 
         def hit(self, px, py):
@@ -1397,7 +1456,7 @@ def run_gui(path=None):
             t = self.tool.get()
             ctrl = bool(e.state & 4)
             if t == "pan":
-                self.drag = dict(kind="win", x0=e.x, y0=e.y, a=tuple(self.fr.scroll), off=tuple(self.ball_off), snapped=False, moved=False, live=False, pos=None)
+                self.drag = dict(kind="win", x0=e.x, y0=e.y, a=tuple(self.fr.scroll), snapped=False, moved=False, live=False, pos=None)
                 return
             sl = self.hit(int(px), int(py))
             if t == "draw":
@@ -1441,7 +1500,7 @@ def run_gui(path=None):
                 return self.start_rope(k, e)
         
             if self.near_window_edge(px, py):
-                self.drag = dict(kind="win", x0=e.x, y0=e.y, a=tuple(self.fr.scroll), off=tuple(self.ball_off),
+                self.drag = dict(kind="win", x0=e.x, y0=e.y, a=tuple(self.fr.scroll),
                                 snapped=False, moved=False, live=False, pos=None)
             else:
                 self.drag = dict(kind="band", x0=e.x, y0=e.y, x1=e.x, y1=e.y, ctrl=ctrl, moved=False)
@@ -1492,7 +1551,7 @@ def run_gui(path=None):
                 d["done"] = (dxp, dyp)
             else:  
                 if self.playing and not d["live"]:
-                    d.update(live=True, x0=e.x, y0=e.y, a=tuple(self.fr.scroll), off=tuple(self.ball_off))
+                    d.update(live=True, x0=e.x, y0=e.y, a=tuple(self.fr.scroll))
                     return
                 if not (dxp or dyp):
                     return
@@ -1500,15 +1559,12 @@ def run_gui(path=None):
                     self.snap()
                     d["snapped"] = True
                 d["moved"] = True
-                if self.cam_ball.get():  
-                    self.ball_off = [max(-FW, min(FW, d["off"][0] + dxp)), max(-FH, min(FH, d["off"][1] + dyp))]
-                else:
-                    nx = max(0, min(FW - WIN_W, d["a"][0] + dxp))
-                    ny = max(0, min(FH - WIN_H, d["a"][1] + dyp))
-                    d["pos"] = (nx, ny)
-                    for i in self.frames_in_scope():
-                        self.scene.frames[i].scroll = [nx, ny]
-                        self.scene.frames[i].dirty = True
+                nx = max(0, min(SCROLL_MAX_X, d["a"][0] + dxp))
+                ny = max(0, min(SCROLL_MAX_Y, d["a"][1] + dyp))
+                d["pos"] = (nx, ny)
+                for i in self.frames_in_scope():
+                    self.scene.frames[i].scroll = [nx, ny]
+                    self.scene.frames[i].dirty = True
                 if self.playing:
                     now = time.monotonic()
                     if now - self._t_pan < 0.03:
@@ -1682,19 +1738,25 @@ def run_gui(path=None):
                 return messagebox.showerror("Error", "Invalid values.")
             if seq:
                 self.snap()
-                for n, i in enumerate(range(self.idx, len(self.scene.frames))):
-                    self.scene.frames[i].figs[self.sel][2] = max(0, min(145, seq[n % len(seq)]))
-                    self.scene.frames[i].touch()
+                for sl in self.targets():
+                    cur = self.fr.figs[sl][2]
+                    sq = [q if sl == self.sel else self.conv_pose(q, cur) for q in seq]
+                    if None in sq:
+                        continue
+                    for n, i in enumerate(range(self.idx, len(self.scene.frames))):
+                        self.scene.frames[i].figs[sl][2] = max(0, min(145, sq[n % len(sq)]))
+                        self.scene.frames[i].touch()
                 self.refresh()
 
         def clear_anim(self):
             if not self.need_sel():
                 return
             self.snap()
-            pid = self.fr.figs[self.sel][2]
-            for f in self.scene.frames[self.idx:]:
-                f.figs[self.sel][2] = pid
-                f.touch()
+            for sl in self.targets():
+                pid = self.fr.figs[sl][2]
+                for f in self.scene.frames[self.idx:]:
+                    f.figs[sl][2] = pid
+                    f.touch()
             self.refresh()
 
         def tween(self):
@@ -1717,50 +1779,14 @@ def run_gui(path=None):
                 fs[self.idx + k].dirty = True
             self.refresh()
 
-        def ball_anchor(self, f):
-            b = f.index_of("B")
-            if b is None:
-                return None
-            g = f.figs[b]
-            sh = f.index_of("S")
-            gy = f.figs[sh][1] if sh is not None else g[1]
-            return g[0] + sprite_w(g[2]) / 2 - WIN_W / 2, gy + Y_OFFSET - WIN_H / 2
-
-        def apply_ball_lock(self):
-            ox, oy = self.ball_off
-            for f in self.scene.frames:
-                a = self.ball_anchor(f)
-                if a is None:
-                    continue
-                sc = [int(round(max(0, min(FW - WIN_W, a[0] + ox)))), int(round(max(0, min(FH - WIN_H, a[1] + oy))))]
-                if f.scroll != sc:
-                    f.scroll = sc
-                    f.dirty = True
-
-        def toggle_cam_ball(self):
-            if self.cam_ball.get():
-                self.snap()
-                self.ball_off = [0, 0]
-                self.refresh()
-                self.note("Window locked to the ball (whole film). Pan (H) now shifts the window relative to the ball.")
-            else:
-                self.note("Window released: it keeps the positions computed while it was locked.")
-
         def set_scroll(self):
             try:
                 sx, sy = int(self.sx.get()), int(self.sy.get())
             except (tk.TclError, ValueError):
                 return
-            if self.cam_ball.get():
-                a = self.ball_anchor(self.fr)
-                if a is not None:
-                    self.snap()
-                    self.ball_off = [sx - round(a[0]), sy - round(a[1])]
-                    self.refresh()
-                    return
             self.snap()
             for i in self.frames_in_scope():
-                self.scene.frames[i].scroll = [max(0, min(FW - WIN_W, sx)), max(0, min(FH - WIN_H, sy))]
+                self.scene.frames[i].scroll = [max(0, min(SCROLL_MAX_X, sx)), max(0, min(SCROLL_MAX_Y, sy))]
                 self.scene.frames[i].dirty = True
             self.refresh()
 
@@ -1808,27 +1834,69 @@ def run_gui(path=None):
         def step(self, d):
             self.goto((self.idx + d) % len(self.scene.frames))
 
-        def on_tl(self, e):
+        def _tl_cw(self):
+            return max(4.0, (self.tl.winfo_width() - 8) / len(self.scene.frames))
+
+        def on_tl_press(self, e):
+            self._tl_drag = None
+            if e.y >= 56:
+                a, b = self.loop_range()
+                cw = self._tl_cw()
+                xa, xb = 4 + a * cw, 4 + (b + 1) * cw
+                self._tl_drag = "a" if abs(e.x - xa) <= abs(e.x - xb) else "b"
+            self.on_tl_drag(e)
+
+        def on_tl_drag(self, e):
             n = len(self.scene.frames)
-            cw = max(4.0, (self.tl.winfo_width() - 8) / n)
+            cw = self._tl_cw()
+            if self._tl_drag:
+                pos = int(round((e.x - 4) / cw))
+                a, b = self.loop_range()
+                if self._tl_drag == "a":
+                    self.loop_a = max(0, min(pos, b))
+                else:
+                    j = max(a, min(n - 1, pos - 1))
+                    self.loop_b = None if j >= n - 1 else j
+                self.draw_timeline()
+                return
             self.goto(int((e.x - 4) / cw))
 
-        def toggle(self, start):
+        def on_tl_release(self, e):
+            self._tl_drag = None
+
+        def on_tl(self, e):
+            self.on_tl_drag(e)
+
+        def loop_range(self):
+            n = len(self.scene.frames)
+            b = n - 1 if self.loop_b is None else max(0, min(self.loop_b, n - 1))
+            a = max(0, min(self.loop_a, b))
+            return a, b
+
+        def _play_buttons(self):
+            self.btn.config(text="Stop" if self.playing and self._play_mode == "all" else "Play all")
+            self.btn2.config(text="Stop" if self.playing and self._play_mode == "here" else "Play from here")
+
+        def toggle(self, mode="here"):
             self.playing = not self.playing
-            self.btn.config(text="Stop" if self.playing else "Play tutto")
             if self.playing:
-                self.goto(start)
+                self._play_mode = mode
+            self._play_buttons()
+            if self.playing:
+                a, b = self.loop_range()
+                self.goto(a if (mode == "all" or self.idx > b) else self.idx)
                 self.after(10, self.tick)
 
         def tick(self):
             if not self.playing:
                 return
-            if self.idx >= len(self.scene.frames) - 1:
+            a, b = self.loop_range()
+            if self.idx >= b:
                 if not self.loop.get():
                     self.playing = False
-                    self.btn.config(text="Play tutto")
+                    self._play_buttons()
                     return
-                self.goto(0)
+                self.goto(a)
             else:
                 self.goto(self.idx + 1)
             try:
@@ -1888,11 +1956,11 @@ def run_gui(path=None):
 
         def help(self):
             messagebox.showinfo("Quick help",
-                "TOOLS (left column or keys)\n"
-                " V select/move | D draw a path freehand | P click a path with waypoints | H pan the window\n\n"
+                "TOOLS (top bar or keys)\n"
+                " V select/move | Path: D draw freehand, P click waypoints | H camera. Each tool shows only its own options.\n\n"
                 "DRAWING A PATH\n"
                 " D: press on a figure and draw; on release the path is baked into the following frames.\n"
-                "   Top bar: speed / fixed duration / 'as drawn' (your real drawing speed). Shift = straight line.\n"
+                "   Path options: speed / fixed duration / 'as drawn' (your real drawing speed). Shift = straight line.\n"
                 " P: click points (Enter, double-click or right-click to finish). 'smooth curves' rounds the corners.\n"
                 " Run sprites are chosen automatically from the direction of travel (8 directions, both colours).\n\n"
                 "EDITING A PATH LIKE A ROPE\n"
@@ -1902,15 +1970,14 @@ def run_gui(path=None):
                 "ACTIONS (right-click a player, Figure menu or Actions tab)\n"
                 " Dive, Header, Bicycle kick, Collision fall, Get up, Celebration, Moonwalk - colour automatic.\n"
                 " E/W = direction of the action (for Moonwalk: direction of travel, sprites face the other way).\n\n"
-                "CAMERA\n Path/Camera > Camera follows ball/figure generates the scroll keyframes for you.\n\n"
+                "CAMERA\n Camera tool > Camera follow selected sprite (or right-click a sprite) generates the scroll keyframes.\n Camera limits: X 0-137, Y 0-15.\n\n"
                 "MOUSE\n Drag figure: move (Ctrl+click or box-select for groups; Shift on the ball = height only).\n"
-                " Drag the cyan window edge: scroll (also live while playing). Box select: leader = rule in the bar; click a selected figure to change it.\n"
-                " Path/Camera > Window locked to ball: window centred on the ball in every frame.\n"
-                " Wheel / PgUp / PgDn: change frame. Timeline: click, right-click.\n\n"
-                "KEYS\n Arrows: move 1 px (Shift = 5) | [ ]: previous/next pose | Space: play | Ins/Del: frame\n"
+                " Drag the cyan camera edge: scroll (also live while playing). Box select: click a selected figure to make it leader.\n"
+                " Wheel / PgUp / PgDn: change frame. Timeline: click, right-click; the two bottom markers set the play/loop range.\n\n"
+                "KEYS\n Arrows: move 1 px (Shift = 5) | [ ]: previous/next pose | Space: play from here | Ins/Del: frame\n"
                 " Ctrl+Z/Y undo/redo | Ctrl+S save | Ctrl+A select all players | Ctrl +/-: zoom | Esc: cancel/deselect\n\n"
                 "A new scene holds ALL 27 sprites in kick-off formation; sprites can never be deleted.\n\n"
-                "DATA FILES (next to the script, read at start-up)\n"
+                "DATA FILES (in the .\\data folder next to the script, read at start-up)\n"
                 " tore_pose_sets.json / tore_actions.json / tore_kickoff.json - edit them by hand or with the Data menu:\n"
                 " Edit pose sets, actions & movement (add / edit ids) and Save current frame as kick-off formation.\n"
                 " Pose sets marked (?) are still unverified.")
@@ -1959,7 +2026,7 @@ def run_gui(path=None):
             n = (e.y // 50) * 5 + e.x // 44
             if 0 <= n < len(ids):
                 self.snap()
-                self.set_pose_to(self.sel, ids[n])
+                self.set_pose_all(ids[n])
                 self.refresh()
 
         def open_palette(self):
@@ -1967,59 +2034,83 @@ def run_gui(path=None):
                 return self.pal.lift()
 
             self.pal = w = tk.Toplevel(self)
-            w.title("Sprite IDs (click to assign)")
+            w.title("Sprite sheet (click to assign) - resizable")
             w.transient(self)
             w.protocol("WM_DELETE_WINDOW", lambda: self._close_palette())
 
-            zz = 6
-            cols = SHEET_COLS
-            rows = 7
+            cols, rows = SHEET_COLS, 7
             sheet = self.gfx.sheet
             im = Image.new("RGBA", (cols * CELL_W, rows * CELL_H), (60, 60, 60, 255))
             if sheet:
                 crop = sheet.crop((0, 0, min(sheet.width, im.width), min(sheet.height, im.height)))
                 im.paste(crop, (0, 0), crop)
+            w._im = im
+            z0 = max(1, min(6, (self.winfo_screenwidth() - 120) // im.width))
+            self._pal_zx = self._pal_zy = float(z0)
+            self._pal_job = None
+            w.geometry("%dx%d" % (im.width * z0, im.height * z0))
+            w.minsize(im.width, im.height)
+            w.resizable(True, True)
 
-            big = im.resize((im.width * zz, im.height * zz), Image.NEAREST)
-            w._ph = ImageTk.PhotoImage(big)
-            cv = tk.Canvas(w, width=big.width, height=big.height, highlightthickness=0, bg="#3c3c3c")
-            cv.pack()
-            cv.create_image(0, 0, anchor="nw", image=w._ph)
-
-            for sid in range(cols * rows):
-                col = sid % cols
-                row = sid // cols
-                x0 = col * CELL_W * zz
-                y0 = row * CELL_H * zz
-                x1 = x0 + CELL_W * zz
-                y1 = y0 + CELL_H * zz
-                cv.create_rectangle(x0, y0, x1, y1, outline="#ff00ff")
-                cv.create_text(x0 + 1 * zz, y0 + 1 * zz, anchor="nw", text=str(sid),fill="white", font=("TkDefaultFont", 7, "bold"))
-
+            cv = tk.Canvas(w, highlightthickness=0, bg="#3c3c3c")
+            cv.pack(fill="both", expand=True)
+            cv.bind("<Configure>", lambda e: self._pal_schedule())
             cv.bind("<Button-1>", self.on_palette_click)
             cv.bind("<Motion>", self.on_palette_hover)
             self._palette_canvas = cv
 
+        def _pal_schedule(self):
+            if self._pal_job:
+                self.after_cancel(self._pal_job)
+            self._pal_job = self.after(40, self._pal_draw)
+
+        def _pal_draw(self):
+            self._pal_job = None
+            w, cv = self.pal, self._palette_canvas
+            if not (w and cv and w.winfo_exists()):
+                return
+            im = w._im
+            cw, ch = max(1, cv.winfo_width()), max(1, cv.winfo_height())
+            sc = max(1.0, min(cw / im.width, ch / im.height))
+            bw, bh = max(1, int(im.width * sc)), max(1, int(im.height * sc))
+            w._ph = ImageTk.PhotoImage(im.resize((bw, bh), Image.NEAREST))
+            self._pal_zx, self._pal_zy = bw / im.width, bh / im.height
+            zx, zy = self._pal_zx, self._pal_zy
+            cv.delete("all")
+            cv.create_image(0, 0, anchor="nw", image=w._ph)
+            fs = max(6, int(min(zx, zy) * 1.2))
+            for sid in range(SHEET_COLS * 7):
+                x0, y0 = (sid % SHEET_COLS) * CELL_W * zx, (sid // SHEET_COLS) * CELL_H * zy
+                cv.create_rectangle(x0, y0, x0 + CELL_W * zx, y0 + CELL_H * zy, outline="#ff00ff")
+                cv.create_text(x0 + zx, y0 + zy, anchor="nw", text=str(sid), fill="white", font=("TkDefaultFont", fs, "bold"))
+
+        def _pal_cell(self, e):
+            col, row = int(e.x // (CELL_W * self._pal_zx)), int(e.y // (CELL_H * self._pal_zy))
+            if 0 <= col < SHEET_COLS and 0 <= row < 7:
+                return row * SHEET_COLS + col, col, row
+            return None
+
         def _close_palette(self):
+            if self._pal_job:
+                self.after_cancel(self._pal_job)
+                self._pal_job = None
             if self.pal and self.pal.winfo_exists():
                 self.pal.destroy()
             self.pal = None
             self._palette_canvas = None
 
         def on_palette_hover(self, e):
-            sid = (e.y // (CELL_H * 6)) * SHEET_COLS + (e.x // (CELL_W * 6))
-            if 0 <= sid < SHEET_COLS * 7:
-                self.note("sprite=%d  |  palette cell x=%d y=%d" %
-                          (sid, e.x // (CELL_W * 6), e.y // (CELL_H * 6)))
+            c = self._pal_cell(e)
+            if c:
+                self.note("sprite=%d  |  palette cell x=%d y=%d" % c)
 
         def on_palette_click(self, e):
-            sid = (e.y // (CELL_H * 6)) * SHEET_COLS + (e.x // (CELL_W * 6))
-            if not (0 <= sid < SHEET_COLS * 7):
+            c = self._pal_cell(e)
+            if not c:
                 return
-
             if self.sel is not None:
                 self.snap()
-                self.set_pose_to(self.sel, sid)
+                self.set_pose_all(c[0])
                 self.refresh()
                 return
             return self.note("Select a figure first to assign a sprite ID.")
@@ -2034,11 +2125,14 @@ def run_gui(path=None):
                 self.note("Missing: " + ", ".join(self.gfx.missing))
 
         def choose_pic(self):
-            d = filedialog.askdirectory(title="Folder containing 26.VGA, 27.VGA, 29.VGA")
+            d = filedialog.askdirectory(parent=self, title="PIC folder (containing 26.VGA, 27.VGA, 29.VGA)",
+                                        initialdir=self.pic_dir or APP_DIR)
             if d:
                 self.pic_dir = d
                 self.gfx = Graphics(d)
                 self.refresh()
+                if self.gfx.missing:
+                    self.note("Missing: " + ", ".join(self.gfx.missing))
 
         def confirm_discard(self):
             return not self.modified or messagebox.askyesno("Unsaved changes", "Discard changes?")
@@ -2197,8 +2291,6 @@ def run_gui(path=None):
             sc, z = self.scene, self.z()
             n = len(sc.frames)
             self.idx = min(self.idx, n - 1)
-            if self.cam_ball.get():
-                self.apply_ball_lock()
             f = self.fr
             self.sx.set(f.scroll[0])
             self.sy.set(f.scroll[1])
@@ -2278,6 +2370,16 @@ def run_gui(path=None):
                 if e is not None and e < n:
                     x = 4 + e * cw + cw / 2
                     c.create_polygon(x - 5, 56, x + 5, 56, x, 46, fill=SOUNDS[k][1], outline="black")
+            a, b = self.loop_range()
+            xa, xb = 4 + a * cw, 4 + (b + 1) * cw
+            if a > 0:
+                c.create_rectangle(4, 4, xa, 27, fill="#000", stipple="gray50", outline="")
+            if b < n - 1:
+                c.create_rectangle(xb, 4, 4 + n * cw, 27, fill="#000", stipple="gray50", outline="")
+            c.create_line(xa, 2, xa, 74, fill="#d32f2f", width=2)
+            c.create_line(xb, 2, xb, 74, fill="#6a1b9a", width=2)
+            c.create_polygon(xa, 58, xa + 13, 66, xa, 75, fill="#d32f2f", outline="black")
+            c.create_polygon(xb, 58, xb - 13, 66, xb, 75, fill="#6a1b9a", outline="black")
 
 
         def _action_menu(self, parent):
@@ -2297,18 +2399,55 @@ def run_gui(path=None):
 
 
         HINTS = {
-            "select": f"\nClick: select | Ctrl+click: add | Drag figure: move | Drag a trajectory dot: pull the rope | "
-                      f"Drag empty: box select (leader rule in the bar)\nClick a selected figure: make it leader | "
-                      "Drag the cyan window edge: scroll | Right-click: menu",
-            "draw": f"\nPress on a figure and draw its path; release to bake it into the frames | Shift: straight line | Esc: cancel",
-            "way": f"\nClick points to lay out a path | Enter / double-click / right-click: finish | Backspace: undo point | Esc: cancel",
-            "pan": f"\nDrag to move the visible window (works live during playback; with 'window locked to ball' it shifts the offset)",
+            "select": "\nClick: select | Ctrl+click: add | Drag figure: move | Drag a trajectory dot: pull the rope | "
+                      "Drag empty: box select\nClick a selected figure: make it leader | "
+                      "Drag the cyan camera edge: scroll | Right-click: menu",
+            "draw": "\nPress on a figure and draw its path; release to bake it into the frames | Shift: straight line | Esc: cancel",
+            "way": "\nClick points to lay out a path | Enter / double-click / right-click: finish | Backspace: undo point | Esc: cancel",
+            "pan": "\nDrag to move the camera (works live during playback)",
         }
 
+        def pick_main(self, k):
+            self.tool_main.set(k)
+            self.on_main_tool()
+
+        def sync_tool_buttons(self):
+            m = self.tool_main.get()
+            for k, b in self.tool_btns.items():
+                b.state(["pressed"] if k == m else ["!pressed"])
+
+        def on_main_tool(self):
+            m = self.tool_main.get()
+            self.tool.set(self.path_kind.get() if m == "path" else m)
+            self.set_tool()
+
+        def on_path_kind(self):
+            self.tool.set(self.path_kind.get())
+            self.set_tool()
+
+        def show_tool_options(self):
+            m = self.tool_main.get()
+            for k, fr in self.opt_frames.items():
+                if k == m:
+                    fr.pack(fill="x", pady=2)
+                else:
+                    fr.pack_forget()
+            self.opt.config(text={"select": "Select move options", "path": "Path options", "pan": "Camera options"}[m])
+            if self.tool.get() == "draw":
+                self.rb_timing.pack(side="left", padx=10)
+            else:
+                self.rb_timing.pack_forget()
+                if self.pmode.get() == "timing":
+                    self.pmode.set("speed")
 
         def set_tool(self):
             t = self.tool.get()
             self.stroke, self.way = None, []
+            if t in ("draw", "way"):
+                self.path_kind.set(t)
+            self.tool_main.set("path" if t in ("draw", "way") else t)
+            self.sync_tool_buttons()
+            self.show_tool_options()
             self.hint = self.HINTS[t]
             self.canvas.config(cursor={"select": "arrow", "draw": "pencil", "way": "crosshair", "pan": "fleur"}[t])
             self.note(self.hint)
@@ -2352,15 +2491,7 @@ def run_gui(path=None):
 
         def pick_leader(self, ids):
             fs = self.fr.figs
-            r = self.leader_rule.get()
-            key = {"North": lambda s: (fs[s][1], s), "South": lambda s: (-fs[s][1], s),
-                   "West": lambda s: (fs[s][0], s), "East": lambda s: (-fs[s][0], s)}.get(r, lambda s: s)
-            return min(ids, key=key)
-
-        def regroup_leader(self):
-            if len(self.multi) > 1:
-                self.sel = self.pick_leader(self.multi)
-                self.refresh()
+            return min(ids, key=lambda s: (fs[s][1], s))
 
         def set_leader(self, sl):
             if sl in self.multi and sl != self.sel:
@@ -2406,6 +2537,19 @@ def run_gui(path=None):
                 self.finish_way()
 
 
+        def set_loop(self, a=None, b=None):
+            n = len(self.scene.frames)
+            ca, cb = self.loop_range()
+            na, nb = (ca if a is None else a), (cb if b is None else b)
+            if na > nb:
+                if a is None:
+                    na = nb
+                else:
+                    nb = n - 1
+            self.loop_a = max(0, na)
+            self.loop_b = None if nb >= n - 1 else nb
+            self.draw_timeline()
+
         def on_tl_right(self, e):
             n = len(self.scene.frames)
             cw = max(4.0, (self.tl.winfo_width() - 8) / n)
@@ -2413,7 +2557,10 @@ def run_gui(path=None):
             self.goto(i)
             m = tk.Menu(self, tearoff=0)
             m.add_command(label="Frame %d" % (i + 1), state="disabled")
-            m.add_command(label="Play from here", command=lambda: self.toggle(i))
+            m.add_command(label="Play from here", command=lambda: self.toggle("here"))
+            m.add_command(label="Set loop start here", command=lambda: self.set_loop(a=i))
+            m.add_command(label="Set loop end here", command=lambda: self.set_loop(b=i))
+            m.add_command(label="Reset loop range", command=lambda: self.set_loop(a=0, b=n - 1))
             m.add_separator()
             m.add_command(label="Insert frame (copy)", command=self.ins_frame)
             m.add_command(label="Delete frame", command=self.del_frame)
@@ -2449,7 +2596,10 @@ def run_gui(path=None):
 
         def mirror_sel(self):
             if self.need_sel():
-                self.do_mirror_pose(self.sel)
+                self.snap()
+                for sl in self.targets():
+                    self.set_pose_to(sl, mirror_pose(self.fr.figs[sl][2]))
+                self.refresh()
 
         def bake_path(self, pts, samples=None, n=None):
             sl = self.sel
@@ -2565,55 +2715,60 @@ def run_gui(path=None):
         def do_stand(self):
             if not self.need_sel():
                 return
-            sid = self.fr.figs[self.sel][2]
-            if team_of(sid) is None:
+            tg = [s for s in self.targets() if team_of(self.fr.figs[s][2]) is not None]
+            if not tg:
                 return
             self.snap()
-            new = stand_id(sid, facing_of(sid))
-            for f in self.scene.frames[self.idx:]:
-                f.figs[self.sel][2] = new
-                f.touch()
+            for sl in tg:
+                sid = self.fr.figs[sl][2]
+                new = stand_id(sid, facing_of(sid))
+                for f in self.scene.frames[self.idx:]:
+                    f.figs[sl][2] = new
+                    f.touch()
             self.refresh()
 
 
         def do_cycle(self, d):
             if not self.need_sel():
                 return
-            sid = self.fr.figs[self.sel][2]
-            cyc = loco_cycle(sid, d)
-            if not cyc:
+            tg = [(s, loco_cycle(self.fr.figs[s][2], d)) for s in self.targets()]
+            tg = [(s, c) for s, c in tg if c]
+            if not tg:
                 return
             self.snap()
             fs = self.scene.frames
-            ph = cyc.index(sid) + 1 if sid in cyc else 0
-            start = self.idx + (1 if sid in cyc else 0)
-            for k, i in enumerate(range(start, len(fs))):
-                fs[i].figs[self.sel][2] = cyc[(ph + k) % len(cyc)]
-                fs[i].touch()
+            for sl, cyc in tg:
+                sid = self.fr.figs[sl][2]
+                ph = cyc.index(sid) + 1 if sid in cyc else 0
+                start = self.idx + (1 if sid in cyc else 0)
+                for k, i in enumerate(range(start, len(fs))):
+                    fs[i].figs[sl][2] = cyc[(ph + k) % len(cyc)]
+                    fs[i].touch()
             self.refresh()
 
 
         def do_action(self, key, side):
             if not self.need_sel():
                 return
-            sid = self.fr.figs[self.sel][2]
-            seq = action_ids(sid, key, side)
-            if not seq:
+            seqs = [(s, action_ids(self.fr.figs[s][2], key, side)[:MAX_FRAMES - self.idx]) for s in self.targets()]
+            seqs = [(s, q) for s, q in seqs if q]
+            if not seqs:
                 return self.note("Actions are for players (red/blue) only.")
-            n = len(seq)
+            nmax = max(len(q) for _, q in seqs)
             self.snap()
-            if self.idx + n > MAX_FRAMES:
-                seq = seq[:MAX_FRAMES - self.idx]
-                n = len(seq)
-            self.ensure_frames(self.idx + n)
+            self.ensure_frames(self.idx + nmax)
             fs = self.scene.frames
-            for j, s in enumerate(seq):
-                fs[self.idx + j].figs[self.sel][2] = s
-                fs[self.idx + j].touch()
-            if self.resume.get() and self.idx + n < len(fs):
-                self.auto_sprites([self.sel], self.idx + n, len(fs) - 1, force=False)
+            for sl, seq in seqs:
+                for j, s in enumerate(seq):
+                    fs[self.idx + j].figs[sl][2] = s
+                    fs[self.idx + j].touch()
+            if self.resume.get():
+                for sl, seq in seqs:
+                    if self.idx + len(seq) < len(fs):
+                        self.auto_sprites([sl], self.idx + len(seq), len(fs) - 1, force=False)
             self.refresh()
-            self.note("%s: %d frames from frame %d" % (action_label(key, side), n, self.idx + 1))
+            self.note("%s: %d frames from frame %d (%d figure%s)" % (action_label(key, side), nmax, self.idx + 1,
+                                                                  len(seqs), "" if len(seqs) == 1 else "s"))
 
 
         def tween_to(self, end):
@@ -2706,6 +2861,8 @@ def run_gui(path=None):
             fs = self.scene.frames
             i0 = 0 if whole else self.idx
             tgt = self.sel if (self.sel is not None and cls(self.fr.figs[self.sel][2]) in "PB") else None
+            if tgt is None and fs[i0].index_of("B") is None:
+                return self.note("Select a sprite first.")
             self.snap()
             sx, sy = float(fs[i0].scroll[0]), float(fs[i0].scroll[1])
             for i in range(i0, len(fs)):
@@ -2714,8 +2871,8 @@ def run_gui(path=None):
                 if b is None:
                     continue
                 g = f.figs[b]
-                wx = max(0.0, min(float(FW - WIN_W), g[0] + sprite_w(g[2]) / 2 - WIN_W / 2))
-                wy = max(0.0, min(float(FH - WIN_H), g[1] + Y_OFFSET - WIN_H / 2))
+                wx = max(0.0, min(float(SCROLL_MAX_X), g[0] + sprite_w(g[2]) / 2 - WIN_W / 2))
+                wy = max(0.0, min(float(SCROLL_MAX_Y), g[1] + Y_OFFSET - WIN_H / 2))
                 if i == i0 and whole:
                     sx, sy = wx, wy
                 sx += max(-6.0, min(6.0, (wx - sx) * 0.35))
@@ -3180,8 +3337,6 @@ def run_gui(path=None):
 
 
     ed = Editor()
-    if DATA_WARNINGS:
-        ed.after(300, lambda: messagebox.showwarning("Data files", "\n".join(DATA_WARNINGS)))
     ed.mainloop()
 
 
