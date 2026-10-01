@@ -202,7 +202,7 @@ ACCENT    = "#3498DB"
 MUTED     = "#7F8C8D"
 RED       = "#C0392B"
 SEL_COLOR = "#00BFFF"
-ALPHA_DISPLAY_COLOR = "#FF00FF"
+ALPHA_DISPLAY_COLOR = "#FF00FF"  # classic editor magenta for transparency
 ALPHA_INDEX = 0
 
 TOOL_DRAW       = "draw"
@@ -242,7 +242,11 @@ def _rgb_to_palette_index(
 def _quantize_rgba_to_palette(
     src: Image.Image, palette: list[tuple[int, int, int]]
 ) -> Image.Image:
+    """Quantize RGB data to the VGA palette while reserving index 0 for alpha.
 
+    Palette index 0 is the only transparent color. All other palette entries,
+    even when their RGB value is black or contains zero bytes, remain opaque.
+    """
     if src is None:
         raise ValueError("No source image.")
     if len(palette) < 2:
@@ -252,6 +256,9 @@ def _quantize_rgba_to_palette(
     flat = _palette_to_flat_rgb(palette[1:])
     pal_img = Image.new("P", (1, 1))
     pal_img.putpalette(flat)
+
+    # Quantize only against palette entries 1..255. This prevents an opaque
+    # black pixel from ever being mistaken for the alpha entry at index 0.
     q = rgba.convert("RGB").quantize(palette=pal_img, dither=0)
     indices = bytearray(q.tobytes())
 
@@ -594,6 +601,8 @@ class _ImageCanvas(tk.Frame):
     def _display_image(self) -> Image.Image:
         flat_pal = self._flat_palette()
         img = self._img.copy()
+        # Index 0 is shown as the conventional editor-magenta transparency
+        # color. The actual VGA palette/data remain unchanged.
         if len(flat_pal) >= 3:
             flat_pal[0:3] = (255, 0, 255)
         img.putpalette(flat_pal)
@@ -1208,6 +1217,7 @@ class PicEditorPanel(ttk.Frame):
         self._canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)
         self._canvas_frame._canvas.bind("<Motion>", self._on_mouse_move, add="+")
         self._canvas_frame._zoom_changed_callback = (lambda z: self._zoom_var.set(z))
+        self._draw_swatch()
 
     def _build_toolbox(self, parent):
         self._tool_var = tk.StringVar(value=TOOL_DRAW)
@@ -1327,7 +1337,6 @@ class PicEditorPanel(ttk.Frame):
         self.bind_all("<KP_Enter>",      lambda _e: self._apply_paste())
         self.bind_all("<Delete>",        lambda _e: self._delete_sel())
         self.bind_all("<Escape>",        lambda _e: self._escape_action())
-        self._draw_swatch()
         self.after_idle(lambda: self._hint_lbl.config(
             text=self._TOOL_HINTS.get(self._tool_var.get(), ""))
             if hasattr(self, "_hint_lbl") else None
@@ -1689,6 +1698,7 @@ class PicEditorPanel(ttk.Frame):
             ext = os.path.splitext(path)[1].lower()
             rgb = export.convert("RGB")
             if ext == ".png":
+                # Transparency is defined by palette index 0, not by RGB value.
                 rgba = rgb.convert("RGBA")
                 alpha_bytes = bytes(
                     0 if i == ALPHA_INDEX else 255
