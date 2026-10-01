@@ -58,6 +58,7 @@ TEXTS_FR = {
     "header.region.a": "Région A :",
     "header.region.b": "Région B :",
     "header.subst": "Remplacements max. gardien / équipe :",
+    "header.goal_frames": "Images max. scènes de but :",
 
     # ---- areas
     "tab.strings": "  📝 Chaînes  ",
@@ -308,6 +309,7 @@ TEXTS_FR = {
     "preview.sum.wdl": "Caractères Victoire/Nul/Défaite : {value}",
     "preview.sum.match": "Drapeau du match : {value}",
     "preview.sum.substitutions": "Remplacements max. modifiés : {value}",
+    "preview.sum.goal_frames": "Images max. scènes de but modifiées : {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "aucune",

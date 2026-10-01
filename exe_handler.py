@@ -19,6 +19,12 @@ _1st_LEAGUE_TEAMS = {
     "18": "01010100121414002226260003040400",
     }
 
+_MAX_FRAMES = {
+    "255": (0xA1, 0x90),
+    "127": (0xA0, 0x98),
+    }
+
+
 GAME_PROFILES = {
     "THE MANAGER (ITALIAN)": {
         "ds_start": 0x53CE0,
@@ -86,6 +92,10 @@ GAME_PROFILES = {
         "teams": {
             "offset": 0x55A3A,
             "number": _1st_LEAGUE_TEAMS,
+        },
+        "tore_255": {
+            "tore_offsets": (0x134a8, 0x136b3, 0x1b83b, 0x1b8db, 0x1bed7, 0x1bf09, 0x1bfb3),
+            "tore_code": _MAX_FRAMES,
         },
         "wdl_map": 0x55a5a,
         "match_flag": {

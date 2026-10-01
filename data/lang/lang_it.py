@@ -58,6 +58,7 @@ TEXTS_IT = {
     "header.region.a": "Regione A:",
     "header.region.b": "Regione B:",
     "header.subst": "Sostituzioni max. portiere / squadra:",
+    "header.goal_frames": "Max fotogrammi scene gol:",
 
     # ---- areas
     "tab.strings": "  📝 Stringhe  ",
@@ -308,6 +309,7 @@ TEXTS_IT = {
     "preview.sum.wdl": "Caratteri per Vittoria/Pareggio/Sconfitta: {value}",
     "preview.sum.match": "Bandiera della partita: {value}",
     "preview.sum.substitutions": "Sostituzioni max. modificate: {value}",
+    "preview.sum.goal_frames": "Max fotogrammi scene gol modificati: {value}",
     
     # ---- preview: shared value words
     "preview.val.none": "nessuno",

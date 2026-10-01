@@ -802,6 +802,113 @@ class _20TeamsMixin:
         self._update_save_state()
 
 
+class _GoalFramesMixin:
+
+    _GOAL_FRAMES_GAP = 3
+
+    def _goal_frames_config(self):
+        if not self._supported_loaded():
+            return None, None
+        cfg = self.profile.get("tore_255")
+        if not isinstance(cfg, dict):
+            return None, None
+        offsets = cfg.get("tore_offsets")
+        codes = cfg.get("tore_code")
+        if not isinstance(offsets, (tuple, list)) or not offsets or not isinstance(codes, dict) or not codes:
+            return None, None
+        if not all(isinstance(off, int) for off in offsets):
+            return None, None
+        for code in codes.values():
+            if not isinstance(code, (tuple, list)) or len(code) != 2:
+                return None, None
+        return offsets, codes
+
+    def _goal_frames_slot_matches(self, offset, code):
+        gap = self._GOAL_FRAMES_GAP
+        return (
+            self.exe_data[offset] == code[0]
+            and self.exe_data[offset + gap] == code[1]
+        )
+
+    def _goal_frames_offset(self):
+        offsets, codes = self._goal_frames_config()
+        if offsets is None or codes is None:
+            return None
+        gap = self._GOAL_FRAMES_GAP
+        for off in offsets:
+            if off < 0 or off + gap + 1 > len(self.exe_data):
+                return None
+            if not any(self._goal_frames_slot_matches(off, code) for code in codes.values()):
+                return None
+        return offsets[0]
+
+    def _goal_frames_ranges(self):
+        offsets, _ = self._goal_frames_config()
+        if offsets is None or self._goal_frames_offset() is None:
+            return []
+        gap = self._GOAL_FRAMES_GAP
+        return [(off, gap + 1) for off in offsets]
+
+    def _goal_frames_changed(self) -> bool:
+        return any(self._range_changed(off, size) for off, size in self._goal_frames_ranges())
+
+    def _sync_goal_frames_widget(self):
+        if not hasattr(self, "goal_frames_combo"):
+            return
+        if self._goal_frames_offset() is not None:
+            if not self.goal_frames_container.winfo_manager():
+                kwargs = {"fill": tk.X, "pady": 6}
+                if self.teams_container.winfo_manager():
+                    kwargs["after"] = self.teams_container
+                self.goal_frames_container.pack(**kwargs)
+            self.goal_frames_combo.config(state="readonly")
+            return
+        self.goal_frames_combo.config(state=tk.DISABLED)
+        self.goal_frames_container.pack_forget()
+        self.goal_frames_var.set("")
+        self._last_valid_goal_frames = None
+
+    def _revert_goal_frames(self):
+        self.goal_frames_var.set("" if self._last_valid_goal_frames is None else str(self._last_valid_goal_frames))
+
+    def _read_goal_frames_from_exe(self):
+        offsets, codes = self._goal_frames_config()
+        if offsets is None or codes is None or self._goal_frames_offset() is None:
+            self._last_valid_goal_frames = None
+            self.goal_frames_var.set("")
+        else:
+            matched_key = None
+            for key, code in codes.items():
+                if all(self._goal_frames_slot_matches(off, code) for off in offsets):
+                    matched_key = key
+                    break
+            self._last_valid_goal_frames = matched_key
+            self.goal_frames_var.set(matched_key if matched_key is not None else "")
+        self._sync_goal_frames_widget()
+
+    def _commit_goal_frames(self, event=None):
+        offsets, codes = self._goal_frames_config()
+        if offsets is None or codes is None or self._goal_frames_offset() is None:
+            return
+        key = self.goal_frames_var.get().strip()
+        if key not in codes:
+            self._revert_goal_frames()
+            return
+        first, second = codes[key]
+        gap = self._GOAL_FRAMES_GAP
+        if all(self._goal_frames_slot_matches(off, codes[key]) for off in offsets):
+            self.goal_frames_var.set(key)
+            self._last_valid_goal_frames = key
+            return
+        for off in offsets:
+            self.exe_data[off] = first
+            self.exe_data[off + gap] = second
+        self.goal_frames_var.set(key)
+        self._last_valid_goal_frames = key
+        self._invalidate_diff_preview("goal-frames-change")
+        self._update_save_state()
+
+
 class _SustMixin:
 
     _SUBST_GK_VALUES = (1, 2)
@@ -925,7 +1032,7 @@ class _SustMixin:
         self._update_save_state()
 
 
-class ExeSettingsMixin(_YearMixin, _RegionMixin, _PointsMixin, _SustMixin, _20TeamsMixin, _WdlMixin, _MatchFlagMixin):
+class ExeSettingsMixin(_YearMixin, _RegionMixin, _PointsMixin, _SustMixin, _20TeamsMixin, _GoalFramesMixin, _WdlMixin, _MatchFlagMixin):
     pass
 
 

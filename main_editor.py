@@ -45,7 +45,7 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.8.16"
+APP_VERSION = "2.8.17"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -103,6 +103,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._last_valid_subst_gk = None
         self._last_valid_subst = None
         self._last_valid_teams = None
+        self._last_valid_goal_frames = None
         self._converted_to_extended = False
         self._integrity_fixed = False
         self.filter_records = ()
@@ -577,6 +578,16 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.teams_combo.bind("<Return>", self._commit_teams)
         self.teams_combo.bind("<KP_Enter>", self._commit_teams)
         self.teams_combo.bind("<FocusOut>", self._commit_teams)
+        self.goal_frames_container = ttk.Frame(settings_frame)
+        self.goal_frames_label = self._reg(ttk.Label(self.goal_frames_container, font=("Segoe UI", 9, "bold")), "header.goal_frames")
+        self.goal_frames_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.goal_frames_var = tk.StringVar()
+        self.goal_frames_combo = ttk.Combobox(self.goal_frames_container, textvariable=self.goal_frames_var, state="readonly", width=4, justify=tk.CENTER, font=("Segoe UI", 9), values=["255", "127"])
+        self.goal_frames_combo.pack(side=tk.LEFT)
+        self.goal_frames_combo.bind("<<ComboboxSelected>>", self._commit_goal_frames)
+        self.goal_frames_combo.bind("<Return>", self._commit_goal_frames)
+        self.goal_frames_combo.bind("<KP_Enter>", self._commit_goal_frames)
+        self.goal_frames_combo.bind("<FocusOut>", self._commit_goal_frames)
         self._wdl_char_values = [bytes([i]).decode("cp437") for i in range(0x20, 0x7e)]
         self.flag_container = ttk.Frame(settings_frame)
         flag_title_row = ttk.Frame(self.flag_container)
@@ -655,6 +666,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._sync_points_widget()
         self._sync_subst_widget()
         self._sync_teams_widget()
+        self._sync_goal_frames_widget()
         self._sync_wdl_widget()
         self._sync_flag_widget()
         self._update_save_state()
@@ -1921,6 +1933,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         for name, (offset, size) in fields.items():
             kwargs[f"{name}_offset"] = offset
             kwargs[f"{name}_changed"] = self._range_changed(offset, size)
+        kwargs["goal_frames_offset"] = self._goal_frames_offset()
+        kwargs["goal_frames_changed"] = self._goal_frames_changed()
         match_flag_config = self._match_flag_config()
         show_preview_dialog(
             self.root, snapshot, self.tr,
@@ -1997,7 +2011,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
     def _reset_state(self):
         self._invalidate_diff_preview("reset", refresh=False)
         self._init_document_state()
-        for var in (self.year_var, self.subst_gk_var, self.subst_var,self.teams_var, self.region_a_var, self.region_b_var):
+        for var in (self.year_var, self.subst_gk_var, self.subst_var,self.teams_var, self.goal_frames_var, self.region_a_var, self.region_b_var):
             var.set("")
         self._reset_filter_vars()
         self.filter_combos[1].config(values=("All",))
@@ -2201,7 +2215,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         for read_from_exe in (
             self._read_year_from_exe, self._read_region_from_exe,
             self._read_points_from_exe, self._read_subst_from_exe,
-            self._read_teams_from_exe, self._read_wdl_from_exe,
+            self._read_teams_from_exe, self._read_goal_frames_from_exe,
+            self._read_wdl_from_exe,
             self._read_flag_from_exe,
         ):
             read_from_exe()

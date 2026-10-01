@@ -58,6 +58,7 @@ TEXTS_DE = {
     "header.region.a": "Region A:",
     "header.region.b": "Region B:",
     "header.subst": "Max. Auswechslungen Torwart / Mannschaft:",
+    "header.goal_frames": "Max. Frames für Torszenen:",
   
     # ---- areas
     "tab.strings": "  📝 Strings  ",
@@ -306,6 +307,7 @@ TEXTS_DE = {
     "preview.sum.wdl": "Siege/Unentschieden/Niederlagen-Zeichen: {value}",
     "preview.sum.match": "Spielflagge: {value}",
     "preview.sum.substitutions": "Max. Auswechslungen geändert: {value}",
+    "preview.sum.goal_frames": "Max. Frames für Torszenen geändert: {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "keine",

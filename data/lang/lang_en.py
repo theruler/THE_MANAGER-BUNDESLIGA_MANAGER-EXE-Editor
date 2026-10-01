@@ -58,7 +58,8 @@ TEXTS_EN = {
     "header.region.a": "Region A:",
     "header.region.b": "Region B:",
     "header.subst": "Max substitutions for Goalkeeper / rest of the Team:",
-
+    "header.goal_frames": "Goal scenes max frames:",
+    
     # ---- areas
     "tab.strings": "  📝 Strings  ",
     "tab.fonts": "  🔤 Font Editor  ",
@@ -308,6 +309,7 @@ TEXTS_EN = {
     "preview.sum.wdl": "Win/Draw/Loss characters: {value}",
     "preview.sum.match": "Match Flag: {value}",
     "preview.sum.substitutions": "Max substitutions changed: {value}",
+    "preview.sum.goal_frames": "Goal Scenes max frames changed: {value}",
 
     # ---- preview: shared value words
     "preview.val.none": "none",
