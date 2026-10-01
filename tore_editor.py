@@ -486,7 +486,7 @@ def poly_len(p):
     return sum(math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]) for i in range(1, len(p)))
 
 
-def rdp(pts, eps): # Ramer-Douglas-Peucker simplification.
+def rdp(pts, eps):
     if len(pts) < 3:
         return list(pts)
     (x1, y1), (x2, y2) = pts[0], pts[-1]
@@ -515,7 +515,7 @@ def chaikin(pts, it=2):
     return pts
 
 
-def catmull(pts, seg=10): # Catmull-Rom spline
+def catmull(pts, seg=10):
     if len(pts) < 3:
         return list(pts)
     p = [pts[0]] + list(pts) + [pts[-1]]
@@ -1229,7 +1229,7 @@ def run_gui(path=None):
             c.bind("<Double-Button-1>", self.on_dbl)
             c.bind("<Motion>", self.on_hover)
             c.bind("<Leave>", lambda e: c.delete("hover"))
-            for b in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+            for b in ("<Button-3>", "<Button-2>"):
                 c.bind(b, self.on_right)
             c.bind("<MouseWheel>", lambda e: self.step(-1 if e.delta > 0 else 1))
             c.bind("<Button-4>", lambda e: self.step(-1))
@@ -1397,8 +1397,7 @@ def run_gui(path=None):
             t = self.tool.get()
             ctrl = bool(e.state & 4)
             if t == "pan":
-                self.drag = dict(kind="win", x0=e.x, y0=e.y, a=tuple(self.fr.scroll), off=tuple(self.ball_off),
-                                 snapped=False, moved=False, live=False, pos=None)
+                self.drag = dict(kind="win", x0=e.x, y0=e.y, a=tuple(self.fr.scroll), off=tuple(self.ball_off), snapped=False, moved=False, live=False, pos=None)
                 return
             sl = self.hit(int(px), int(py))
             if t == "draw":
@@ -1425,10 +1424,13 @@ def run_gui(path=None):
                 return
             kk = self.path_hit(e.x, e.y, 5.0)
             if kk is not None and kk != self.idx and sl not in self.multi and not ctrl:
-                return self.start_rope(kk, e) 
+                return self.start_rope(kk, e)
             if sl is not None:
                 if ctrl:
-                    self.select(sl, add=True)
+                    if sl in self.multi:
+                        self.remove_from_group(sl)
+                    else:
+                        self.select(sl, add=True)
                     return
                 if sl not in self.multi:
                     self.select(sl)
@@ -1437,9 +1439,10 @@ def run_gui(path=None):
             k = self.path_hit(e.x, e.y)
             if k is not None:
                 return self.start_rope(k, e)
+        
             if self.near_window_edge(px, py):
                 self.drag = dict(kind="win", x0=e.x, y0=e.y, a=tuple(self.fr.scroll), off=tuple(self.ball_off),
-                                 snapped=False, moved=False, live=False, pos=None)
+                                snapped=False, moved=False, live=False, pos=None)
             else:
                 self.drag = dict(kind="band", x0=e.x, y0=e.y, x1=e.x, y1=e.y, ctrl=ctrl, moved=False)
 
@@ -1552,6 +1555,19 @@ def run_gui(path=None):
             self.refresh()
 
 
+        def remove_from_group(self, sl):
+            if sl in self.multi:
+                self.multi.remove(sl)
+                if sl == self.sel:
+                    if self.multi:
+                        self.sel = self.pick_leader(self.multi)
+                    else:
+                        self.sel = None
+                elif not self.multi:
+                    self.sel = None
+                self.refresh()
+
+
         def on_right(self, e):
             self.canvas.focus_set()
             z = self.z()
@@ -1567,8 +1583,10 @@ def run_gui(path=None):
                 sid = self.fr.figs[sl][2]
                 nm = self.names().get(sl, "figure")
                 m.add_command(label="-- %s --" % nm, state="disabled")
-                if len(self.multi) > 1 and sl in self.multi and sl != self.sel:
-                    m.add_command(label="Make leader of the selection", command=lambda s=sl: self.set_leader(s))
+                if len(self.multi) > 1 and sl in self.multi:
+                    if sl != self.sel:
+                        m.add_command(label="Make leader of the selection", command=lambda s=sl: self.set_leader(s))
+                    m.add_command(label="Remove figure from group", command=lambda s=sl: self.remove_from_group(s))
                 if team_of(sid) in ("R", "B"):
                     m.add_cascade(label="Action here", menu=self._action_menu(m))
                 if loco_cycle(sid, "E"):
@@ -1632,8 +1650,7 @@ def run_gui(path=None):
                 self.make_path(self.sel, tx, ty, n)
 
         def path_to_frame(self, tx, ty):
-            e = simpledialog.askinteger("Path", "Arrival frame number (current is %d):" % (self.idx + 1),
-                                        minvalue=self.idx + 2, maxvalue=MAX_FRAMES, parent=self)
+            e = simpledialog.askinteger("Path", "Arrival frame number (current is %d):" % (self.idx + 1),minvalue=self.idx + 2, maxvalue=MAX_FRAMES, parent=self)
             if e:
                 self.make_path(self.sel, tx, ty, e - 1 - self.idx)
 
@@ -1683,8 +1700,7 @@ def run_gui(path=None):
         def tween(self):
             if not self.need_sel():
                 return
-            end = simpledialog.askinteger("Interpolate", "Final frame (1-%d):" % len(self.scene.frames),
-                                          minvalue=1, maxvalue=len(self.scene.frames), parent=self)
+            end = simpledialog.askinteger("Interpolate", "Final frame (1-%d):" % len(self.scene.frames),minvalue=1, maxvalue=len(self.scene.frames), parent=self)
             if end:
                 self.tween_to(end - 1)
 
@@ -1926,8 +1942,7 @@ def run_gui(path=None):
             for n, pid in enumerate(ids):
                 x, y = (n % 5) * cw, (n // 5) * ch
                 spr = sprite_of(self.gfx, pid)
-                cv.create_rectangle(x + 2, y + 2, x + cw - 2, y + ch - 2, outline="#ffb000" if pid == sid else "#ccc",
-                                    width=3 if pid == sid else 1, fill="#303030")
+                cv.create_rectangle(x + 2, y + 2, x + cw - 2, y + ch - 2, outline="#ffb000" if pid == sid else "#ccc",width=3 if pid == sid else 1, fill="#303030")
                 if spr is not None:
                     im = spr.resize((spr.width * 3, spr.height * 3), Image.NEAREST)
                     ph = ImageTk.PhotoImage(im)
@@ -1979,8 +1994,7 @@ def run_gui(path=None):
                 x1 = x0 + CELL_W * zz
                 y1 = y0 + CELL_H * zz
                 cv.create_rectangle(x0, y0, x1, y1, outline="#ff00ff")
-                cv.create_text(x0 + 1 * zz, y0 + 1 * zz, anchor="nw", text=str(sid),
-                               fill="white", font=("TkDefaultFont", 7, "bold"))
+                cv.create_text(x0 + 1 * zz, y0 + 1 * zz, anchor="nw", text=str(sid),fill="white", font=("TkDefaultFont", 7, "bold"))
 
             cv.bind("<Button-1>", self.on_palette_click)
             cv.bind("<Motion>", self.on_palette_hover)
@@ -2070,9 +2084,7 @@ def run_gui(path=None):
             self._write(self.scene.path)
 
         def save_as(self):
-            p = filedialog.asksaveasfilename(title="Save scene", defaultextension=".T",
-                                             initialfile=os.path.basename(self.scene.path or "1.T"),
-                                             filetypes=[("Scene", "*.t *.v *.te *.tj *.ve *.vj"), ("Tutti", "*.*")])
+            p = filedialog.asksaveasfilename(title="Save scene", defaultextension=".T",initialfile=os.path.basename(self.scene.path or "1.T"),filetypes=[("Scene", "*.t *.v *.te *.tj *.ve *.vj"), ("Tutti", "*.*")])
             if p:
                 self._write(p)
 
@@ -2094,8 +2106,7 @@ def run_gui(path=None):
             vb.grid(row=1, column=1, columnspan=2, sticky="w", padx=4)
             ttk.Label(w, text="Scene number:").grid(row=2, column=0, sticky="w", padx=8, pady=6)
             ttk.Spinbox(w, from_=1, to=999, width=6, textvariable=num).grid(row=2, column=1, sticky="w", padx=4)
-            ttk.Label(w, text=("ANZAHL: %s -> max %s" % (an, vals)) if vals else "ANZAHL not found (it will not be updated)",
-                      foreground="#555").grid(row=3, column=0, columnspan=3, padx=8, sticky="w")
+            ttk.Label(w, text=("ANZAHL: %s -> max %s" % (an, vals)) if vals else "ANZAHL not found (it will not be updated)",foreground="#555").grid(row=3, column=0, columnspan=3, padx=8, sticky="w")
 
             def ok():
                 vi = list(VARIANTS.values()).index(var_.get())
@@ -2207,13 +2218,11 @@ def run_gui(path=None):
             if self.show_ids.get():
                 for g in f.figs:
                     if cls(g[2]) not in "LR":
-                        c.create_text(g[0] * z + 1, (g[1] + Y_OFFSET) * z - 1, anchor="sw", text=str(g[2]),
-                                      fill="#fff59d", font=("TkDefaultFont", 7))
+                        c.create_text(g[0] * z + 1, (g[1] + Y_OFFSET) * z - 1, anchor="sw", text=str(g[2]),fill="#fff59d", font=("TkDefaultFont", 7))
             for s in self.multi:
                 if s != self.sel and s < len(f.figs):
                     x, y, sid = f.figs[s]
-                    c.create_rectangle(x * z, (y + Y_OFFSET) * z, (x + sprite_w(sid)) * z, (y + Y_OFFSET + CELL_H) * z,
-                                       outline="#00e5ff", width=2, dash=(3, 2))
+                    c.create_rectangle(x * z, (y + Y_OFFSET) * z, (x + sprite_w(sid)) * z, (y + Y_OFFSET + CELL_H) * z, outline="#00e5ff", width=2, dash=(3, 2))
             if self.sel is not None:
                 x, y, sid = f.figs[self.sel]
                 if self.show_path.get() and n > 1:
@@ -2226,8 +2235,7 @@ def run_gui(path=None):
                             c.create_text(px, py - 7, text=str(k + 1), fill="#ffe082", font=("TkDefaultFont", 7))
                 c.create_rectangle(x * z, (y + Y_OFFSET) * z, (x + sprite_w(sid)) * z, (y + Y_OFFSET + CELL_H) * z, outline="#ffff00", width=2)
                 if len(self.multi) > 1:
-                    c.create_text(x * z + 1, (y + Y_OFFSET) * z - 1, anchor="sw", text="leader", fill="#ffff00",
-                                  font=("TkDefaultFont", 7, "bold"))
+                    c.create_text(x * z + 1, (y + Y_OFFSET) * z - 1, anchor="sw", text="leader", fill="#ffff00", font=("TkDefaultFont", 7, "bold"))
             self.draw_overlay()
             self.draw_timeline()
             ev = next((k for k, e in enumerate(sc.events) if e == self.idx), -1)
@@ -2236,7 +2244,7 @@ def run_gui(path=None):
                 self.fill_tree()
                 self.draw_poses()
             fn = os.path.basename(sc.path) if sc.path else "(new)"
-            self.title("TORE Editor - %s%s   frame %d/%d" % (fn, " *" if self.modified else "", self.idx + 1, n))
+            self.title("TORE Editor - By Theruler76 - %s%s   frame %d/%d" % (fn, " *" if self.modified else "", self.idx + 1, n))
 
 
         def fill_tree(self):
@@ -2276,8 +2284,7 @@ def run_gui(path=None):
             am = tk.Menu(parent, tearoff=0)
             for key in ACTION_ORDER:
                 for side in action_sides(key):
-                    am.add_command(label=action_label(key, side),
-                                   command=lambda k=key, s=side: self.do_action(k, s))
+                    am.add_command(label=action_label(key, side), command=lambda k=key, s=side: self.do_action(k, s))
                 am.add_separator()
             return am
 
@@ -2921,8 +2928,7 @@ def run_gui(path=None):
             ttk.Entry(form, textvariable=name_v, width=44).grid(row=0, column=1, sticky="we", pady=2)
             ttk.Label(form, text="IDs").grid(row=1, column=0, sticky="w")
             ttk.Entry(form, textvariable=ids_v, width=44).grid(row=1, column=1, sticky="we", pady=2)
-            ttk.Label(form, text="e.g.  3,4,5   or   15-20   or   43-38 (descending ok)",
-                      foreground="#666").grid(row=2, column=1, sticky="w")
+            ttk.Label(form, text="e.g.  3,4,5   or   15-20   or   43-38 (descending ok)",foreground="#666").grid(row=2, column=1, sticky="w")
             pv = tk.Canvas(form, width=40 + 14 * 38, height=46, highlightthickness=0)
             pv.grid(row=3, column=0, columnspan=2, pady=8, sticky="w")
             bt = ttk.Frame(form)
