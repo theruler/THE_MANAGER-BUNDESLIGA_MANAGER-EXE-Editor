@@ -1,0 +1,346 @@
+{
+ "red": {
+  "Stand - facing E": [
+   0
+  ],
+  "Stand - facing W": [
+   58
+  ],
+  "Run E (East)": [
+   3,
+   4,
+   5
+  ],
+  "Run NE (North-East)": [
+   0,
+   1,
+   2
+  ],
+  "Run N (North)": [
+   28,
+   29,
+   30
+  ],
+  "Run NW (North-West)": [
+   56,
+   57,
+   58
+  ],
+  "Run W (West)": [
+   53,
+   54,
+   55
+  ],
+  "Run SW (South-West)": [
+   50,
+   51,
+   52
+  ],
+  "Run S (South)": [
+   31,
+   32,
+   33
+  ],
+  "Run SE (South-East)": [
+   6,
+   7,
+   8
+  ],
+  "Run E - long cycle": [
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9
+  ],
+  "Run W - long cycle": [
+   49,
+   50,
+   51,
+   52,
+   53,
+   54,
+   55
+  ],
+  "Dive (tuffo) -> E": [
+   12,
+   13,
+   14
+  ],
+  "Dive (tuffo) -> W": [
+   46,
+   45,
+   44
+  ],
+  "Header (colpo di testa) -> E": [
+   11
+  ],
+  "Header (colpo di testa) -> W": [
+   47
+  ],
+  "Bicycle kick (rovesciata) -> E": [
+   11,
+   10,
+   23,
+   24
+  ],
+  "Bicycle kick (rovesciata) -> W": [
+   47,
+   48,
+   35,
+   34
+  ],
+  "Collision fall (scontro + caduta) -> E": [
+   22,
+   23,
+   24
+  ],
+  "Collision fall (scontro + caduta) -> W": [
+   36,
+   35,
+   34
+  ],
+  "Get up -> E": [
+   14,
+   13
+  ],
+  "Get up -> W": [
+   44,
+   45
+  ],
+  "Other / unknown (?) 21,37": [
+   21,
+   37
+  ],
+  "Facing camera (?) 25": [
+   25
+  ],
+  "Arms up / celebration (?) 26,27": [
+   26,
+   27
+  ],
+  "Unknown run type A (?) 15-20": [
+   15,
+   16,
+   17,
+   18,
+   19,
+   20
+  ],
+  "Unknown run type B (?) 38-43": [
+   38,
+   39,
+   40,
+   41,
+   42,
+   43
+  ]
+ },
+ "blue": {
+  "Stand - facing E": [
+   59
+  ],
+  "Stand - facing W": [
+   117
+  ],
+  "Run E (East)": [
+   62,
+   63,
+   64
+  ],
+  "Run NE (North-East)": [
+   59,
+   60,
+   61
+  ],
+  "Run N (North)": [
+   87,
+   88,
+   89
+  ],
+  "Run NW (North-West)": [
+   115,
+   116,
+   117
+  ],
+  "Run W (West)": [
+   112,
+   113,
+   114
+  ],
+  "Run SW (South-West)": [
+   109,
+   110,
+   111
+  ],
+  "Run S (South)": [
+   90,
+   91,
+   92
+  ],
+  "Run SE (South-East)": [
+   65,
+   66,
+   67
+  ],
+  "Run E - long cycle": [
+   62,
+   63,
+   64,
+   65,
+   66,
+   67,
+   68
+  ],
+  "Run W - long cycle": [
+   108,
+   109,
+   110,
+   111,
+   112,
+   113,
+   114
+  ],
+  "Dive (tuffo) -> E": [
+   71,
+   72,
+   73
+  ],
+  "Dive (tuffo) -> W": [
+   105,
+   104,
+   103
+  ],
+  "Header (colpo di testa) -> E": [
+   70
+  ],
+  "Header (colpo di testa) -> W": [
+   106
+  ],
+  "Bicycle kick (rovesciata) -> E": [
+   70,
+   69,
+   82,
+   83
+  ],
+  "Bicycle kick (rovesciata) -> W": [
+   106,
+   107,
+   94,
+   93
+  ],
+  "Collision fall (scontro + caduta) -> E": [
+   81,
+   82,
+   83
+  ],
+  "Collision fall (scontro + caduta) -> W": [
+   95,
+   94,
+   93
+  ],
+  "Get up -> E": [
+   73,
+   72
+  ],
+  "Get up -> W": [
+   103,
+   104
+  ],
+  "Other / unknown (?) 21,37": [
+   80,
+   96
+  ],
+  "Facing camera (?) 25": [
+   84
+  ],
+  "Arms up / celebration (?) 26,27": [
+   85,
+   86
+  ],
+  "Unknown run type A (?) 15-20": [
+   74,
+   75,
+   76,
+   77,
+   78,
+   79
+  ],
+  "Unknown run type B (?) 38-43": [
+   97,
+   98,
+   99,
+   100,
+   101,
+   102
+  ]
+ },
+ "referee": {
+  "Referee walk E": [
+   121,
+   122,
+   123
+  ],
+  "Referee walk W (A)": [
+   135,
+   136
+  ],
+  "Referee walk W (B) 132-134": [
+   132,
+   133,
+   134
+  ],
+  "Referee standing": [
+   126
+  ],
+  "Referee - side A (all)": [
+   118,
+   119,
+   120,
+   121,
+   122,
+   123,
+   124,
+   125,
+   126,
+   127,
+   128
+  ],
+  "Referee - side B (all)": [
+   129,
+   130,
+   131,
+   132,
+   133,
+   134,
+   135,
+   136,
+   137,
+   138,
+   139,
+   140,
+   141
+  ]
+ },
+ "ball": {
+  "rotation": [
+   142,
+   143,
+   144
+  ],
+  "shadow": [
+   145
+  ]
+ },
+ "goals": {
+  "left": [
+   1000
+  ],
+  "right": [
+   1024
+  ]
+ },
+ "_note": "Red ids; blue = red+59 (same k). Mirror E<->W is k -> 58-k. Sets marked (?) are unverified."
+}
