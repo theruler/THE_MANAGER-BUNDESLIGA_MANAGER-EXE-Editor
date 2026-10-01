@@ -3,7 +3,7 @@ import os
 import re
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, colorchooser
+from tkinter import ttk, messagebox, filedialog
 from PIL import Image, ImageTk, ImageDraw
 
 def _hex_palette(s: str, scale: int = 1) -> list[tuple[int, int, int]]:
@@ -202,6 +202,8 @@ ACCENT    = "#3498DB"
 MUTED     = "#7F8C8D"
 RED       = "#C0392B"
 SEL_COLOR = "#00BFFF"
+ALPHA_DISPLAY_COLOR = "#FF00FF"
+ALPHA_INDEX = 0
 
 TOOL_DRAW       = "draw"
 TOOL_SELECT     = "select"
@@ -218,11 +220,16 @@ def _natural_key(s: str):
             for c in re.split(r"(\d+)", s)]
 
 def _rgb_to_palette_index(
-    r: int, g: int, b: int, palette: list[tuple[int, int, int]]
+    r: int, g: int, b: int, palette: list[tuple[int, int, int]],
+    start_index: int = 0,
 ) -> int:
-    best_idx = 0
+    if not palette:
+        return 0
+    start_index = max(0, min(start_index, len(palette) - 1))
+    best_idx = start_index
     best_dist = float("inf")
-    for i, (pr, pg, pb) in enumerate(palette):
+    for i in range(start_index, len(palette)):
+        pr, pg, pb = palette[i]
         if (pr, pg, pb) == (r, g, b):
             return i
         dist = (pr - r) ** 2 + (pg - g) ** 2 + (pb - b) ** 2
@@ -230,6 +237,35 @@ def _rgb_to_palette_index(
             best_dist = dist
             best_idx = i
     return best_idx
+
+
+def _quantize_rgba_to_palette(
+    src: Image.Image, palette: list[tuple[int, int, int]]
+) -> Image.Image:
+
+    if src is None:
+        raise ValueError("No source image.")
+    if len(palette) < 2:
+        raise ValueError("The palette must contain at least one opaque color.")
+
+    rgba = src.convert("RGBA")
+    flat = _palette_to_flat_rgb(palette[1:])
+    pal_img = Image.new("P", (1, 1))
+    pal_img.putpalette(flat)
+    q = rgba.convert("RGB").quantize(palette=pal_img, dither=0)
+    indices = bytearray(q.tobytes())
+
+    alpha = rgba.getchannel("A")
+    alpha_bytes = alpha.tobytes()
+    for i, a in enumerate(alpha_bytes):
+        if a == 0:
+            indices[i] = ALPHA_INDEX
+        else:
+            indices[i] += 1
+
+    result = Image.frombytes("P", rgba.size, bytes(indices))
+    result.putpalette(_palette_to_flat_rgb(palette))
+    return result
 
 
 class _ImageCanvas(tk.Frame):
@@ -243,6 +279,7 @@ class _ImageCanvas(tk.Frame):
         self._zoom = 2
         self._tool = TOOL_DRAW
         self._draw_color = (255, 255, 255, 255)
+        self._draw_index: int | None = None
         self._show_grid = True
         self._clipboard: Image.Image | None = None
         self._sel: tuple[int, int, int, int] | None = None
@@ -340,6 +377,13 @@ class _ImageCanvas(tk.Frame):
 
     def set_palette(self, palette: list[tuple[int, int, int]]):
         self._palette = list(palette)
+        if self._draw_index is not None:
+            if not (0 <= self._draw_index < len(self._palette)):
+                self._draw_index = None
+            elif self._draw_index != ALPHA_INDEX:
+                r, g, b, a = self._draw_color
+                if a == 0 or self._palette[self._draw_index] != (r, g, b):
+                    self._draw_index = None
         self._flat_palette_cache = None
         self._redraw()
 
@@ -410,8 +454,14 @@ class _ImageCanvas(tk.Frame):
             cursor = "crosshair"
         self._canvas.config(cursor=cursor)
 
-    def set_draw_color(self, rgba: tuple):
+    def set_draw_color(self, rgba: tuple, pal_idx: int | None = None):
         self._draw_color = rgba
+        if pal_idx is not None and 0 <= pal_idx < len(self._palette):
+            self._draw_index = pal_idx
+        elif len(rgba) >= 4 and rgba[3] == 0:
+            self._draw_index = ALPHA_INDEX
+        else:
+            self._draw_index = None
 
     def set_zoom(self, z: int):
         old_zoom = self._zoom
@@ -544,6 +594,8 @@ class _ImageCanvas(tk.Frame):
     def _display_image(self) -> Image.Image:
         flat_pal = self._flat_palette()
         img = self._img.copy()
+        if len(flat_pal) >= 3:
+            flat_pal[0:3] = (255, 0, 255)
         img.putpalette(flat_pal)
         if self._paste_buf is not None:
             iw, ih = img.size
@@ -802,10 +854,12 @@ class _ImageCanvas(tk.Frame):
             self._apply_soften_sharpen(pt, sharpen=False)
 
         elif self._tool == TOOL_PICK:
+            index = self._pixel_index(pt)
             rgba = self._pixel_color(pt)
             self._draw_color = rgba
+            self._draw_index = index
             if self._on_color_picked:
-                self._on_color_picked(*rgba)
+                self._on_color_picked(*rgba, index)
 
         elif self._tool == TOOL_FILL:
             self._flood_fill(*pt)
@@ -837,11 +891,8 @@ class _ImageCanvas(tk.Frame):
                     scale = min(new_w / src_w, new_h / src_h)
                     new_w = max(1, int(src_w * scale))
                     new_h = max(1, int(src_h * scale))
-                flat = _palette_to_flat_rgb(self._palette)
-                pal_img = Image.new("P", (1, 1))
-                pal_img.putpalette(flat)
-                resized = self._paste_src.convert("RGB").resize((new_w, new_h), Image.NEAREST)
-                self._paste_buf = resized.quantize(palette=pal_img, dither=0)
+                resized = self._paste_src.convert("RGBA").resize((new_w, new_h), Image.NEAREST)
+                self._paste_buf = _quantize_rgba_to_palette(resized, self._palette)
                 self._paste_pos = (new_x0, new_y0)
                 self._sel = (new_x0, new_y0, new_x0 + new_w - 1, new_y0 + new_h - 1)
                 self._redraw()
@@ -882,13 +933,10 @@ class _ImageCanvas(tk.Frame):
         self._last_draw_pt = None
         if self._paste_resize_corner is not None and self._paste_src is not None and self._paste_buf is not None:
             pw, ph = self._paste_buf.size
-            flat = _palette_to_flat_rgb(self._palette)
-            pal_img = Image.new("P", (1, 1))
-            pal_img.putpalette(flat)
             flt = self._paste_resize_filter
             if flt != Image.NEAREST:
-                resized = self._paste_src.convert("RGB").resize((pw, ph), flt)
-                self._paste_buf = resized.quantize(palette=pal_img, dither=0)
+                resized = self._paste_src.convert("RGBA").resize((pw, ph), flt)
+                self._paste_buf = _quantize_rgba_to_palette(resized, self._palette)
                 self._redraw()
             self._paste_resize_corner = None
         self._paste_drag_start = None
@@ -926,10 +974,12 @@ class _ImageCanvas(tk.Frame):
             return
 
         if pt and self._img and self._tool in (TOOL_PICK, TOOL_DRAW):
+            index = self._pixel_index(pt)
             rgba = self._pixel_color(pt)
             self._draw_color = rgba
+            self._draw_index = index
             if self._on_color_picked:
-                self._on_color_picked(*rgba)
+                self._on_color_picked(*rgba, index)
 
     def _on_b3_motion(self, event):
         if self._tool == TOOL_SOFTEN:
@@ -984,7 +1034,7 @@ class _ImageCanvas(tk.Frame):
                 nr = max(0, min(255, int(nr)))
                 ng = max(0, min(255, int(ng)))
                 nb = max(0, min(255, int(nb)))
-                new_idx = _rgb_to_palette_index(nr, ng, nb, self._palette)
+                new_idx = _rgb_to_palette_index(nr, ng, nb, self._palette, start_index=1)
                 if new_idx != center:
                     self._img.putpixel((bx, by), new_idx)
                     changed = True
@@ -993,10 +1043,18 @@ class _ImageCanvas(tk.Frame):
             self._notify_modified()
             self._redraw()
 
+    def _pixel_index(self, pt: tuple[int, int]) -> int:
+        index = self._img.getpixel(pt)
+        if isinstance(index, tuple):
+            index = index[0]
+        return int(index)
+
     def _pixel_color(self, pt: tuple[int, int]) -> tuple[int, int, int, int]:
         index = self._img.getpixel(pt)
         if isinstance(index, tuple):
             index = index[0]
+        if index == ALPHA_INDEX:
+            return 255, 0, 255, 0
         if 0 <= index < len(self._palette):
             r, g, b = self._palette[index]
         else:
@@ -1033,8 +1091,18 @@ class _ImageCanvas(tk.Frame):
         target_index = self._img.getpixel((px, py))
         if isinstance(target_index, tuple):
             target_index = target_index[0]
-        r, g, b, _ = self._draw_color
-        fill_index = _rgb_to_palette_index(r, g, b, self._palette)
+        r, g, b, a = self._draw_color
+        if a == 0:
+            fill_index = ALPHA_INDEX
+        elif (
+            self._draw_index is not None
+            and self._draw_index != ALPHA_INDEX
+            and 0 <= self._draw_index < len(self._palette)
+            and self._palette[self._draw_index] == (r, g, b)
+        ):
+            fill_index = self._draw_index
+        else:
+            fill_index = _rgb_to_palette_index(r, g, b, self._palette, start_index=1)
         if fill_index == target_index:
             return
         self._notify_stroke_start()
@@ -1063,8 +1131,18 @@ class _ImageCanvas(tk.Frame):
         if not self._drawing_stroke:
             self._drawing_stroke = True
             self._notify_stroke_start()
-        r, g, b, _ = self._draw_color
-        index = _rgb_to_palette_index(r, g, b, self._palette)
+        r, g, b, a = self._draw_color
+        if a == 0:
+            index = ALPHA_INDEX
+        elif (
+            self._draw_index is not None
+            and self._draw_index != ALPHA_INDEX
+            and 0 <= self._draw_index < len(self._palette)
+            and self._palette[self._draw_index] == (r, g, b)
+        ):
+            index = self._draw_index
+        else:
+            index = _rgb_to_palette_index(r, g, b, self._palette, start_index=1)
         self._img.putpixel((px, py), index)
 
     def _paint_pixel(self, px: int, py: int):
@@ -1204,9 +1282,8 @@ class PicEditorPanel(ttk.Frame):
         f_colors.pack(fill=tk.X, pady=3)
         crow = ttk.Frame(f_colors)
         crow.pack(fill=tk.X, pady=(0, 4))
-        self._color_canvas = tk.Canvas(crow, width=22, height=22, highlightthickness=1, highlightbackground="#888", cursor="hand2")
+        self._color_canvas = tk.Canvas(crow, width=22, height=22, highlightthickness=1, highlightbackground="#888", cursor="arrow")
         self._color_canvas.pack(side=tk.LEFT)
-        self._color_canvas.bind("<Button-1>", self._pick_color_dialog)
         self._color_hex = ttk.Label(crow, text="#FFFFFF", font=("Consolas", 9), foreground=MUTED)
         self._color_hex.pack(side=tk.LEFT, padx=6)
         self._update_color_display((255, 255, 255, 255))
@@ -1455,17 +1532,17 @@ class PicEditorPanel(ttk.Frame):
     ) -> "Image.Resampling | None":
         result: list = [None]
         tw, th = target_size
-        flat = _palette_to_flat_rgb(self._active_palette)
-        pal_img = Image.new("P", (1, 1))
-        pal_img.putpalette(flat)
         pw, ph = self._PREVIEW_W, self._PREVIEW_H
         scale = min(pw / tw, ph / th)
         prev_w = max(1, int(tw * scale))
         prev_h = max(1, int(th * scale))
 
         def make_preview(flt):
-            resized = src_rgb.resize((tw, th), flt)
-            q = resized.quantize(palette=pal_img, dither=0)
+            resized = src_rgb.convert("RGBA").resize((tw, th), flt)
+            q = _quantize_rgba_to_palette(resized, self._active_palette)
+            preview_pal = _palette_to_flat_rgb(self._active_palette)
+            preview_pal[0:3] = (255, 0, 255)
+            q.putpalette(preview_pal)
             rgb = q.convert("RGB")
             thumb = rgb.resize((prev_w, prev_h), Image.NEAREST)
             canvas = Image.new("RGB", (pw, ph), (30, 30, 30))
@@ -1545,7 +1622,7 @@ class PicEditorPanel(ttk.Frame):
         if not path:
             return
         try:
-            src = Image.open(path).convert("RGB")
+            src = Image.open(path).convert("RGBA")
         except Exception as exc:
             messagebox.showerror("Import Error", f"Cannot open image:\n{exc}")
             return
@@ -1571,10 +1648,7 @@ class PicEditorPanel(ttk.Frame):
                 if flt is None:
                     return
                 src = src.resize((new_w, new_h), flt)
-        flat = _palette_to_flat_rgb(self._active_palette)
-        pal_img = Image.new("P", (1, 1))
-        pal_img.putpalette(flat)
-        quantised = src.quantize(palette=pal_img, dither=0)
+        quantised = _quantize_rgba_to_palette(src, self._active_palette)
         self._canvas_frame._clipboard = quantised
         self._canvas_frame._commit_paste()
         self._canvas_frame._paste_buf = quantised.copy()
@@ -1612,9 +1686,18 @@ class PicEditorPanel(ttk.Frame):
         try:
             export = img.copy()
             export.putpalette(_palette_to_flat_rgb(self._active_palette))
-            rgb = export.convert("RGB")
             ext = os.path.splitext(path)[1].lower()
-            if ext in (".jpg", ".jpeg"):
+            rgb = export.convert("RGB")
+            if ext == ".png":
+                rgba = rgb.convert("RGBA")
+                alpha_bytes = bytes(
+                    0 if i == ALPHA_INDEX else 255
+                    for i in export.tobytes()
+                )
+                alpha = Image.frombytes("L", export.size, alpha_bytes)
+                rgba.putalpha(alpha)
+                rgba.save(path, "PNG")
+            elif ext in (".jpg", ".jpeg"):
                 rgb.save(path, "JPEG", quality=95)
             else:
                 rgb.save(path)
@@ -1661,7 +1744,14 @@ class PicEditorPanel(ttk.Frame):
             col = i % cols
             row = i // cols
             x0, y0 = col * sq, row * sq
-            c.create_rectangle(x0, y0, x0 + sq, y0 + sq, fill=f"#{r:02X}{g:02X}{b:02X}", outline="")
+            fill = ALPHA_DISPLAY_COLOR if i == ALPHA_INDEX else f"#{r:02X}{g:02X}{b:02X}"
+            selected = (getattr(self._canvas_frame, "_draw_index", None) == i)
+            c.create_rectangle(
+                x0, y0, x0 + sq, y0 + sq,
+                fill=fill,
+                outline="#FFD700" if selected else "",
+                width=2 if selected else 1,
+            )
 
 
     def _on_swatch_click(self, event):
@@ -1690,8 +1780,8 @@ class PicEditorPanel(ttk.Frame):
         idx = row * cols + col
         if idx < len(pal):
             r, g, b = pal[idx]
-            rgba = (r, g, b, 255)
-            self._canvas_frame.set_draw_color(rgba)
+            rgba = (255, 0, 255, 0) if idx == ALPHA_INDEX else (r, g, b, 255)
+            self._canvas_frame.set_draw_color(rgba, pal_idx=idx)
             self._update_color_display(rgba, pal_idx=idx)
 
     _TOOL_HINTS: dict[str, str] = {
@@ -1721,29 +1811,22 @@ class PicEditorPanel(ttk.Frame):
     def _on_grid_toggle(self):
         self._canvas_frame.set_show_grid(self._grid_var.get())
 
-    def _pick_color_dialog(self, _event=None):
-        r, g, b, _ = self._canvas_frame._draw_color
-        result = colorchooser.askcolor(
-            color=f"#{r:02x}{g:02x}{b:02x}", title="Choose Color")
-        if result and result[0]:
-            r2, g2, b2 = (int(v) for v in result[0])
-            self._apply_draw_color((r2, g2, b2, 255))
+    def _on_color_picked_from_canvas(self, r, g, b, a, pal_idx=None):
+        self._apply_draw_color((r, g, b, a), pal_idx=pal_idx)
 
-    def _on_color_picked_from_canvas(self, r, g, b, a):
-        self._apply_draw_color((r, g, b, a))
-
-    def _apply_draw_color(self, rgba: tuple):
-        self._canvas_frame.set_draw_color(rgba)
-        self._update_color_display(rgba)
+    def _apply_draw_color(self, rgba: tuple, pal_idx: int | None = None):
+        self._canvas_frame.set_draw_color(rgba, pal_idx=pal_idx)
+        self._update_color_display(rgba, pal_idx=pal_idx)
+        self._draw_swatch()
 
     def _update_color_display(self, rgba: tuple, pal_idx: int | None = None):
-        r, g, b, _ = rgba
-        hex_str = f"#{r:02X}{g:02X}{b:02X}"
+        r, g, b, a = rgba
+        if pal_idx is None:
+            pal_idx = ALPHA_INDEX if a == 0 else _rgb_to_palette_index(r, g, b, self._active_palette, start_index=1)
+        hex_str = ALPHA_DISPLAY_COLOR if pal_idx == ALPHA_INDEX else f"#{r:02X}{g:02X}{b:02X}"
         self._color_canvas.config(bg=hex_str)
         self._color_canvas.delete("all")
         self._color_canvas.create_rectangle(0, 0, 32, 32, fill=hex_str, outline="")
-        if pal_idx is None:
-            pal_idx = _rgb_to_palette_index(r, g, b, self._active_palette)
         self._color_hex.config(text=f"{hex_str} (0x{pal_idx:02X})")
 
     def _copy(self):
@@ -1809,8 +1892,14 @@ class PicEditorPanel(ttk.Frame):
         if pt and img is not None:
             px, py = pt
             try:
+                idx = self._canvas_frame._pixel_index(pt)
                 r, g, b, _ = self._canvas_frame._pixel_color(pt)
-                self._pixel_lbl.config(text=f"({px}, {py})  #{r:02X}{g:02X}{b:02X}")
+                if idx == ALPHA_INDEX:
+                    self._pixel_lbl.config(text=f"({px}, {py})  ALPHA (0x{idx:02X})")
+                else:
+                    self._pixel_lbl.config(
+                        text=f"({px}, {py})  #{r:02X}{g:02X}{b:02X} (0x{idx:02X})"
+                    )
             except Exception:
                 self._pixel_lbl.config(text=f"({px}, {py})")
         else:
