@@ -1940,7 +1940,7 @@ class PicEditorPanel(ttk.Frame):
 
 if __name__ == "__main__":
     _root = tk.Tk()
-    _root.title("PIC Editor - Standalone")
+    _root.title("VGA Editor - by TheRuler76")
     _root.geometry("1200x800")
     _panel = PicEditorPanel(_root)
     _panel.pack(fill=tk.BOTH, expand=True)
