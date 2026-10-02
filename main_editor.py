@@ -12,6 +12,7 @@ from font_safety import FontSafetyError, atomic_save_bytes, paths_equal, validat
 import extended_layout
 from mana_editor import ManaEditorPanel
 from vga_editor import PicEditorPanel
+from tore_editor import ToreEditorPanel
 import newspaper_csv
 from newspaper_grammar import NewspaperGrammarError
 import newspaper_editor as _ne
@@ -45,7 +46,7 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.8.17"
+APP_VERSION = "2.9.0"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -184,6 +185,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         view_menu.add_command(label=self.tr("menu.view.fonts"),command=lambda: self._select_tab("tab_fonts"))
         view_menu.add_command(label="MANA.DAT Editor", command=lambda: self._select_tab("tab_mana"))
         view_menu.add_command(label="VGA Editor", command=lambda: self._select_tab("tab_vga"))
+        view_menu.add_command(label="TORE Editor", command=lambda: self._select_tab("tab_tore"))
         view_menu.add_separator()
         lang_menu = tk.Menu(view_menu, tearoff=0)
         self.language_var = tk.StringVar(value=self.language)
@@ -201,7 +203,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         ]
         self.supported_menu_entries = [
             (tools_menu, 0), (tools_menu, 11),
-            (view_menu, 0), (view_menu, 1), (view_menu, 2), (view_menu, 3) 
+            (view_menu, 0), (view_menu, 1), (view_menu, 2), (view_menu, 3), (view_menu, 4)
         ]
         self.root.config(menu=self.menubar)
         self._set_menu_state(self.save_menu_entries + self.exchange_menu_entries, False)
@@ -582,7 +584,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.goal_frames_label = self._reg(ttk.Label(self.goal_frames_container, font=("Segoe UI", 9, "bold")), "header.goal_frames")
         self.goal_frames_label.pack(side=tk.LEFT, padx=(0, 8))
         self.goal_frames_var = tk.StringVar()
-        self.goal_frames_combo = ttk.Combobox(self.goal_frames_container, textvariable=self.goal_frames_var, state="readonly", width=4, justify=tk.CENTER, font=("Segoe UI", 9), values=["255", "127"])
+        self.goal_frames_combo = ttk.Combobox(self.goal_frames_container, textvariable=self.goal_frames_var, state="readonly", width=4, justify=tk.CENTER, font=("Segoe UI", 9), values=["256", "128"])
         self.goal_frames_combo.pack(side=tk.LEFT)
         self.goal_frames_combo.bind("<<ComboboxSelected>>", self._commit_goal_frames)
         self.goal_frames_combo.bind("<Return>", self._commit_goal_frames)
@@ -646,6 +648,10 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.notebook.add(self.tab_vga, text="VGA Editor")
         self.vga_editor = PicEditorPanel(self.tab_vga, standalone=False)
         self.vga_editor.pack(fill=tk.BOTH, expand=True)
+        self.tab_tore = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_tore, text="TORE Editor")
+        self.tore_editor = ToreEditorPanel(self.tab_tore, standalone=False)
+        self.tore_editor.pack(fill=tk.BOTH, expand=True)
         self._set_supported_state(False)
         self.notebook.select(self.tab_strings)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_request)
@@ -653,7 +659,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
     def _set_supported_state(self, supported: bool):
         self.is_supported = bool(supported and self.profile_name and self.profile and self.exe_data)
         state = tk.NORMAL if self.is_supported else tk.DISABLED
-        for tab in (self.tab_strings, self.tab_fonts, self.tab_settings, self.tab_mana, self.tab_vga):
+        for tab in (self.tab_strings, self.tab_fonts, self.tab_settings, self.tab_mana, self.tab_vga, self.tab_tore):
             self.notebook.tab(tab, state=state)
         self._set_menu_state(self.supported_menu_entries, self.is_supported)
         self._update_translate_all_state()
@@ -2076,7 +2082,16 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         validation = validate_image(data, profile, entries, relocation_sites)
         return entries, relocation_sites, validation
 
+    def _tore_dirty(self) -> bool:
+        panel = getattr(self, "tore_editor", None)
+        try:
+            return bool(panel is not None and panel.is_dirty())
+        except Exception:
+            return False
+
     def _confirm_discard_for_load(self) -> bool:
+        if self._tore_dirty() and not messagebox.askyesno("TORE Editor", "La scena TORE ha modifiche non salvate. Continuare e scartarle?"):
+            return False
         if not self._has_unsaved_changes():
             return True
         return messagebox.askyesno(self.tr("dlg.unsaved.title"), self.tr("dlg.unsaved.load"))
@@ -2087,6 +2102,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         except Exception:
             unsaved = True
         if unsaved and not messagebox.askyesno(self.tr("dlg.unsaved.title"), self.tr("dlg.unsaved.close")):
+            return
+        if self._tore_dirty() and not messagebox.askyesno("TORE Editor", "La scena TORE ha modifiche non salvate. Chiudere comunque?"):
             return
         self._cancel_free_space_update()
         self.root.destroy()
@@ -2158,7 +2175,9 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         pic_folder = os.path.join(exe_dir, "PIC")
         if os.path.isdir(pic_folder):
             self.vga_editor.set_pic_dir(pic_folder)
+            self.tore_editor.set_pic_dir(pic_folder)
         else:
+            self.tore_editor.clear_pic_dir()
             self.vga_editor._pic_dir = ""
             self.vga_editor._pic_files = []
             self.vga_editor._file_combo.config(values=[])
