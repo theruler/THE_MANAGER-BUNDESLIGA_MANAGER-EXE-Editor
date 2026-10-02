@@ -16,6 +16,7 @@ EUROPE SECTION (0x8B98, 136 teams x 23 bytes)
 """
 
 import os
+import csv
 import json
 import random
 import tkinter as tk
@@ -281,6 +282,10 @@ class _LeagueTab(ttk.Frame):
         self._on_dirty = on_dirty
         self._building = True
         self._team_btns: dict[int, tk.Button] = {}
+        self._sel: set[int] = set()
+        self._chk_vars: dict[int, tk.BooleanVar] = {}
+        self._team_chks: dict[int, tk.Checkbutton] = {}
+        self._hdr_vars: dict[int, tk.BooleanVar] = {}
         self._rank_entries: dict[int, _FixedEntry] = {}
         self._drag_src: int | None = None
         self._drag_moved = False
@@ -312,6 +317,9 @@ class _LeagueTab(ttk.Frame):
             w.destroy()
         self._team_btns.clear()
         self._rank_entries.clear()
+        self._chk_vars.clear()
+        self._team_chks.clear()
+        self._hdr_vars.clear()
         col_offset = 0
         for li, (first, count, rank_max) in enumerate(LEAGUE_BOUNDS):
             self._build_column(li, first, count, rank_max, col_offset)
@@ -344,6 +352,12 @@ class _LeagueTab(ttk.Frame):
         pos_btn.pack(fill="x", pady=(0, 2))
         rand_btn = tk.Button(tools_f, text="RANDOMIZE STATS", bg="#D35400", fg="white",activebackground="#E67E22", activeforeground="white",font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,cursor="hand2", command=self._random_all_stats)
         rand_btn.pack(fill="x", pady=(0, 2))
+        ie_f = tk.Frame(tools_f, bg=BG)
+        ie_f.pack(fill="x", pady=(0, 2))
+        ie_f.columnconfigure(0, weight=1, uniform="ie")
+        ie_f.columnconfigure(1, weight=1, uniform="ie")
+        for col, (label, action) in enumerate((("IMPORT", "import"), ("EXPORT", "export"))):
+            tk.Button(ie_f, text=label, bg="#2980b9", fg="white", activebackground="#3498db", activeforeground="white", font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4, cursor="hand2", command=lambda a=action: self._open_import_export(a)).grid(row=0, column=col, sticky="ew", padx=(0, 2) if col == 0 else (2, 0))
         self._grid_frame.after(50, self._place_tools_frame)
 
     def _place_tools_frame(self):
@@ -372,8 +386,14 @@ class _LeagueTab(ttk.Frame):
         base_col = col_offset * 2
         rank_hdr = tk.Button(self._grid_frame, text="↓", bg=color, fg="white", activebackground=active, activeforeground="white", font=("Consolas", 8), relief="flat", width=3, padx=1, cursor="hand2", command=lambda li=li, first=first, count=count: self._sort_by_rank(li, first, count))
         rank_hdr.grid(row=0, column=base_col, padx=(2, 1), pady=(0, 4), sticky="w")
-        hdr_btn = tk.Button(self._grid_frame, text=f"LEAGUE {li+1}", bg=color, fg="white", activebackground=active, activeforeground="white", font=("Segoe UI", 8, "bold"), relief="flat", padx=4, cursor="hand2")
-        hdr_btn.grid(row=0, column=base_col + 1, padx=(0, 3), pady=(0, 4), sticky="ew")
+        hdr_f = tk.Frame(self._grid_frame, bg=color)
+        hdr_btn = tk.Button(hdr_f, text=f"LEAGUE {li+1}", bg=color, fg="white", activebackground=active, activeforeground="white", font=("Segoe UI", 8, "bold"), relief="flat", padx=4, cursor="hand2")
+        hdr_btn.pack(side="left", fill="both", expand=True)
+        hdr_var = tk.BooleanVar(value=all(id(self._parsed["teams"][k]) in self._sel for k in range(first, first + count)))
+        self._hdr_vars[li] = hdr_var
+        hdr_chk = tk.Checkbutton(hdr_f, variable=hdr_var, bg=color, activebackground=color, selectcolor="white", fg="black", activeforeground="black", bd=0, highlightthickness=0, padx=2, cursor="hand2", command=lambda li=li: self._on_hdr_chk(li))
+        hdr_chk.pack(side="right", fill="y")
+        hdr_f.grid(row=0, column=base_col + 1, padx=(0, 3), pady=(0, 4), sticky="ew")
 
         for row_i in range(count):
             ti = first + row_i
@@ -384,14 +404,310 @@ class _LeagueTab(ttk.Frame):
             rank_fe.grid(row=row_i + 1, column=base_col, padx=(2, 1), pady=1, sticky="nswe")
             self._rank_entries[ti] = rank_fe
             sel = (ti == self._cur_team)
-            btn = tk.Button(self._grid_frame, text=t["name"][:20] or f"Team {ti}", width=22, anchor="w", bg=active if sel else color, fg="white", activebackground=active, activeforeground="white", font=("Consolas", 10), relief="sunken" if sel else "flat", bd=0, padx=4, pady=2, cursor="hand2")
-            btn.grid(row=row_i + 1, column=base_col + 1, padx=(0, 3), pady=1, sticky="ew")
+            row_f = tk.Frame(self._grid_frame, bg=active if sel else color)
+            btn = tk.Button(row_f, text=t["name"][:20] or f"Team {ti}", width=18, anchor="w", bg=active if sel else color, fg="white", activebackground=active, activeforeground="white", font=("Consolas", 10), relief="sunken" if sel else "flat", bd=0, padx=4, pady=2, cursor="hand2")
+            btn.pack(side="left", fill="both", expand=True)
+            chk_var = tk.BooleanVar(value=id(t) in self._sel)
+            chk = tk.Checkbutton(row_f, variable=chk_var, bg=active if sel else color, activebackground=active if sel else color, selectcolor="white", fg="black", activeforeground="black", bd=0, highlightthickness=0, padx=2, cursor="hand2", command=lambda idx=ti: self._on_team_chk(idx))
+            chk.pack(side="right", fill="y")
+            row_f.grid(row=row_i + 1, column=base_col + 1, padx=(0, 3), pady=1, sticky="ew")
+            self._chk_vars[ti] = chk_var
+            self._team_chks[ti] = chk
             btn.bind("<Button-1>", lambda e, idx=ti: self._btn_press(idx, e))
             btn.bind("<B1-Motion>", lambda e, idx=ti: self._btn_motion(idx, e))
             btn.bind("<ButtonRelease-1>", lambda e, idx=ti: self._btn_release(idx, e))
             self._team_btns[ti] = btn
             if li == 3 and row_i == 0:
-                self._league4_name_btn = btn
+                self._league4_name_btn = row_f
+
+    def _selected_indices(self) -> list:
+        return [ti for ti, t in enumerate(self._parsed["teams"]) if id(t) in self._sel]
+
+    def _on_team_chk(self, ti: int):
+        t = self._parsed["teams"][ti]
+        if self._chk_vars[ti].get():
+            self._sel.add(id(t))
+        else:
+            self._sel.discard(id(t))
+        self._sync_hdr(self._league_of(ti))
+
+    def _on_hdr_chk(self, li: int):
+        first, count, _ = LEAGUE_BOUNDS[li]
+        state = self._hdr_vars[li].get()
+        for ti in range(first, first + count):
+            t = self._parsed["teams"][ti]
+            if state:
+                self._sel.add(id(t))
+            else:
+                self._sel.discard(id(t))
+            var = self._chk_vars.get(ti)
+            if var is not None:
+                var.set(state)
+
+    def _sync_hdr(self, li: int):
+        var = self._hdr_vars.get(li)
+        if var is None:
+            return
+        first, count, _ = LEAGUE_BOUNDS[li]
+        var.set(all(id(self._parsed["teams"][k]) in self._sel for k in range(first, first + count)))
+
+    def _sync_chk_bg(self, ti: int):
+        btn = self._team_btns.get(ti)
+        chk = self._team_chks.get(ti)
+        if btn is None or chk is None:
+            return
+        try:
+            bg = btn.cget("bg")
+            chk.config(bg=bg, activebackground=bg)
+            chk.master.config(bg=bg)
+        except tk.TclError:
+            pass
+
+    def _need_selection(self, title: str) -> list:
+        sel = self._selected_indices()
+        if not sel:
+            messagebox.showinfo(title, "No teams selected.\nTick the checkbox of at least one team (or a league header) first.", parent=self)
+        return sel
+
+    CSV_FIELDS = (["league", "position", "name", "logo_id", "con", "tec", "for",
+                   "pts_scored", "pts_conceded", "gls_scored", "gls_conceded", "rank"]
+                  + [f"player_{n}" for n in range(1, 21)])
+
+    def _open_import_export(self, action: str):
+        sel = self._selected_indices()
+        dlg = tk.Toplevel(self)
+        dlg.title("Import teams" if action == "import" else "Export teams")
+        dlg.configure(bg=BG)
+        dlg.resizable(False, False)
+        dlg.transient(self.winfo_toplevel())
+        fmt = tk.StringVar(value="json")
+        result = {"ok": False}
+
+        body = tk.Frame(dlg, bg=BG, padx=16, pady=12)
+        body.pack(fill="both", expand=True)
+        tk.Label(body, text=f"Selected teams: {len(sel)}", bg=BG, fg=FG, font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 8))
+
+        def _group(title, var, options):
+            lf = tk.LabelFrame(body, text=title, bg=BG, fg=FG, font=("Segoe UI", 9, "bold"), padx=10, pady=4)
+            lf.pack(fill="x", pady=(0, 8))
+            for text, val in options:
+                tk.Radiobutton(lf, text=text, variable=var, value=val, bg=BG, activebackground=BG, fg=FG, font=("Segoe UI", 9), anchor="w").pack(fill="x")
+
+        _group("File format", fmt, [("JSON", "json"), ("CSV", "csv")])
+        tk.Label(body, text="Export saves logo ID, CON/TEC/FOR, POINTS, GOALS and RANK\nof the selected teams only. Import needs the same number\nof teams selected as contained in the file.", bg=BG, fg=MUTED, font=("Segoe UI", 8), justify="left").pack(anchor="w", pady=(0, 8))
+
+        btns = tk.Frame(body, bg=BG)
+        btns.pack(fill="x")
+
+        def _ok():
+            result["ok"] = True
+            dlg.destroy()
+
+        tk.Button(btns, text="OK", bg="#2980b9", fg="white", activebackground="#3498db", activeforeground="white", font=("Segoe UI", 9, "bold"), relief="flat", padx=14, pady=3, cursor="hand2", command=_ok).pack(side="right")
+        tk.Button(btns, text="Cancel", bg="#95a5a6", fg="white", activebackground="#7f8c8d", activeforeground="white", font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=3, cursor="hand2", command=dlg.destroy).pack(side="right", padx=(0, 6))
+
+        dlg.update_idletasks()
+        top = self.winfo_toplevel()
+        x = top.winfo_rootx() + (top.winfo_width() - dlg.winfo_width()) // 2
+        y = top.winfo_rooty() + (top.winfo_height() - dlg.winfo_height()) // 3
+        dlg.geometry(f"+{max(0, x)}+{max(0, y)}")
+        dlg.grab_set()
+        self.wait_window(dlg)
+
+        if not result["ok"]:
+            return
+        if action == "export":
+            self._do_export(fmt.get())
+        else:
+            self._do_import(fmt.get())
+
+    @staticmethod
+    def _safe_filename(name: str, fallback: str) -> str:
+        cleaned = "".join(ch for ch in name if ch not in '<>:"/\\|?*' and ord(ch) >= 32).strip().strip(".")
+        return cleaned or fallback
+
+    def _export_basename(self, sel: list) -> str:
+        if len(sel) == 1:
+            ti = sel[0]
+            return self._safe_filename(self._parsed["teams"][ti]["name"], f"Team_{ti + 1}")
+        sel_set = set(sel)
+        leagues, full = [], True
+        for li, (first, count, _) in enumerate(LEAGUE_BOUNDS):
+            members = sel_set & set(range(first, first + count))
+            if members:
+                leagues.append(li + 1)
+                if len(members) != count:
+                    full = False
+        tag = "LEAGUE" + "-".join(str(n) for n in leagues)
+        if full:
+            return f"{tag}_all_teams" if len(leagues) == len(LEAGUE_BOUNDS) else f"{tag}_teams"
+        return f"{tag}_selected_{len(sel)}_teams"
+
+    def _team_record(self, ti: int) -> dict:
+        t = self._parsed["teams"][ti]
+        li = self._league_of(ti)
+        return {
+            "league": li + 1,
+            "position": ti - LEAGUE_BOUNDS[li][0] + 1,
+            "name": t["name"],
+            "logo_id": t["logo"],
+            "ctf": list(t["ctf"]),
+            "pts": list(t["pts"]),
+            "gls": list(t["gls"]),
+            "rank": t["rank"],
+            "players": list(t["players"]),
+        }
+
+    def _do_export(self, fmt: str):
+        sel = self._need_selection("Export")
+        if not sel:
+            return
+        records = [self._team_record(ti) for ti in sel]
+        ext = ".json" if fmt == "json" else ".csv"
+        init_dir = os.path.dirname(os.path.abspath(self._filepath)) if self._filepath else ""
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Export teams",
+            defaultextension=ext,
+            filetypes=[("JSON files", "*.json")] if fmt == "json" else [("CSV files", "*.csv")],
+            initialfile=self._export_basename(sel) + ext,
+            initialdir=init_dir or None,
+        )
+        if not path:
+            return
+        try:
+            if fmt == "json":
+                payload = {"type": "mana_teams", "version": 1, "count": len(records), "teams": records}
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(payload, fh, indent=2, ensure_ascii=False)
+            else:
+                with open(path, "w", encoding="utf-8", newline="") as fh:
+                    w = csv.writer(fh)
+                    w.writerow(self.CSV_FIELDS)
+                    for r in records:
+                        w.writerow([r["league"], r["position"], r["name"], r["logo_id"],
+                                    r["ctf"][0], r["ctf"][1], r["ctf"][2],
+                                    r["pts"][0], r["pts"][1], r["gls"][0], r["gls"][1], r["rank"]] + list(r["players"]))
+        except Exception as exc:
+            messagebox.showerror("Export error", str(exc), parent=self)
+            return
+        messagebox.showinfo("Export", f"{len(records)} team(s) exported to:\n{os.path.abspath(path)}", parent=self)
+
+    @staticmethod
+    def _norm_record(rec: dict) -> dict:
+        def _i(v):
+            return int(str(v).strip())
+        ctf = [_i(v) for v in rec["ctf"]]
+        pts = [_i(v) for v in rec["pts"]]
+        gls = [_i(v) for v in rec["gls"]]
+        if len(ctf) != 3 or len(pts) != 2 or len(gls) != 2:
+            raise ValueError("wrong number of CTF/POINTS/GOALS values")
+        players = rec.get("players")
+        if players is not None:
+            players = [str(v) for v in players]
+            if len(players) != 20:
+                raise ValueError("wrong number of player names")
+        try:
+            league = _i(rec["league"]) if rec.get("league") not in (None, "") else None
+        except ValueError:
+            league = None
+        name = rec.get("name")
+        return {"logo": _i(rec["logo_id"]), "ctf": ctf, "pts": pts, "gls": gls, "rank": _i(rec["rank"]),
+                "name": None if name is None else str(name), "players": players, "league": league}
+
+    def _read_records(self, path: str, fmt: str) -> list:
+        records = []
+        if fmt == "json":
+            with open(path, "r", encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+            teams = data.get("teams") if isinstance(data, dict) else data
+            if not isinstance(teams, list):
+                raise ValueError("Invalid JSON: no team list found.")
+            for n, rec in enumerate(teams, 1):
+                try:
+                    records.append(self._norm_record(rec))
+                except Exception as exc:
+                    raise ValueError(f"Invalid team entry #{n}: {exc}")
+        else:
+            with open(path, "r", encoding="utf-8-sig", newline="") as fh:
+                reader = csv.DictReader(fh)
+                missing = [c for c in ("logo_id", "con", "tec", "for", "pts_scored", "pts_conceded", "gls_scored", "gls_conceded", "rank") if c not in (reader.fieldnames or [])]
+                if missing:
+                    raise ValueError("Invalid CSV: missing column(s): " + ", ".join(missing))
+                for n, row in enumerate(reader, 1):
+                    try:
+                        records.append(self._norm_record({
+                            "logo_id": row["logo_id"], "rank": row["rank"],
+                            "name": row.get("name"), "league": row.get("league"),
+                            "players": ([row[f"player_{n}"] or "" for n in range(1, 21)]
+                                        if all(f"player_{n}" in row and row[f"player_{n}"] is not None for n in range(1, 21)) else None),
+                            "ctf": [row["con"], row["tec"], row["for"]],
+                            "pts": [row["pts_scored"], row["pts_conceded"]],
+                            "gls": [row["gls_scored"], row["gls_conceded"]],
+                        }))
+                    except Exception as exc:
+                        raise ValueError(f"Invalid team row #{n}: {exc}")
+        return records
+
+    def _do_import(self, fmt: str):
+        sel = self._need_selection("Import")
+        if not sel:
+            return
+        path = filedialog.askopenfilename(
+            parent=self,
+            title=f"Import teams ({len(sel)} selected)",
+            filetypes=[("JSON files", "*.json")] if fmt == "json" else [("CSV files", "*.csv")],
+        )
+        if not path:
+            return
+        try:
+            records = self._read_records(path, fmt)
+        except Exception as exc:
+            messagebox.showerror("Import error", f"Cannot read file:\n{exc}", parent=self)
+            return
+        if len(records) != len(sel):
+            messagebox.showerror(
+                "Import error",
+                f"Team count mismatch.\n\nTeams expected by the file: {len(records)}\nTeams selected: {len(sel)}\n\n"
+                "Select the same number of teams and try again.",
+                parent=self,
+            )
+            return
+        mismatches = []
+        for ti, rec in zip(sel, records):
+            dest = self._league_of(ti) + 1
+            if rec["league"] is not None and rec["league"] != dest:
+                label = rec["name"] or f"team #{len(mismatches) + 1}"
+                mismatches.append(f"{label}: file LEAGUE {rec['league']} -> LEAGUE {dest}")
+        if mismatches:
+            shown = "\n".join(mismatches[:10])
+            if len(mismatches) > 10:
+                shown += f"\n... and {len(mismatches) - 10} more"
+            if not messagebox.askyesno(
+                "League mismatch",
+                f"WARNING: {len(mismatches)} team(s) in the file originally belong to a different league than the selected destination:\n\n{shown}\n\nImport anyway?",
+                icon="warning", parent=self,
+            ):
+                return
+        teams = self._parsed["teams"]
+        for ti, rec in zip(sel, records):
+            rank_max = LEAGUE_BOUNDS[self._league_of(ti)][2]
+            t = teams[ti]
+            t["logo"] = _clamp(rec["logo"], 0, 255)
+            t["ctf"] = [_clamp(v, 0, 99) for v in rec["ctf"]]
+            t["pts"] = [_clamp(v, 0, 254) for v in rec["pts"]]
+            t["gls"] = [_clamp(v, 0, 254) for v in rec["gls"]]
+            t["rank"] = _clamp(rec["rank"], 0, rank_max)
+            if rec["name"] is not None:
+                t["name"] = rec["name"][:20].upper()
+            if rec["players"] is not None:
+                t["players"] = [v[:13] for v in rec["players"]]
+            self._refresh_btn_label(ti)
+        if self._cur_team is not None:
+            self._show_team(self._cur_team)
+        if self._on_dirty:
+            self._on_dirty()
+        messagebox.showinfo("Import", f"{len(sel)} team(s) imported from:\n{os.path.abspath(path)}", parent=self)
 
     def _rank_changed(self, ti: int):
         if self._building:
@@ -434,38 +750,57 @@ class _LeagueTab(ttk.Frame):
             self._show_team(self._cur_team)
 
     def _zero_all_stats(self):
-        from tkinter import messagebox as _mb
-        if not _mb.askyesno("RESET STATS","Puts all the stats of all 64 teams, to zero?\n(CTF, POINTS, GOALS and RANK)",parent=self):
+        sel = self._need_selection("RESET STATS")
+        if not sel:
             return
-        for t in self._parsed["teams"]:
+        if not messagebox.askyesno("RESET STATS", f"Set all stats of the {len(sel)} selected team(s) to zero?\n(CTF, POINTS, GOALS and RANK)", parent=self):
+            return
+        teams = self._parsed["teams"]
+        for ti in sel:
+            t = teams[ti]
             t["ctf"] = [0, 0, 0]
             t["pts"] = [0, 0]
             t["gls"] = [0, 0]
             t["rank"] = 0
-        for ti, fe in self._rank_entries.items():
-            fe.set_int(0)
+            fe = self._rank_entries.get(ti)
+            if fe:
+                fe.set_int(0)
         if self._cur_team is not None:
             self._show_team(self._cur_team)
         if self._on_dirty:
             self._on_dirty()
 
     def _random_positions(self):
-        from tkinter import messagebox as _mb
-        if not _mb.askyesno("SHUFFLE TEAMS","Shuffle team positions within each league?\n""(All stats and player names follow the team)",parent=self):
+        sel = self._need_selection("SHUFFLE TEAMS")
+        if not sel:
+            return
+        if not messagebox.askyesno("SHUFFLE TEAMS", f"Shuffle the {len(sel)} selected team(s) within their own league?\n(All stats and player names follow the team)", parent=self):
             return
         teams = self._parsed["teams"]
+        cur_obj = teams[self._cur_team] if self._cur_team is not None else None
+        moved = []
         for first, count, _ in LEAGUE_BOUNDS:
-            group = teams[first:first + count]
+            slots = [ti for ti in range(first, first + count) if id(teams[ti]) in self._sel]
+            if len(slots) < 2:
+                continue
+            group = [teams[ti] for ti in slots]
             random.shuffle(group)
-            teams[first:first + count] = group
-        self._cur_team = None
-        self._build_grid()
+            for ti, t in zip(slots, group):
+                teams[ti] = t
+            moved.extend(slots)
+        for ti in moved:
+            self._refresh_btn_label(ti)
+        if cur_obj is not None and any(teams[ti] is cur_obj for ti in moved):
+            self._cur_team = next(ti for ti in moved if teams[ti] is cur_obj)
+            self._show_team(self._cur_team)
         if self._on_dirty:
             self._on_dirty()
 
     def _random_all_stats(self):
-        from tkinter import messagebox as _mb
-        if not _mb.askyesno("RANDOMIZE STATS","Assign random stats (CTF, POINTS, GOALS and RANK)\n""to all 64 teams based on their current position?",parent=self):
+        sel = self._need_selection("RANDOMIZE STATS")
+        if not sel:
+            return
+        if not messagebox.askyesno("RANDOMIZE STATS", f"Assign random stats (CTF, POINTS, GOALS and RANK)\nto the {len(sel)} selected team(s) based on their current position?", parent=self):
             return
 
         pts_rule    = self._points_rule.get()
@@ -479,6 +814,8 @@ class _LeagueTab(ttk.Frame):
         teams = self._parsed["teams"]
         for li, (first, count, rank_max) in enumerate(LEAGUE_BOUNDS):
             ctf_lo, ctf_hi = CTF_BOUNDS[li]
+            if not any(id(t) in self._sel for t in teams[first:first + count]):
+                continue
             n_sim = 20
             games        = 2 * (n_sim - 1)
             pts_max_team = games * pts_rule
@@ -541,6 +878,8 @@ class _LeagueTab(ttk.Frame):
                 gls_conceded = _balance_list(gls_conceded, total_scored, count)
             group = teams[first:first + count]
             for i, t in enumerate(group):
+                if id(t) not in self._sel:
+                    continue
                 t["pts"]  = [pts_list[i], max(0, pts_max_ui - pts_list[i])]
                 t["gls"]  = [gls_scored[i], gls_conceded[i]]
                 t["rank"] = i + 1
@@ -673,6 +1012,7 @@ class _LeagueTab(ttk.Frame):
         li = self._league_of(ti)
         sel = (ti == self._cur_team)
         btn.config(relief="sunken" if sel else "flat",bg=LEAGUE_BTN_ACTIVE[li] if sel else LEAGUE_BTN_COLORS[li],fg="white",)
+        self._sync_chk_bg(ti)
 
     def _btn_press(self, ti: int, event):
         self._drag_src = ti
@@ -690,6 +1030,7 @@ class _LeagueTab(ttk.Frame):
         btn = self._team_btns.get(ti)
         if btn:
             btn.config(relief="groove", bg="#b0c8e8", fg="#1a3a6b")
+            self._sync_chk_bg(ti)
 
         target = self._drag_target_at(event)
         if target == ti:
@@ -704,6 +1045,7 @@ class _LeagueTab(ttk.Frame):
                 target_btn = self._team_btns.get(target)
                 if target_btn:
                     target_btn.config(relief="groove", bg="#d9e8f5", fg="#1a3a6b")
+                    self._sync_chk_bg(target)
 
         self._show_drag_ghost(ti, event)
 
@@ -760,6 +1102,10 @@ class _LeagueTab(ttk.Frame):
         if btn:
             name = self._parsed["teams"][ti]["name"]
             btn.config(text=name[:20] or f"Team {ti}")
+        var = self._chk_vars.get(ti)
+        if var is not None:
+            var.set(id(self._parsed["teams"][ti]) in self._sel)
+        self._sync_hdr(self._league_of(ti))
         fe = getattr(self, '_rank_entries', {}).get(ti)
         if fe:
             fe.set_int(self._parsed["teams"][ti]["rank"])
@@ -778,6 +1124,7 @@ class _LeagueTab(ttk.Frame):
             li = self._league_of(idx)
             sel = (idx == ti)
             btn.config(relief="sunken" if sel else "flat", bg=LEAGUE_BTN_ACTIVE[li] if sel else LEAGUE_BTN_COLORS[li])
+            self._sync_chk_bg(idx)
         for w in self._detail_outer.winfo_children():
             w.destroy()
         self._widgets.clear()
