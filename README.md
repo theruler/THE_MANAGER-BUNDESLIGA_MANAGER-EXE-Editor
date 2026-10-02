@@ -25,23 +25,25 @@ Executable profiles are detected automatically. File names do not matter.
 - Standalone Windows release
 - Newspaper csv exporter/importer
 - Newspaper built-in visual editor
-- MANA.DAT editor
 - Executable extension option
+- MANA.DAT editor
 - VGA/CP editor
-
+- GOAL Scenes (TORE) Editor
 
 
 ## String editor
 
 Strings can be modified and enlarged at will.
 
-<img width="1177" height="849" alt="immagine" src="https://github.com/user-attachments/assets/24e366be-eae2-48d2-8d3c-06d7b69e9662" />
+<img width="1277" height="927" alt="immagine" src="https://github.com/user-attachments/assets/c8bdfc55-a9ae-4292-8f13-75dd758dee4e" />
 
 
 ## Font Editor
 Fonts can be freely modified and remapped, the string editor will interpret and show the mapped character, while converting the hex value into the string.
 Accented letters can be modified and replaced. Width of the single char can be adjusted.
-<img width="1280" height="851" alt="image" src="https://github.com/user-attachments/assets/12317ce8-f358-49d2-b196-69476d404c69" />
+
+<img width="1276" height="926" alt="immagine" src="https://github.com/user-attachments/assets/31080ede-511c-4a10-9def-45877b0614f0" />
+
 
 
 ## Gameplay options change
@@ -71,6 +73,10 @@ Only England features:
 - ST, ND, RD, TH added to the date days and match minutes
 
 
+<img width="711" height="572" alt="immagine" src="https://github.com/user-attachments/assets/0c4b0dc4-3ff4-4788-a169-3529874712c8" />
+
+
+
 ## Newspaper built-in visual editor
 
 A visual newspaper editor can be selected to better edit the lines. Tags can be moved, deleted or added.
@@ -93,7 +99,8 @@ LEGAUE TAB
 - SHUFFLE shuffles the teams within each league
 - RANDOMIZE randomizes all the stats based on current team position in each league, according to an algorithm that takes into account actual statistic distributions of POINTS a GOALS made in a real championship, adapted to the limits and features of the in-game mechanics.
 
-<img width="1229" height="719" alt="immagine" src="https://github.com/user-attachments/assets/f9f46d47-1993-49db-98bd-9341f1bdccff" />
+<img width="1227" height="718" alt="immagine" src="https://github.com/user-attachments/assets/99347fe5-57aa-4dcf-b5f9-ac15a2f15016" />
+
 
 UEFA TAB
 - Actual participant teams can be selected by year (source https://kassiesa.net/uefa/data/)
@@ -101,11 +108,22 @@ UEFA TAB
 
 <img width="1226" height="717" alt="immagine" src="https://github.com/user-attachments/assets/fe6f69a7-fa20-4a29-8909-4c6f8b2e9a0b" />
 
+
+
 ## VGA/CP editor
 
 Usable as standalone or a built-in main editor TAB, it supports all graphic formats and compression.
 
-<img width="1274" height="844" alt="immagine" src="https://github.com/user-attachments/assets/e0594984-6d27-4cae-b666-bb33c1963323" />
+<img width="1084" height="832" alt="immagine" src="https://github.com/user-attachments/assets/ab58c2b2-4ae1-421c-9285-c291d442cc75" />
+
+
+## GOAL Scenes (TORE) Editor
+
+Usable as standalone or a built-in main editor TAB, TORE editor is a modern scene editor that includes all the original features of the DOS editor and expands it with several automations.
+Your new scene is only one click away!
+
+<img width="1248" height="769" alt="immagine" src="https://github.com/user-attachments/assets/68031d9d-a414-4e75-9803-3b4f63e1a7b0" />
+
 
 ## Usage
 
