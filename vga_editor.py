@@ -287,6 +287,7 @@ class _ImageCanvas(tk.Frame):
         self._tool = TOOL_DRAW
         self._draw_color = (255, 255, 255, 255)
         self._draw_index: int | None = None
+        self._show_alpha = True
         self._show_grid = True
         self._clipboard: Image.Image | None = None
         self._sel: tuple[int, int, int, int] | None = None
@@ -482,6 +483,10 @@ class _ImageCanvas(tk.Frame):
         self._rescroll_for_zoom(anchor_ix, anchor_iy, 0, 0, z)
         self._redraw()
 
+    def set_show_alpha(self, v: bool):
+        self._show_alpha = bool(v)
+        self._redraw()
+
     def set_show_grid(self, v: bool):
         self._show_grid = v
         self._redraw()
@@ -601,10 +606,10 @@ class _ImageCanvas(tk.Frame):
     def _display_image(self) -> Image.Image:
         flat_pal = self._flat_palette()
         img = self._img.copy()
-        # Index 0 is shown as the conventional editor-magenta transparency
-        # color. The actual VGA palette/data remain unchanged.
+        # Index 0 is display-only: optionally show it as editor magenta.
+        # The indexed image and the original palette remain unchanged.
         if len(flat_pal) >= 3:
-            flat_pal[0:3] = (255, 0, 255)
+            flat_pal[0:3] = (255, 0, 255) if self._show_alpha else (0, 0, 0)
         img.putpalette(flat_pal)
         if self._paste_buf is not None:
             iw, ih = img.size
@@ -1297,7 +1302,18 @@ class PicEditorPanel(ttk.Frame):
         self._color_hex = ttk.Label(crow, text="#FFFFFF", font=("Consolas", 9), foreground=MUTED)
         self._color_hex.pack(side=tk.LEFT, padx=6)
         self._update_color_display((255, 255, 255, 255))
-        ttk.Label(f_colors, text="Palette:", foreground=MUTED).pack(anchor="w", pady=(1, 0))
+        palette_row = ttk.Frame(f_colors)
+        palette_row.pack(fill=tk.X, pady=(1, 0))
+
+        ttk.Label(palette_row, text="Palette:", foreground=MUTED).pack(side=tk.LEFT)
+
+        self._show_alpha_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            palette_row,
+            text="Show Alpha",
+            variable=self._show_alpha_var,
+            command=self._on_show_alpha_toggle,
+        ).pack(side=tk.RIGHT)
         self._swatch_frame = tk.Frame(f_colors, bg=BG)
         self._swatch_frame.pack(fill=tk.X, pady=(1, 2))
         self._swatch_canvas = tk.Canvas(self._swatch_frame, highlightthickness=0, bd=0, bg=BG)
@@ -1754,7 +1770,10 @@ class PicEditorPanel(ttk.Frame):
             col = i % cols
             row = i // cols
             x0, y0 = col * sq, row * sq
-            fill = ALPHA_DISPLAY_COLOR if i == ALPHA_INDEX else f"#{r:02X}{g:02X}{b:02X}"
+            if i == ALPHA_INDEX:
+                fill = ALPHA_DISPLAY_COLOR if self._show_alpha_var.get() else "#000000"
+            else:
+                fill = f"#{r:02X}{g:02X}{b:02X}"
             selected = (getattr(self._canvas_frame, "_draw_index", None) == i)
             c.create_rectangle(
                 x0, y0, x0 + sq, y0 + sq,
@@ -1791,8 +1810,7 @@ class PicEditorPanel(ttk.Frame):
         if idx < len(pal):
             r, g, b = pal[idx]
             rgba = (255, 0, 255, 0) if idx == ALPHA_INDEX else (r, g, b, 255)
-            self._canvas_frame.set_draw_color(rgba, pal_idx=idx)
-            self._update_color_display(rgba, pal_idx=idx)
+            self._apply_draw_color(rgba, pal_idx=idx)
 
     _TOOL_HINTS: dict[str, str] = {
         TOOL_DRAW:   "Pencil — Left-click/drag to draw  │  Right-click to pick color",
@@ -1817,6 +1835,10 @@ class PicEditorPanel(ttk.Frame):
         z = max(1, min(16, z))
         self._zoom_var.set(z)
         self._canvas_frame.set_zoom(z)
+
+    def _on_show_alpha_toggle(self):
+        self._canvas_frame.set_show_alpha(self._show_alpha_var.get())
+        self._draw_swatch()
 
     def _on_grid_toggle(self):
         self._canvas_frame.set_show_grid(self._grid_var.get())
