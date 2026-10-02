@@ -1,4 +1,5 @@
 import copy
+import io
 import json
 import math
 import os
@@ -9,7 +10,7 @@ import sys
 import time
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 
 from PIL import Image, ImageDraw, ImageTk
 
@@ -174,6 +175,9 @@ MAX_Y = FH - Y_OFFSET - CELL_H
 SOUNDS = [("Goal celebration", "#2e9e3e"), ("Referee whistle", "#d4b000"), ("Disapproval whistles", "#e07020"), ("Missed-goal disappointment", "#3a5bd0")]
 KINDS = {"T": "Goal (scored)", "V": "Missed chance"}
 VARIANTS = {"": "Normal", "E": "Penalty", "J": "Jux"} 
+PATH_COLORS = {"ball": "#ffd54a", "ref": "#d0d0d0", "red": "#ff6e6e", "blue": "#6ea8ff"}
+PATH_COLOR_LABELS = (("ball", "Ball"), ("ref", "Referee"), ("red", "Red team"), ("blue", "Blue team"))
+VIEW_ZOOM_MAX = 12.0
 GHOST_OPTS = ["None", "Selected: previous frame", "Selected: all previous frames", "All sprites: all previous frames"]
 
 def _mir(seq):
@@ -1032,6 +1036,110 @@ def sprite_w(sid):
     return 4 if sid >= 142 else CELL_W
 
 
+# ----------------------------------------------------------------------------
+# Animated GIF export (pure functions: no Tk, easy to test)
+# ----------------------------------------------------------------------------
+def _pil_enum(group, name):
+    return getattr(getattr(Image, group, Image), name)
+
+
+_DITHER_NONE = _pil_enum("Dither", "NONE")
+_DITHER_FS = _pil_enum("Dither", "FLOYDSTEINBERG")
+_Q_MEDIANCUT = _pil_enum("Quantize", "MEDIANCUT")
+
+# name -> (colors, shared palette, dither, use every Nth frame, optimize)
+GIF_PRESETS = {
+    "Smallest file":   dict(colors=32, shared=True, dither=False, step=2, optimize=True),
+    "Small":           dict(colors=64, shared=True, dither=False, step=1, optimize=True),
+    "Balanced":        dict(colors=128, shared=True, dither=False, step=1, optimize=True),
+    "High quality":    dict(colors=256, shared=True, dither=False, step=1, optimize=True),
+    "Maximum quality": dict(colors=256, shared=False, dither=True, step=1, optimize=True),
+}
+
+
+class GifCancelled(Exception):
+    pass
+
+
+def _gif_shared_palette(frames, colors):
+    """One palette image (mode P) valid for every frame of the animation."""
+    union = set()
+    for im in frames:
+        found = im.getcolors(1 << 20)
+        if found is None:
+            union = None
+            break
+        union.update(c for _n, c in found)
+        if len(union) > colors:
+            union = None
+            break
+    pal = Image.new("P", (1, 1))
+    if union is not None:                      # few enough colors: exact palette, no loss
+        flat = []
+        for c in sorted(union):
+            flat.extend(c[:3])
+        pal.putpalette(flat)
+        return pal
+    n = len(frames)                            # otherwise median-cut on a sample of frames
+    pick = frames if n <= 48 else [frames[round(i * (n - 1) / 47)] for i in range(48)]
+    sheet = Image.new("RGB", (pick[0].width, pick[0].height * len(pick)))
+    for i, im in enumerate(pick):
+        sheet.paste(im, (0, i * pick[0].height))
+    return sheet.quantize(colors=colors, method=_Q_MEDIANCUT, dither=_DITHER_NONE)
+
+
+def build_gif(frames, durations, colors=256, dither=False, shared=True, optimize=True,
+              loop=True, scale=1, smooth=False, progress=None):
+    """Encode RGB PIL images as an animated GIF and return the file bytes.
+
+    durations: one delay per frame in ms (multiples of 10).
+    progress(i, n) may return False to cancel (raises GifCancelled).
+    """
+    n = len(frames)
+    colors = max(2, min(256, int(colors)))
+    dth = _DITHER_FS if dither else _DITHER_NONE
+    resample = Image.BICUBIC if smooth else Image.NEAREST
+    pal = _gif_shared_palette(frames, colors) if shared else None
+
+    def prep(i):
+        im = frames[i]
+        if scale > 1:
+            im = im.resize((im.width * scale, im.height * scale), resample)
+        if pal is not None:
+            return im.quantize(palette=pal, dither=dth)
+        q = im.quantize(colors=colors, method=_Q_MEDIANCUT, dither=_DITHER_NONE)
+        return im.quantize(palette=q, dither=dth) if dither else q   # Pillow dithers only against a given palette
+
+    def rest():
+        for i in range(1, n):
+            if progress and progress(i, n) is False:
+                raise GifCancelled()
+            yield prep(i)
+
+    if progress and progress(0, n) is False:
+        raise GifCancelled()
+    first = prep(0)
+    kw = dict(format="GIF", save_all=True, append_images=rest(), duration=list(durations), optimize=bool(optimize))
+    if loop:
+        kw["loop"] = 0
+    buf = io.BytesIO()
+    first.save(buf, **kw)
+    if progress:
+        progress(n, n)
+    return buf.getvalue()
+
+
+def gif_durations(indices, last_index, fps, hold_ms=0):
+    """Per-frame delays (ms, multiples of 10, min 20) keeping the true average speed
+    even when frames are skipped. indices = source frame numbers used, last_index = final one."""
+    base = 1000.0 / max(1, fps)
+    edges = [round((i - indices[0]) * base / 10) * 10 for i in indices]
+    edges.append(round((last_index + 1 - indices[0]) * base / 10) * 10)
+    out = [max(20, edges[k + 1] - edges[k]) for k in range(len(indices))]
+    out[-1] += max(0, int(hold_ms) // 10 * 10)
+    return out
+
+
 class ToreEditorPanel(ttk.Frame):
 
     def __init__(self, master=None, standalone=False, path=None, pic_dir=None):
@@ -1061,7 +1169,13 @@ class ToreEditorPanel(ttk.Frame):
         self.pal = None
         self._pal_job = None
         self.scope = tk.StringVar(value="frame")
-        self.lock_ball = tk.BooleanVar(value=True)
+        self.ball_h = tk.IntVar(value=0)
+        self.move_path = tk.BooleanVar(value=False)
+        self.all_paths = tk.BooleanVar(value=False)
+        self.path_colors = dict(PATH_COLORS)
+        self.vz, self.vx, self.vy = 1.0, 0.0, 0.0
+        self.view_zoom = tk.DoubleVar(value=1.0)
+        self._vp = None
         self.show_win = tk.BooleanVar(value=True)
         self.show_path = tk.BooleanVar(value=True)
         self.show_ids = tk.BooleanVar(value=False)
@@ -1204,6 +1318,8 @@ class ToreEditorPanel(ttk.Frame):
                               ("Save", self.save, "Ctrl+S"), ("Save As...", self.save_as, "Ctrl+Shift+S"),
                               ("Save as numbered scene (update ANZAHL)...", self.save_numbered, ""),
                               (None, None, None), 
+                              ("Export animated GIF...", self.export_gif, ""),
+                              (None, None, None),
                               ("PIC folder...", self.choose_pic, ""), ("Delete file...", self.delete_file, ""),
                               *self._exit_items()):
             self._add(f, lbl, cmd, acc)
@@ -1222,8 +1338,8 @@ class ToreEditorPanel(ttk.Frame):
         fg = newmenu("Figure")
         fg.add_cascade(label="Action here", menu=self._action_menu(fg))
         fg.add_cascade(label="Run (sprites only, to end of film)", menu=self._run_menu(fg))
-        for lbl, cmd in (("Auto-sprites along trajectory (from this frame)", self.auto_here),
-                         ("Auto-sprites along trajectory (whole film)", lambda: self.auto_here(True)),
+        for lbl, cmd in (("Auto-sprites along path (from this frame)", self.auto_here),
+                         ("Auto-sprites along path (whole film)", lambda: self.auto_here(True)),
                          (None, None), ("Mirror pose (E <-> W)", self.mirror_sel),
                          ("Lock pose (clear animation from here)", self.clear_anim),
                          ("Program pose sequence...", self.program_anim)):
@@ -1233,7 +1349,7 @@ class ToreEditorPanel(ttk.Frame):
         for lbl, cmd, acc in (("Draw path (freehand)", lambda: self.tool.set("draw") or self.set_tool(), "D"),
                               ("Click path (waypoints)", lambda: self.tool.set("way") or self.set_tool(), "P"),
                               (None, None, None),
-                              ("Smooth trajectory (from this frame)", self.smooth_path, ""),
+                              ("Smooth path (from this frame)", self.smooth_path, ""),
                               ("Even speed (from this frame)", self.even_speed, ""),
                               ("Freeze here (stop figure)", self.freeze_here, ""),
                               ("Interpolate position to frame...", self.tween, ""),
@@ -1243,14 +1359,26 @@ class ToreEditorPanel(ttk.Frame):
                               ("Interpolate scroll to frame...", self.tween_scroll, ""),
                               ("Continue current scroll to end of film", self.scroll_to_end, "")):
             self._add(p, lbl, cmd, acc)
+        p.add_separator()
+        pcm = tk.Menu(p, tearoff=0)
+        for key, label in PATH_COLOR_LABELS:
+            pcm.add_command(label=label, command=lambda k=key: self.pick_path_color(k))
+        pcm.add_separator()
+        pcm.add_command(label="Reset colors", command=self.reset_path_colors)
+        p.add_cascade(label="Paths color", menu=pcm)
 
         v = newmenu("View")
-        v.add_checkbutton(label="Show trajectory", variable=self.show_path, command=self.refresh)
+        v.add_checkbutton(label="Show path", variable=self.show_path, command=self.refresh)
+        v.add_checkbutton(label="Show all paths", variable=self.all_paths, command=self.refresh)
         v.add_checkbutton(label="Show camera view (182x96)", variable=self.show_win, command=self.refresh)
         v.add_checkbutton(label="Show sprite ids", variable=self.show_ids, command=self.refresh)
         v.add_separator()
-        v.add_command(label="Zoom in", command=lambda: self.set_zoom(1), accelerator="Ctrl++")
-        v.add_command(label="Zoom out", command=lambda: self.set_zoom(-1), accelerator="Ctrl+-")
+        v.add_command(label="Field Size +", command=lambda: self.set_zoom(1), accelerator="Ctrl++")
+        v.add_command(label="Field size -", command=lambda: self.set_zoom(-1), accelerator="Ctrl+-")
+        v.add_separator()
+        v.add_command(label="Zoom area in (inside the window)", command=lambda: self.set_view_zoom(self.vz * 1.5))
+        v.add_command(label="Zoom area out", command=lambda: self.set_view_zoom(self.vz / 1.5))
+        v.add_command(label="Zoom area reset (whole field)", command=self.view_reset)
 
         dm = newmenu("Data")
         for lbl, cmd in (("Edit pose sets, actions & movement...", self.edit_data),
@@ -1297,7 +1425,8 @@ class ToreEditorPanel(ttk.Frame):
         self.opt_frames["select"] = o
         ttk.Label(o, text="Rope softness").pack(side="left", padx=(6, 0))
         ttk.Spinbox(o, from_=0.5, to=40, increment=0.5, width=4, textvariable=self.rope).pack(side="left", padx=2)
-        ttk.Checkbutton(o, text="pin current frame", variable=self.pin).pack(side="left", padx=8)
+        ttk.Checkbutton(o, text="Pin selected sprite", variable=self.pin).pack(side="left", padx=8)
+        ttk.Checkbutton(o, text="Move whole path with sprite", variable=self.move_path).pack(side="left", padx=8)
 
         o = ttk.Frame(self.opt)
         self.opt_frames["path"] = o
@@ -1337,22 +1466,33 @@ class ToreEditorPanel(ttk.Frame):
         ttk.Radiobutton(t1, text="this frame", value="frame", variable=self.scope).pack(side="left", padx=4)
         ttk.Radiobutton(t1, text="this + following frames", value="end", variable=self.scope).pack(side="left")
         ttk.Separator(t1, orient="vertical").pack(side="left", fill="y", padx=8)
-        ttk.Checkbutton(t1, text="ball + shadow together", variable=self.lock_ball).pack(side="left")
+        ttk.Label(t1, text="Ball height (px)").pack(side="left")
+        self.sp_h = ttk.Spinbox(t1, from_=-MAX_Y, to=MAX_Y, width=4, textvariable=self.ball_h, command=self.set_ball_h)
+        self.sp_h.pack(side="left", padx=2)
+        self.sp_h.bind("<Return>", self.set_ball_h)
+        self.sp_h.bind("<FocusOut>", self.set_ball_h)
         ttk.Separator(t1, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Label(t1, text="Ghosts:").pack(side="left")
         cb = ttk.Combobox(t1, textvariable=self.ghost, values=GHOST_OPTS, state="readonly", width=30)
         cb.pack(side="left", padx=4)
         cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
-        ttk.Checkbutton(t1, text="trajectory", variable=self.show_path, command=self.refresh).pack(side="left", padx=4)
-        ttk.Checkbutton(t1, text="camera", variable=self.show_win, command=self.refresh).pack(side="left")
-        ttk.Checkbutton(t1, text="ids", variable=self.show_ids, command=self.refresh).pack(side="left", padx=4)
+        ttk.Checkbutton(t1, text="Path", variable=self.show_path, command=self.refresh).pack(side="left", padx=4)
+        ttk.Checkbutton(t1, text="All paths", variable=self.all_paths, command=self.refresh).pack(side="left")
+        ttk.Checkbutton(t1, text="Camera", variable=self.show_win, command=self.refresh).pack(side="left")
+        ttk.Checkbutton(t1, text="Sprite IDs", variable=self.show_ids, command=self.refresh).pack(side="left", padx=4)
 
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True, padx=8, pady=6)
         left = ttk.Frame(body)
         left.pack(side="left", fill="both", expand=True)
-        self.canvas = tk.Canvas(left, bg="black", highlightthickness=0, width=FW * z, height=FH * z, cursor="arrow")
-        self.canvas.pack()
+        cf = ttk.Frame(left)
+        cf.pack()
+        self.canvas = tk.Canvas(cf, bg="black", highlightthickness=0, width=FW * z, height=FH * z, cursor="arrow")
+        self.canvas.grid(row=0, column=0)
+        self.vbar = ttk.Scrollbar(cf, orient="vertical", command=lambda *a: self.view_scroll("y", *a))
+        self.vbar.grid(row=0, column=1, sticky="ns")
+        self.hbar = ttk.Scrollbar(cf, orient="horizontal", command=lambda *a: self.view_scroll("x", *a))
+        self.hbar.grid(row=1, column=0, sticky="ew")
         bar = ttk.Frame(left)
         bar.pack(fill="x", pady=(6, 0))
         for t, c, w in (("|<", lambda: self.goto(0), 3), ("<", lambda: self.step(-1), 3)):
@@ -1368,8 +1508,13 @@ class ToreEditorPanel(ttk.Frame):
         ttk.Checkbutton(bar, text="Loop", variable=self.loop).pack(side="left", padx=8)
         ttk.Label(bar, text="fps").pack(side="left")
         ttk.Spinbox(bar, from_=1, to=60, width=4, textvariable=self.fps).pack(side="left", padx=(2, 8))
-        ttk.Label(bar, text="zoom").pack(side="left")
+        ttk.Label(bar, text="Field size").pack(side="left")
         ttk.Spinbox(bar, from_=1, to=6, width=3, textvariable=self.zoom, command=self.rezoom).pack(side="left", padx=2)
+        ttk.Label(bar, text="Zoom area").pack(side="left", padx=(8, 0))
+        sv = ttk.Spinbox(bar, from_=1, to=VIEW_ZOOM_MAX, increment=0.5, width=4, textvariable=self.view_zoom, command=self.on_view_zoom)
+        sv.pack(side="left", padx=2)
+        sv.bind("<Return>", self.on_view_zoom)
+        ttk.Button(bar, text="1:1", width=4, takefocus=False, command=self.view_reset).pack(side="left", padx=2)
         self.tl = tk.Canvas(left, height=78, bg="#f2f2f2", highlightthickness=1, highlightbackground="#bbb")
         self.tl.pack(fill="x", pady=(6, 0))
         self.tl.bind("<Button-1>", self.on_tl_press)
@@ -1387,7 +1532,7 @@ class ToreEditorPanel(ttk.Frame):
         right.pack(side="right", fill="y", padx=(8, 0))
         hdr = ttk.Frame(right)
         hdr.pack(fill="x")
-        ttk.Label(hdr, text="Figures (Ctrl+click = multi-select)").pack(side="left")
+        ttk.Label(hdr, text="CTRL+Click = Sprite multi-select").pack(side="left")
         tf = ttk.Frame(right)
         tf.pack(fill="x")
         self.tree = ttk.Treeview(tf, columns=("x", "y", "pose"), height=8, selectmode="browse", style="Treeview" if self.standalone else "Tore.Treeview")
@@ -1453,11 +1598,15 @@ class ToreEditorPanel(ttk.Frame):
         c.bind("<Double-Button-1>", self.on_dbl)
         c.bind("<Motion>", self.on_hover)
         c.bind("<Leave>", lambda e: c.delete("hover"))
-        for b in ("<Button-3>", "<Button-2>"):
+        for b in ("<Button-3>", "<Button-2>") if sys.platform == "darwin" else ("<Button-3>",):
             c.bind(b, self.on_right)
-        c.bind("<MouseWheel>", lambda e: self.step(-1 if e.delta > 0 else 1))
-        c.bind("<Button-4>", lambda e: self.step(-1))
-        c.bind("<Button-5>", lambda e: self.step(1))
+        if sys.platform != "darwin":
+            c.bind("<ButtonPress-2>", self.view_pan_start)
+            c.bind("<B2-Motion>", self.view_pan_move)
+            c.bind("<ButtonRelease-2>", self.view_pan_end)
+        c.bind("<MouseWheel>", lambda e: self.wheel(e, -1 if e.delta > 0 else 1))
+        c.bind("<Button-4>", lambda e: self.wheel(e, -1))
+        c.bind("<Button-5>", lambda e: self.wheel(e, 1))
 
         def tool_key(t):
             def f(e):
@@ -1540,7 +1689,7 @@ class ToreEditorPanel(ttk.Frame):
 
     def partner(self, sl):
         c = cls(self.fr.figs[sl][2])
-        if c in "SB" and self.lock_ball.get():
+        if c in "SB":
             return self.fr.index_of("B" if c == "S" else "S")
         return None
 
@@ -1548,21 +1697,174 @@ class ToreEditorPanel(ttk.Frame):
         if cls(self.fr.figs[sl][2]) in "LR":
             return
         ids = {sl}
-        if not only_self:
-            if sl in self.multi:
-                ids |= self.multi
-            for s in list(ids):
-                p = self.partner(s)
-                if p is not None:
-                    ids.add(p)
+        if sl in self.multi:
+            ids |= self.multi
+        for s in list(ids):
+            p = self.partner(s)      # ball and shadow are always one object
+            if p is not None:
+                ids.add(p)
         ids = {s for s in ids if cls(self.fr.figs[s][2]) not in "LR"}
-        for i in self.frames_in_scope():
+        if self.move_path.get():
+            rng = range(len(self.scene.frames))
+        else:
+            rng = self.frames_in_scope()
+        # clamp the whole group at once so shapes / ball height are preserved
+        lox, hix, loy, hiy = -10 ** 6, 10 ** 6, -10 ** 6, 10 ** 6
+        for i in rng:
+            for s in ids:
+                g = self.scene.frames[i].figs[s]
+                lox, hix = max(lox, -g[0]), min(hix, FW - 1 - g[0])
+                loy, hiy = max(loy, -g[1]), min(hiy, MAX_Y - g[1])
+        dx = max(lox, min(hix, dx))
+        dy = max(loy, min(hiy, dy))
+        for i in rng:
             f = self.scene.frames[i]
             for s in ids:
                 g = f.figs[s]
-                g[0] = max(0, min(FW - 1, g[0] + dx))
-                g[1] = max(0, min(MAX_Y, g[1] + dy))
+                g[0] += dx
+                g[1] += dy
             f.touch()
+
+    def set_ball_h(self, _e=None):
+        try:
+            h = int(self.ball_h.get())
+        except (tk.TclError, ValueError):
+            return
+        h = max(-MAX_Y, min(MAX_Y, h))
+        s, b = self.fr.index_of("S"), self.fr.index_of("B")
+        if s is None or b is None:
+            return
+        if h == self.fr.figs[s][1] - self.fr.figs[b][1]:
+            return
+        self.snap()
+        for i in self.frames_in_scope():
+            f = self.scene.frames[i]
+            f.figs[b][1] = max(0, min(MAX_Y, f.figs[s][1] - h))
+            f.touch()
+        self.refresh()
+
+    def ref_slot(self, sl=None):
+        """slot whose position defines the (single) path: the shadow for ball+shadow"""
+        sl = self.sel if sl is None else sl
+        if sl is None or sl >= len(self.fr.figs):
+            return sl
+        if cls(self.fr.figs[sl][2]) == "B":
+            s = self.fr.index_of("S")
+            return s if s is not None else sl
+        return sl
+
+    def path_color(self, sid):
+        c = cls(sid)
+        if c in "SB":
+            return self.path_colors["ball"]
+        t = team_of(sid)
+        return self.path_colors["red" if t == "R" else "blue" if t == "B" else "ref"]
+
+    def pick_path_color(self, key):
+        label = dict(PATH_COLOR_LABELS)[key]
+        res = colorchooser.askcolor(color=self.path_colors[key], title="Path color - %s" % label, parent=self.top)
+        if res and res[1]:
+            self.path_colors[key] = res[1]
+            self.refresh()
+
+    def reset_path_colors(self):
+        self.path_colors = dict(PATH_COLORS)
+        self.refresh()
+
+    # ---- view transform (Zoom area inside the canvas)
+    def sc(self):
+        return self.z() * self.vz
+
+    def cx(self, x):
+        return (x - self.vx) * self.sc()
+
+    def cy(self, y):
+        return (y - self.vy) * self.sc()
+
+    def fx(self, ex):
+        return ex / self.sc() + self.vx
+
+    def fy(self, ey):
+        return ey / self.sc() + self.vy
+
+    def box(self, x, y, sid):
+        return (self.cx(x), self.cy(y + Y_OFFSET), self.cx(x + sprite_w(sid)), self.cy(y + Y_OFFSET + CELL_H))
+
+    def clamp_view(self):
+        self.vz = max(1.0, min(VIEW_ZOOM_MAX, float(self.vz)))
+        self.vx = max(0.0, min(FW - FW / self.vz, self.vx))
+        self.vy = max(0.0, min(FH - FH / self.vz, self.vy))
+
+    def update_view_bars(self):
+        vw, vh = FW / self.vz, FH / self.vz
+        self.hbar.set(self.vx / FW, (self.vx + vw) / FW)
+        self.vbar.set(self.vy / FH, (self.vy + vh) / FH)
+
+    def set_view_zoom(self, nz, ax=None, ay=None):
+        z = self.z()
+        if ax is None:
+            ax, ay = FW * z / 2, FH * z / 2
+        fxa, fya = self.fx(ax), self.fy(ay)
+        self.vz = max(1.0, min(VIEW_ZOOM_MAX, float(nz)))
+        self.view_zoom.set(round(self.vz, 2))
+        s = self.sc()
+        self.vx, self.vy = fxa - ax / s, fya - ay / s
+        self.clamp_view()
+        self.refresh()
+
+    def on_view_zoom(self, _e=None):
+        try:
+            v = float(self.view_zoom.get())
+        except (tk.TclError, ValueError):
+            return
+        self.set_view_zoom(v)
+
+    def view_reset(self):
+        self.vx = self.vy = 0.0
+        self.set_view_zoom(1.0)
+
+    def view_scroll(self, axis, *args):
+        vw, vh = FW / self.vz, FH / self.vz
+        span = vw if axis == "x" else vh
+        cur = self.vx if axis == "x" else self.vy
+        full = FW if axis == "x" else FH
+        if args[0] == "moveto":
+            cur = float(args[1]) * full
+        else:
+            n = int(args[1])
+            cur += n * (span * (0.9 if args[2] == "pages" else 0.1))
+        if axis == "x":
+            self.vx = cur
+        else:
+            self.vy = cur
+        self.clamp_view()
+        self.refresh(light=True)
+
+    def wheel(self, e, d):
+        if e.state & 4:      # Ctrl + wheel: Zoom area around the pointer
+            self.set_view_zoom(self.vz * (1.25 if d < 0 else 0.8), e.x, e.y)
+        else:
+            self.step(d)
+
+    def view_pan_start(self, e):
+        self._vp = (e.x, e.y, self.vx, self.vy)
+        self.canvas.config(cursor="fleur")
+
+    def view_pan_move(self, e):
+        if not self._vp:
+            return
+        x0, y0, vx0, vy0 = self._vp
+        s = self.sc()
+        self.vx, self.vy = vx0 - (e.x - x0) / s, vy0 - (e.y - y0) / s
+        self.clamp_view()
+        self.refresh(light=True)
+
+    def view_pan_end(self, _e=None):
+        self._vp = None
+        self.set_tool_cursor()
+
+    def set_tool_cursor(self):
+        self.canvas.config(cursor={"select": "arrow", "draw": "pencil", "way": "crosshair", "pan": "fleur"}[self.tool.get()])
 
 
     def targets(self):
@@ -1616,7 +1918,9 @@ class ToreEditorPanel(ttk.Frame):
                 self.set_pose_all(ids[(ids.index(cur) + d) % len(ids)])
                 return self.refresh()
 
-    def hit(self, px, py):
+    def hit_all(self, px, py):
+        """every sprite under the point, topmost first"""
+        out = []
         for sl in reversed(self.fr.order):
             x, y, sid = self.fr.figs[sl]
             if sid >= 1000:
@@ -1624,28 +1928,51 @@ class ToreEditorPanel(ttk.Frame):
             w = sprite_w(sid)
             pad = 3 if w == 4 else 0
             if x - pad <= px < x + w + pad and y + Y_OFFSET - pad <= py < y + Y_OFFSET + CELL_H + pad:
-                return sl
-        return None
+                out.append(sl)
+        return out
+
+    def hit(self, px, py):
+        h = self.hit_all(px, py)
+        return h[0] if h else None
+
+    def pick_cand(self, cands):
+        if not cands:
+            return None
+        return self.sel if self.sel in cands else cands[0]
+
+    def pan_click(self, cands, ctrl):
+        if ctrl:
+            return self.select(cands[0], add=True)
+        if self.sel in cands and len(cands) > 1 and len(self.multi) <= 1:
+            sl = cands[(cands.index(self.sel) + 1) % len(cands)]
+        else:
+            sl = self.sel if self.sel in cands else cands[0]
+        self.select(sl)
+        if len(cands) > 1:
+            self.note("Overlapping sprites: %s (%d/%d) - click again to cycle" % (
+                self.names().get(sl, "figure"), cands.index(sl) + 1, len(cands)))
 
     def on_hover(self, e):
-        z = self.z()
-        px, py = e.x // z, e.y // z
+        fxp, fyp = self.fx(e.x), self.fy(e.y)
+        px, py = int(math.floor(fxp)), int(math.floor(fyp))
         c = self.canvas
         c.delete("hover")
         t = self.tool.get()
-        self.cursor_pos = (e.x / z, e.y / z)
+        self.cursor_pos = (fxp, fyp)
         if t == "way" and self.way:
             self.draw_overlay()
-        sl = self.hit(px, py)
+        cands = self.hit_all(px, py)
+        sl = self.pick_cand(cands)
         k = self.path_hit(e.x, e.y) if (t == "select" and sl is None) else None
         if sl is not None:
             x, y, sid = self.fr.figs[sl]
-            c.create_rectangle(x * z, (y + Y_OFFSET) * z, (x + sprite_w(sid)) * z, (y + Y_OFFSET + CELL_H) * z, outline="white", dash=(2, 2), tags="hover")
-            self.note("x=%d  y(sprite)=%d  sprite=%d  |  frame %d/%d" % (px, py - Y_OFFSET, sid, self.idx + 1, len(self.scene.frames)))
+            c.create_rectangle(*self.box(x, y, sid), outline="white", dash=(2, 2), tags="hover")
+            extra = "  |  %d sprites here: click again to cycle, right-click to choose" % len(cands) if len(cands) > 1 else ""
+            self.note("x=%d  y(sprite)=%d  sprite=%d  |  frame %d/%d%s" % (px, py - Y_OFFSET, sid, self.idx + 1, len(self.scene.frames), extra))
         elif k is not None:
-            cx, cy = self.ctr(self.scene.frames[k].figs[self.sel])
+            cx, cy = self.ctr(self.scene.frames[k].figs[self.ref_slot()])
             c.create_oval(cx - 6, cy - 6, cx + 6, cy + 6, outline="#ff9800", width=2, tags="hover")
-            self.note("Trajectory frame %d - drag to pull the path like a rope (Shift = move only this point, "
+            self.note("Path frame %d - drag to pull the path like a rope (Shift = move only this point, "
                       "softness in the top bar)" % (k + 1))
         else:
             self.note("x=%d  y(sprite)=%d  |  frame %d/%d  |  %s" % (px, py - Y_OFFSET, self.idx + 1, len(self.scene.frames), self.hint))
@@ -1653,20 +1980,23 @@ class ToreEditorPanel(ttk.Frame):
 
     def on_press(self, e):
         self.canvas.focus_set()
-        z = self.z()
-        px, py = e.x / z, e.y / z
+        px, py = self.fx(e.x), self.fy(e.y)
         t = self.tool.get()
         ctrl = bool(e.state & 4)
+        cands = self.hit_all(int(math.floor(px)), int(math.floor(py)))
+        sl = self.pick_cand(cands)
         if t == "pan":
+            if cands:
+                return self.pan_click(cands, ctrl)
             self.drag = dict(kind="win", x0=e.x, y0=e.y, a=tuple(self.fr.scroll), snapped=False, moved=False, live=False, pos=None)
             return
-        sl = self.hit(int(px), int(py))
         if t == "draw":
             if sl is not None and sl != self.sel:
                 self.select(sl)
-            if self.sel is None or cls(self.fr.figs[self.sel][2]) in "LR":
+            rs = self.ref_slot()
+            if rs is None or cls(self.fr.figs[rs][2]) in "LR":
                 return self.note("Press on a figure to draw its path (or select it first).")
-            g = self.fr.figs[self.sel]
+            g = self.fr.figs[rs]
             now = time.time()
             self.stroke = dict(pts=[(float(g[0]), float(g[1]))], t0=now, samples=[(0.0, float(g[0]), float(g[1]))], sid=g[2])
             self.drag = dict(kind="stroke")
@@ -1676,7 +2006,7 @@ class ToreEditorPanel(ttk.Frame):
                 return self.select(sl)
             if self.sel is None:
                 return self.note("Select a figure first, then click the path points.")
-            sid = self.fr.figs[self.sel][2]
+            sid = self.fr.figs[self.ref_slot()][2]
             x, y = self.ptr_pos(e.x, e.y, sid)
             x = max(0.0, min(FW - 1.0, x))
             y = max(0.0, min(float(MAX_Y), y))
@@ -1693,14 +2023,15 @@ class ToreEditorPanel(ttk.Frame):
                 else:
                     self.select(sl, add=True)
                 return
+            cyc = (cands, self.sel == sl and len(self.multi) <= 1 and len(cands) > 1)
             if sl not in self.multi:
                 self.select(sl)
-            self.drag = dict(kind="fig", sl=sl, x0=e.x, y0=e.y, done=(0, 0), snapped=False)
+            self.drag = dict(kind="fig", sl=sl, x0=e.x, y0=e.y, done=(0, 0), snapped=False, cyc=cyc)
             return
         k = self.path_hit(e.x, e.y)
         if k is not None:
             return self.start_rope(k, e)
-    
+
         if self.near_window_edge(px, py):
             self.drag = dict(kind="win", x0=e.x, y0=e.y, a=tuple(self.fr.scroll), snapped=False, moved=False, live=False, pos=None)
         else:
@@ -1711,7 +2042,7 @@ class ToreEditorPanel(ttk.Frame):
         d = self.drag
         if not d:
             return
-        z = self.z()
+        z = self.sc()
         k = d["kind"]
         if k == "stroke":
             sid = self.stroke["sid"]
@@ -1744,11 +2075,7 @@ class ToreEditorPanel(ttk.Frame):
             if not d["snapped"]:
                 self.snap()
                 d["snapped"] = True
-            ball_h = cls(self.fr.figs[d["sl"]][2]) == "B" and (e.state & 1)
-            if ball_h:
-                self.move_fig(d["sl"], 0, dy, only_self=True)
-            else:
-                self.move_fig(d["sl"], dx, dy)
+            self.move_fig(d["sl"], dx, dy)
             d["done"] = (dxp, dyp)
         else:  
             if self.playing and not d["live"]:
@@ -1786,14 +2113,14 @@ class ToreEditorPanel(ttk.Frame):
             return self.end_rope(d)
         if k == "band":
             if d["moved"]:
-                z = self.z()
+                z = self.sc()
                 x0, x1 = sorted((d["x0"], d["x1"]))
                 y0, y1 = sorted((d["y0"], d["y1"]))
                 hit = set()
                 for i, g in enumerate(self.fr.figs):
                     if cls(g[2]) in "LR":
                         continue
-                    gx, gy, gw = g[0] * z, (g[1] + Y_OFFSET) * z, sprite_w(g[2]) * z
+                    gx, gy, gw = self.cx(g[0]), self.cy(g[1] + Y_OFFSET), sprite_w(g[2]) * z
                     if gx + gw >= x0 and gx <= x1 and gy + CELL_H * z >= y0 and gy <= y1:
                         hit.add(i)
                 if d["ctrl"]:
@@ -1807,6 +2134,13 @@ class ToreEditorPanel(ttk.Frame):
         if k == "fig" and not d["snapped"] and len(self.multi) > 1 and d["sl"] in self.multi and d["sl"] != self.sel:
             self.sel = d["sl"]
             self.note("Leader of the selection: %s" % self.names().get(d["sl"], "figure"))
+        if k == "fig" and not d["snapped"] and d.get("cyc") and d["cyc"][1] and len(self.multi) <= 1:
+            cands = d["cyc"][0]
+            if d["sl"] in cands:
+                nxt = cands[(cands.index(d["sl"]) + 1) % len(cands)]
+                self.select(nxt)
+                return self.note("Overlapping sprites: %s (%d/%d) - click again to cycle" % (
+                    self.names().get(nxt, "figure"), cands.index(nxt) + 1, len(cands)))
         if k == "win" and not d["moved"] and self.tool.get() == "select":
             self.select(None)
             return
@@ -1828,11 +2162,11 @@ class ToreEditorPanel(ttk.Frame):
 
     def on_right(self, e):
         self.canvas.focus_set()
-        z = self.z()
-        px, py = e.x // z, e.y // z
+        px, py = int(math.floor(self.fx(e.x))), int(math.floor(self.fy(e.y)))
         if self.tool.get() == "way" and self.way:
             return self.finish_way()
-        sl = self.hit(px, py)
+        cands = self.hit_all(px, py)
+        sl = self.pick_cand(cands)
         k = self.path_hit(e.x, e.y) if sl is None else None
         m = tk.Menu(self, tearoff=0)
         if sl is not None:
@@ -1841,6 +2175,13 @@ class ToreEditorPanel(ttk.Frame):
             sid = self.fr.figs[sl][2]
             nm = self.names().get(sl, "figure")
             m.add_command(label="-- %s --" % nm, state="disabled")
+            if len(cands) > 1:
+                sm = tk.Menu(m, tearoff=0)
+                allnames = self.names()
+                for s2 in cands:
+                    sm.add_command(label="%s  (sprite %d)" % (allnames.get(s2, "figure"), self.fr.figs[s2][2]),
+                                   command=lambda s2=s2: self.select(s2))
+                m.add_cascade(label="Select under cursor (%d sprites)" % len(cands), menu=sm)
             if len(self.multi) > 1 and sl in self.multi:
                 if sl != self.sel:
                     m.add_command(label="Make leader of the selection", command=lambda s=sl: self.set_leader(s))
@@ -1852,8 +2193,8 @@ class ToreEditorPanel(ttk.Frame):
             m.add_command(label="Mirror pose (E <-> W)", command=self.mirror_sel)
             m.add_command(label="Lock pose (clear animation from here)", command=self.clear_anim)
             m.add_separator()
-            m.add_command(label="Auto-sprites along trajectory", command=self.auto_here)
-            m.add_command(label="Smooth trajectory (from here)", command=self.smooth_path)
+            m.add_command(label="Auto-sprites along path", command=self.auto_here)
+            m.add_command(label="Smooth path (from here)", command=self.smooth_path)
             m.add_command(label="Even speed (from here)", command=self.even_speed)
             m.add_command(label="Freeze here (stop figure)", command=self.freeze_here)
             if cls(sid) in "SB":
@@ -1863,9 +2204,9 @@ class ToreEditorPanel(ttk.Frame):
             m.add_separator()
             m.add_command(label="Tip: draw a path with tool D, or right-click the field", state="disabled")
         elif k is not None:
-            m.add_command(label="Trajectory point - frame %d" % (k + 1), state="disabled")
+            m.add_command(label="Path point - frame %d" % (k + 1), state="disabled")
             m.add_command(label="Go to frame %d" % (k + 1), command=lambda: self.goto(k))
-            m.add_command(label="Smooth trajectory (from this frame)", command=self.smooth_path)
+            m.add_command(label="Smooth path (from this frame)", command=self.smooth_path)
             m.add_command(label="Even speed (from this frame)", command=self.even_speed)
             m.add_command(label="Straighten: interpolate to frame %d..." % (k + 1), command=lambda: self.tween_to(k))
         elif self.sel is not None and cls(self.fr.figs[self.sel][2]) not in "LR":
@@ -1915,7 +2256,7 @@ class ToreEditorPanel(ttk.Frame):
     def make_path(self, sl, tx, ty, n=None):
         if cls(self.fr.figs[sl][2]) in "LR":
             return
-        g = self.fr.figs[sl]
+        g = self.fr.figs[self.ref_slot(sl)]
         self.bake_path([(g[0], g[1]), (tx, ty)], n=n)
 
 
@@ -2169,14 +2510,19 @@ class ToreEditorPanel(ttk.Frame):
             "   the far (short) side and the near (long) side. 'speed' is then px/frame on the line where the pitch fills the picture (y=39).\n"
             " Run sprites are chosen automatically from the direction of travel (8 directions, both colours).\n\n"
             "EDITING A PATH LIKE A ROPE\n"
-            " Select tool: drag any dot of the yellow trajectory; neighbouring frames follow smoothly\n"
+            " Select tool: drag any dot of the yellow path; neighbouring frames follow smoothly\n"
             " (Rope softness = how many frames are pulled). Shift = move only that point.\n"
-            " 'pin current frame' keeps the current frame in place. Path menu: smooth / even speed / freeze.\n\n"
+            " 'Pin selected sprite' keeps the current sprite in place. 'move whole path with sprite': dragging the\n"
+            " sprite shifts the entire path unchanged. Path menu: smooth / even speed / freeze / Paths color.\n\n"
             "ACTIONS (right-click a player, Figure menu or Actions tab)\n"
             " Dive, Header, Bicycle kick, Collision fall, Get up, Celebration, Moonwalk - colour automatic.\n"
             " E/W = direction of the action (for Moonwalk: direction of travel, sprites face the other way).\n\n"
-            "CAMERA\n Camera tool > tick 'Camera follows selected sprite' (or right-click a sprite) to generate the scroll keyframes; the box is greyed out when no sprite is selected, and the Camera tool re-selects the sprite being followed.\n Camera limits: X 0-137, Y 0-15.\n\n"
-            "MOUSE\n Drag figure: move (Ctrl+click or box-select for groups; Shift on the ball = height only).\n"
+            "CAMERA\n Camera tool > tick 'Camera follows selected sprite' (or right-click a sprite) to generate the scroll keyframes;\n"
+            "the box is greyed out when no sprite is selected, and the Camera tool re-selects the sprite being followed.\n Camera limits: X 0-137, Y 0-15.\n\n"
+            "MOUSE\n Drag figure: move (Ctrl+click or box-select for groups). Ball and shadow always move together;\n"
+            " the 'Ball height' box sets their distance. Overlapping sprites: click the same spot again to cycle,\n"
+            " or right-click > 'Select under cursor'. Camera tool: left click also selects a sprite.\n"
+            " Zoom area (bar 'Zoom area', Ctrl+wheel at the pointer, scrollbars, middle-drag): magnify inside the window.\n"
             " Drag the cyan camera edge: scroll (also live while playing). Box select: click a selected figure to make it leader.\n"
             " Wheel / PgUp / PgDn: change frame. Timeline: click, right-click; the two bottom markers set the play/loop range.\n\n"
             "KEYS\n Arrows: move 1 px (Shift = 5) | [ ]: previous/next pose | Space: play from here | Ins/Del: frame\n"
@@ -2384,6 +2730,213 @@ class ToreEditorPanel(ttk.Frame):
         if p:
             self._write(p)
 
+    # ------------------------------------------------------------------ animated GIF export
+    def _gif_indices(self, s):
+        n = len(self.scene.frames)
+        if s["range"] == "loop":
+            a, b = self.loop_range()
+        elif s["range"] == "here":
+            a, b = self.idx, n - 1
+        else:
+            a, b = 0, n - 1
+        return a, b, list(range(a, b + 1, max(1, s["step"])))
+
+    def _gif_render(self, s, idx, progress):
+        out = []
+        for k, i in enumerate(idx):
+            if progress and progress(k, len(idx)) is False:
+                raise GifCancelled()
+            fr = self.scene.frames[i]
+            im = compose(self.gfx, fr).convert("RGB")
+            if s["area"] == "cam":
+                sx = max(0, min(SCROLL_MAX_X, fr.scroll[0]))
+                sy = max(0, min(SCROLL_MAX_Y, fr.scroll[1]))
+                im = im.crop((sx, sy, sx + WIN_W, sy + WIN_H))
+            out.append(im)
+        return out
+
+    def _gif_encode(self, s, progress):
+        """Render + encode with the given settings. progress(fraction, text) -> False to cancel."""
+        a, b, idx = self._gif_indices(s)
+        frames = self._gif_render(s, idx, lambda i, n: progress(0.25 * i / n, "Rendering frame %d/%d" % (i + 1, n)))
+        durs = gif_durations(idx, b, s["fps"], s["hold"])
+        data = build_gif(frames, durs, colors=s["colors"], dither=s["dither"], shared=s["shared"],
+                         optimize=s["optimize"], loop=s["loop"], scale=s["scale"], smooth=s["smooth"],
+                         progress=lambda i, n: progress(0.25 + 0.75 * i / n, "Encoding frame %d/%d" % (min(i + 1, n), n)))
+        return data, len(frames), (frames[0].width * s["scale"], frames[0].height * s["scale"])
+
+    def export_gif(self):
+        dflt = dict(range="all", area="cam", scale=2, smooth=False, fps=self._fps(), step=1, hold=500,
+                    loop=True, preset="High quality", colors=256, shared=True, dither=False, optimize=True)
+        cfg = dict(dflt, **(getattr(self, "_gif_cfg", None) or {}))
+        w = tk.Toplevel(self.top)
+        w.title("Export animated GIF")
+        w.transient(self.top)
+        w.resizable(False, False)
+        w.grab_set()
+        V = {k: (tk.BooleanVar if isinstance(v, bool) else tk.IntVar if isinstance(v, int) else tk.StringVar)(value=v)
+             for k, v in cfg.items()}
+        busy, running, cancel, closing = [False], [False], [False], [False]
+        info, status = tk.StringVar(), tk.StringVar()
+
+        def num(k, lo, hi):
+            try:
+                return max(lo, min(hi, int(V[k].get())))
+            except (tk.TclError, ValueError):
+                return dflt[k] if lo <= dflt[k] <= hi else lo
+
+        def settings():
+            return dict(range=V["range"].get(), area=V["area"].get(), scale=num("scale", 1, 8),
+                        smooth=bool(V["smooth"].get()), fps=num("fps", 1, 50), step=num("step", 1, 8),
+                        hold=num("hold", 0, 10000), loop=bool(V["loop"].get()), preset=V["preset"].get(),
+                        colors=num("colors", 2, 256), shared=bool(V["shared"].get()),
+                        dither=bool(V["dither"].get()), optimize=bool(V["optimize"].get()))
+
+        def update_info(*_):
+            try:
+                s = settings()
+                a, b, idx = self._gif_indices(s)
+                ww, hh = (WIN_W, WIN_H) if s["area"] == "cam" else (FW, FH)
+                secs = (b - a + 1) / s["fps"] + s["hold"] / 1000.0
+                info.set("%d frames (of %d)  |  %d x %d px  |  %.1f s" %
+                         (len(idx), b - a + 1, ww * s["scale"], hh * s["scale"], secs))
+            except Exception:
+                info.set("")
+
+        def custom(*_):
+            if not busy[0] and V["preset"].get() != "Custom":
+                V["preset"].set("Custom")
+            update_info()
+
+        def apply_preset(_e=None):
+            p = GIF_PRESETS.get(V["preset"].get())
+            if p:
+                busy[0] = True
+                for k, v in p.items():
+                    V[k].set(v)
+                busy[0] = False
+            update_info()
+
+        for k in ("range", "area", "scale", "fps", "step", "hold"):
+            V[k].trace_add("write", update_info)
+        for k in ("colors", "shared", "dither", "optimize", "step"):
+            V[k].trace_add("write", custom)
+
+        P = dict(padx=8, pady=3)
+        g1 = ttk.LabelFrame(w, text="Content")
+        g1.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 4))
+        ttk.Label(g1, text="Frames:").grid(row=0, column=0, sticky="w", **P)
+        for i, (val, txt) in enumerate((("all", "whole film"), ("loop", "play range (loop markers)"),
+                                        ("here", "from current frame to end"))):
+            ttk.Radiobutton(g1, text=txt, value=val, variable=V["range"]).grid(row=0, column=1 + i, sticky="w", padx=4)
+        ttk.Label(g1, text="Area:").grid(row=1, column=0, sticky="w", **P)
+        ttk.Radiobutton(g1, text="camera window (182x96, follows scroll)", value="cam", variable=V["area"]).grid(row=1, column=1, columnspan=2, sticky="w", padx=4)
+        ttk.Radiobutton(g1, text="whole pitch (320x112)", value="full", variable=V["area"]).grid(row=1, column=3, sticky="w", padx=4)
+
+        g2 = ttk.LabelFrame(w, text="Size and speed")
+        g2.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
+        ttk.Label(g2, text="Scale:").grid(row=0, column=0, sticky="w", **P)
+        ttk.Spinbox(g2, from_=1, to=8, width=4, textvariable=V["scale"]).grid(row=0, column=1, sticky="w")
+        ttk.Checkbutton(g2, text="smooth scaling (blurs pixels)", variable=V["smooth"]).grid(row=0, column=2, columnspan=2, sticky="w", padx=8)
+        ttk.Label(g2, text="Speed (fps):").grid(row=1, column=0, sticky="w", **P)
+        ttk.Spinbox(g2, from_=1, to=50, width=4, textvariable=V["fps"]).grid(row=1, column=1, sticky="w")
+        ttk.Label(g2, text="Hold last frame (ms):").grid(row=1, column=2, sticky="e", padx=(8, 2))
+        ttk.Spinbox(g2, from_=0, to=10000, increment=100, width=6, textvariable=V["hold"]).grid(row=1, column=3, sticky="w")
+        ttk.Checkbutton(g2, text="loop forever (otherwise plays once)", variable=V["loop"]).grid(row=2, column=0, columnspan=4, sticky="w", **P)
+
+        g3 = ttk.LabelFrame(w, text="Quality and compression")
+        g3.grid(row=2, column=0, sticky="nsew", padx=8, pady=4)
+        ttk.Label(g3, text="Preset:").grid(row=0, column=0, sticky="w", **P)
+        cb_ = ttk.Combobox(g3, textvariable=V["preset"], values=list(GIF_PRESETS) + ["Custom"], state="readonly", width=18)
+        cb_.grid(row=0, column=1, columnspan=2, sticky="w")
+        cb_.bind("<<ComboboxSelected>>", apply_preset)
+        ttk.Label(g3, text="Colors (2-256):").grid(row=1, column=0, sticky="w", **P)
+        ttk.Spinbox(g3, from_=2, to=256, width=5, textvariable=V["colors"]).grid(row=1, column=1, sticky="w")
+        ttk.Label(g3, text="Use every Nth frame:").grid(row=1, column=2, sticky="e", padx=(8, 2))
+        ttk.Spinbox(g3, from_=1, to=8, width=4, textvariable=V["step"]).grid(row=1, column=3, sticky="w")
+        ttk.Checkbutton(g3, text="shared palette (smaller file, steady colors)", variable=V["shared"]).grid(row=2, column=0, columnspan=4, sticky="w", **P)
+        ttk.Checkbutton(g3, text="dithering (smoother gradients, much bigger file)", variable=V["dither"]).grid(row=3, column=0, columnspan=4, sticky="w", **P)
+        ttk.Checkbutton(g3, text="optimize encoding", variable=V["optimize"]).grid(row=4, column=0, columnspan=4, sticky="w", **P)
+        ttk.Label(g3, text="Tip: with a shared palette and no dithering only the changed area of each\n"
+                           "frame is stored - this gives by far the smallest files.", foreground="#555").grid(row=5, column=0, columnspan=4, sticky="w", padx=8, pady=(2, 6))
+
+        ttk.Label(w, textvariable=info).grid(row=3, column=0, sticky="w", padx=12, pady=(4, 0))
+        pb = ttk.Progressbar(w, maximum=100)
+        pb.grid(row=4, column=0, sticky="ew", padx=10, pady=(4, 0))
+        ttk.Label(w, textvariable=status, foreground="#1a5e1a").grid(row=5, column=0, sticky="w", padx=12)
+        bar = ttk.Frame(w)
+        bar.grid(row=6, column=0, sticky="e", padx=8, pady=8)
+        b_size = ttk.Button(bar, text="Calculate size")
+        b_exp = ttk.Button(bar, text="Export...")
+        b_close = ttk.Button(bar, text="Close")
+        for b_ in (b_size, b_exp, b_close):
+            b_.pack(side="left", padx=3)
+
+        def cbk(frac, text):
+            if cancel[0]:
+                return False
+            pb["value"] = frac * 100
+            status.set(text)
+            w.update()
+            return not cancel[0]
+
+        def busy_ui(on):
+            for b_ in (b_size, b_exp):
+                b_.config(state="disabled" if on else "normal")
+            b_close.config(text="Cancel" if on else "Close")
+
+        def run(save):
+            if running[0]:
+                return
+            s = settings()
+            path = None
+            if save:
+                base = os.path.splitext(os.path.basename(self.scene.path or "scene"))[0]
+                path = filedialog.asksaveasfilename(parent=w, title="Export animated GIF", defaultextension=".gif",
+                                                    initialfile=base + ".gif",
+                                                    initialdir=os.path.dirname(os.path.abspath(self.scene.path)) if self.scene.path else None,
+                                                    filetypes=[("GIF animation", "*.gif"), ("All", "*.*")])
+                if not path:
+                    return
+            running[0], cancel[0] = True, False
+            busy_ui(True)
+            try:
+                data, nfr, (ww, hh) = self._gif_encode(s, cbk)
+                size = "%.1f KB" % (len(data) / 1024.0) if len(data) < 1048576 else "%.2f MB" % (len(data) / 1048576.0)
+                if path:
+                    with open(path, "wb") as fh:
+                        fh.write(data)
+                    status.set("Saved %s - %d frames, %dx%d, %s" % (os.path.basename(path), nfr, ww, hh, size))
+                else:
+                    status.set("Estimated size: %s (%d frames, %dx%d)" % (size, nfr, ww, hh))
+                pb["value"] = 100
+            except GifCancelled:
+                status.set("Cancelled.")
+                pb["value"] = 0
+            except (OSError, ValueError, MemoryError) as ex:
+                status.set("")
+                messagebox.showerror("GIF export", "Could not create the GIF:\n%s" % ex, parent=w)
+            finally:
+                running[0] = False
+                if closing[0]:
+                    w.destroy()
+                else:
+                    busy_ui(False)
+
+        def close():
+            if running[0]:
+                cancel[0] = closing[0] = True
+                return
+            self._gif_cfg = settings()
+            w.destroy()
+
+        b_size.config(command=lambda: run(False))
+        b_exp.config(command=lambda: run(True))
+        b_close.config(command=close)
+        w.protocol("WM_DELETE_WINDOW", close)
+        w.bind("<Escape>", lambda e: close())
+        update_info()
+
     def save_numbered(self):
         base = os.path.dirname(os.path.abspath(self.scene.path)) if self.scene.path else os.getcwd()
         an = find_anzahl(self.scene.path or os.path.join(base, "x"))
@@ -2500,40 +3053,42 @@ class ToreEditorPanel(ttk.Frame):
         f = self.fr
         self.sx.set(f.scroll[0])
         self.sy.set(f.scroll[1])
+        self.clamp_view()
         img = compose(self.gfx, f, self.ghosts())
-        img = img.resize((img.width * z, img.height * z), Image.NEAREST)
+        cw, ch = FW * z, FH * z
+        img = img.resize((cw, ch), Image.NEAREST, box=(self.vx, self.vy, self.vx + FW / self.vz, self.vy + FH / self.vz))
         self._photo = ImageTk.PhotoImage(img)
         c = self.canvas
-        c.config(width=img.width, height=img.height)
+        c.config(width=cw, height=ch)
         c.delete("all")
         c.create_image(0, 0, anchor="nw", image=self._photo)
+        s = self.sc()
         if self.show_win.get():
-            x0, y0 = f.scroll[0] * z, f.scroll[1] * z
-            x1, y1 = x0 + WIN_W * z, y0 + WIN_H * z
-            for r in ((0, 0, img.width, y0), (0, y1, img.width, img.height), (0, y0, x0, y1), (x1, y0, img.width, y1)):
-                c.create_rectangle(*r, fill="black", stipple="gray50", outline="")
+            x0, y0 = self.cx(f.scroll[0]), self.cy(f.scroll[1])
+            x1, y1 = self.cx(f.scroll[0] + WIN_W), self.cy(f.scroll[1] + WIN_H)
+            ax0, ay0 = max(0, min(cw, x0)), max(0, min(ch, y0))
+            ax1, ay1 = max(0, min(cw, x1)), max(0, min(ch, y1))
+            for r in ((0, 0, cw, ay0), (0, ay1, cw, ch), (0, ay0, ax0, ay1), (ax1, ay0, cw, ay1)):
+                if r[2] > r[0] and r[3] > r[1]:
+                    c.create_rectangle(*r, fill="black", stipple="gray50", outline="")
             c.create_rectangle(x0, y0, x1, y1, outline="#00e5ff")
         if self.show_ids.get():
             for g in f.figs:
                 if cls(g[2]) not in "LR":
-                    c.create_text(g[0] * z + 1, (g[1] + Y_OFFSET) * z - 1, anchor="sw", text=str(g[2]),fill="#fff59d", font=("TkDefaultFont", 7))
-        for s in self.multi:
-            if s != self.sel and s < len(f.figs):
-                x, y, sid = f.figs[s]
-                c.create_rectangle(x * z, (y + Y_OFFSET) * z, (x + sprite_w(sid)) * z, (y + Y_OFFSET + CELL_H) * z, outline="#00e5ff", width=2, dash=(3, 2))
+                    c.create_text(self.cx(g[0]) + 1, self.cy(g[1] + Y_OFFSET) - 1, anchor="sw", text=str(g[2]), fill="#fff59d", font=("TkDefaultFont", 7))
+        self.draw_paths(c, sc, n, s)
+        for sm in self.multi:
+            if sm != self.sel and sm < len(f.figs):
+                x, y, sid = f.figs[sm]
+                c.create_rectangle(*self.box(x, y, sid), outline="#00e5ff", width=2, dash=(3, 2))
         if self.sel is not None:
             x, y, sid = f.figs[self.sel]
-            if self.show_path.get() and n > 1:
-                pts = [self.ctr(g.figs[self.sel]) for g in sc.frames]
-                c.create_line(*[v for p in pts for v in p], fill="#ffd54a", dash=(4, 3))
-                for k, (px, py) in enumerate(pts):
-                    r = 4 if k == self.idx else 2.5
-                    c.create_oval(px - r, py - r, px + r, py + r, fill="#ff5252" if k == self.idx else "#ffd54a", outline="black" if k == self.idx else "")
-                    if z >= 3 and k % 5 == 4 and k != self.idx:
-                        c.create_text(px, py - 7, text=str(k + 1), fill="#ffe082", font=("TkDefaultFont", 7))
-            c.create_rectangle(x * z, (y + Y_OFFSET) * z, (x + sprite_w(sid)) * z, (y + Y_OFFSET + CELL_H) * z, outline="#ffff00", width=2)
+            c.create_rectangle(*self.box(x, y, sid), outline="#ffff00", width=2)
             if len(self.multi) > 1:
-                c.create_text(x * z + 1, (y + Y_OFFSET) * z - 1, anchor="sw", text="leader", fill="#ffff00", font=("TkDefaultFont", 7, "bold"))
+                c.create_text(self.cx(x) + 1, self.cy(y + Y_OFFSET) - 1, anchor="sw", text="leader", fill="#ffff00", font=("TkDefaultFont", 7, "bold"))
+        sb_, bb_ = f.index_of("S"), f.index_of("B")
+        self.ball_h.set(f.figs[sb_][1] - f.figs[bb_][1] if sb_ is not None and bb_ is not None else 0)
+        self.update_view_bars()
         self.draw_overlay()
         self.draw_timeline()
         ev = next((k for k, e in enumerate(sc.events) if e == self.idx), -1)
@@ -2545,6 +3100,34 @@ class ToreEditorPanel(ttk.Frame):
         self._set_title(fn, n)
         self.sync_cam_follow()
 
+
+    def draw_paths(self, c, sc, n, s):
+        if n < 2:
+            return
+        f = self.fr
+        sel_ref = self.ref_slot() if self.sel is not None else None
+        slots = []
+        if self.all_paths.get():
+            slots = [i for i, g in enumerate(f.figs) if cls(g[2]) not in "LRB"]   # ball is drawn through its shadow
+        if self.show_path.get() and sel_ref is not None and sel_ref not in slots:
+            slots.append(sel_ref)
+        slots.sort(key=lambda i: i == sel_ref)                                       # selected one on top
+        for i in slots:
+            col = self.path_color(f.figs[i][2])
+            pts = [self.ctr(g.figs[i]) for g in sc.frames]
+            main = (i == sel_ref and self.show_path.get())
+            c.create_line(*[v for p in pts for v in p], fill=col, dash=(4, 3) if main else (), width=1 if main else 1)
+            for k, (px, py) in enumerate(pts):
+                cur = k == self.idx
+                if main:
+                    r = 4 if cur else 2.5
+                elif cur:
+                    r = 3
+                else:
+                    r = 1.5
+                c.create_oval(px - r, py - r, px + r, py + r, fill=col, outline="white" if cur else "")
+                if main and s >= 3 and k % 5 == 4 and not cur:
+                    c.create_text(px, py - 7, text=str(k + 1), fill=col, font=("TkDefaultFont", 7))
 
     def fill_tree(self):
         nm = self.names()
@@ -2606,12 +3189,13 @@ class ToreEditorPanel(ttk.Frame):
 
 
     HINTS = {
-        "select": "\nClick: select | Ctrl+click: add | Drag figure: move | Drag a trajectory dot: pull the rope | "
+        "select": "\nClick: select | Ctrl+click: add | Drag figure: move | Drag a path dot: pull the rope | "
                   "Drag empty: box select\nClick a selected figure: make it leader | "
-                  "Drag the cyan camera edge: scroll | Right-click: menu",
+                  "Drag the cyan camera edge: scroll | Right-click: menu (lists every sprite under the cursor)\n"
+                  "Overlapping sprites: click the same spot again to cycle through them",
         "draw": "\nPress on a figure and draw its path; release to bake it into the frames | Shift: straight line | Esc: cancel",
         "way": "\nClick points to lay out a path | Enter / double-click / right-click: finish | Backspace: undo point | Esc: cancel",
-        "pan": "\nDrag to move the camera (works live during playback)",
+        "pan": "\nDrag to move the camera (works live during playback) | Click a sprite to select it (click again to cycle if overlapped)",
     }
 
     def pick_main(self, k):
@@ -2658,7 +3242,7 @@ class ToreEditorPanel(ttk.Frame):
         self.sync_tool_buttons()
         self.show_tool_options()
         self.hint = self.HINTS[t]
-        self.canvas.config(cursor={"select": "arrow", "draw": "pencil", "way": "crosshair", "pan": "fleur"}[t])
+        self.set_tool_cursor()
         ct = self.cam_target
         if (t == "pan" and self.cam_follow.get() and ct is not None and ct != self.sel
                 and ct < len(self.fr.figs) and cls(self.fr.figs[ct][2]) in "PB"):
@@ -2688,18 +3272,18 @@ class ToreEditorPanel(ttk.Frame):
             self.refresh()
 
     def ctr(self, g):
-        z, w = self.z(), sprite_w(g[2])
-        return (g[0] + w / 2) * z, (g[1] + Y_OFFSET + CELL_H / 2) * z
+        w = sprite_w(g[2])
+        return self.cx(g[0] + w / 2), self.cy(g[1] + Y_OFFSET + CELL_H / 2)
 
 
     def pos_ctr(self, x, y, sid):
-        z, w = self.z(), sprite_w(sid)
-        return (x + w / 2) * z, (y + Y_OFFSET + CELL_H / 2) * z
+        w = sprite_w(sid)
+        return self.cx(x + w / 2), self.cy(y + Y_OFFSET + CELL_H / 2)
 
 
     def ptr_pos(self, ex, ey, sid):
-        z, w = self.z(), sprite_w(sid)
-        return ex / z - w / 2, ey / z - Y_OFFSET - CELL_H / 2
+        w = sprite_w(sid)
+        return self.fx(ex) - w / 2, self.fy(ey) - Y_OFFSET - CELL_H / 2
 
 
     def pick_leader(self, ids):
@@ -2725,9 +3309,10 @@ class ToreEditorPanel(ttk.Frame):
     def path_hit(self, ex, ey, tol=7.0):
         if self.sel is None or not self.show_path.get() or len(self.scene.frames) < 2:
             return None
+        rs = self.ref_slot()
         best, bd = None, tol
         for k, f in enumerate(self.scene.frames):
-            cx, cy = self.ctr(f.figs[self.sel])
+            cx, cy = self.ctr(f.figs[rs])
             d = math.hypot(cx - ex, cy - ey)
             if d < bd:
                 best, bd = k, d
@@ -2815,7 +3400,7 @@ class ToreEditorPanel(ttk.Frame):
             self.refresh()
 
     def bake_path(self, pts, samples=None, n=None, persp=False):
-        sl = self.sel
+        sl = self.ref_slot()
         if sl is None:
             return
         fs = self.scene.frames
@@ -3078,7 +3663,7 @@ class ToreEditorPanel(ttk.Frame):
         for i in range(self.idx, len(fs)):
             fs[i].touch()
         self.refresh()
-        self.note("Trajectory re-spaced at constant speed.")
+        self.note("Path re-spaced at constant speed.")
 
 
     def freeze_here(self):
@@ -3162,7 +3747,7 @@ class ToreEditorPanel(ttk.Frame):
     def finish_way(self):
         if self.tool.get() != "way" or not self.way or self.sel is None:
             return
-        g = self.fr.figs[self.sel]
+        g = self.fr.figs[self.ref_slot()]
         pts = [(float(g[0]), float(g[1]))] + list(self.way)
         self.way = []
         if self.smooth.get() and len(pts) > 2:
@@ -3187,7 +3772,7 @@ class ToreEditorPanel(ttk.Frame):
 
     def move_rope(self, e):
         d = self.drag
-        z = self.z()
+        z = self.sc()
         dx, dy = (e.x - d["x0"]) / z, (e.y - d["y0"]) / z
         fs = self.scene.frames
         sigma = 0.45 if (e.state & 1) else max(0.5, float(self.rope.get()))
@@ -3225,17 +3810,16 @@ class ToreEditorPanel(ttk.Frame):
     def draw_overlay(self):
         c = self.canvas
         c.delete("ov")
-        z = self.z()
         if self.sel is None:
             sid = None
         else:
-            sid = self.fr.figs[self.sel][2]
+            sid = self.fr.figs[self.ref_slot()][2]
         st = self.stroke
         if st and len(st["pts"]) > 1:
             pts = [v for p in st["pts"] for v in self.pos_ctr(p[0], p[1], st["sid"])]
             c.create_line(*pts, fill="#ff9800", width=2, tags="ov")
         if self.way and sid is not None:
-            g = self.fr.figs[self.sel]
+            g = self.fr.figs[self.ref_slot()]
             pts = [(float(g[0]), float(g[1]))] + list(self.way)
             curve = catmull(pts) if (self.smooth.get() and len(pts) > 2) else pts
             c.create_line(*[v for p in curve for v in self.pos_ctr(p[0], p[1], sid)], fill="#ff9800", width=2, tags="ov")
@@ -3244,7 +3828,7 @@ class ToreEditorPanel(ttk.Frame):
                 c.create_rectangle(cx - 3, cy - 3, cx + 3, cy + 3, fill="#ff9800" if k else "#ffff00", outline="black", tags="ov")
             if self.cursor_pos:
                 lx, ly = self.pos_ctr(pts[-1][0], pts[-1][1], sid)
-                c.create_line(lx, ly, self.cursor_pos[0] * z, self.cursor_pos[1] * z, fill="#ffcc80", dash=(3, 3), tags="ov")
+                c.create_line(lx, ly, self.cx(self.cursor_pos[0]), self.cy(self.cursor_pos[1]), fill="#ffcc80", dash=(3, 3), tags="ov")
         d = self.drag
         if d and d.get("kind") == "band" and d.get("moved"):
             c.create_rectangle(d["x0"], d["y0"], d["x1"], d["y1"], outline="#00e5ff", dash=(3, 3), tags="ov")
