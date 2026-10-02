@@ -128,18 +128,8 @@ Your new scene is only one click away!
 ## Usage
 
 1. Open a supported EXE.
-2. Make the required changes.
-3. Review them with **Changes / Details**.
-4. Save the modified executable with **Save As**.
+2. Have fun.
 
 Modified EXEPACK executables are saved unpacked. The editor does not contain an EXEPACK compressor.
 Always keep a backup of the original executable and test modified executables before regular use.
-
-
-## Release
-
-Python is not required for normal use.
-Standalone Windows executables included for:
-- Main String editor
-- MANA.DAT editor
-- Graphic (VGA/CP) editor
+Python is not required for normal use. Standalone Windows executables included.
