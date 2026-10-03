@@ -174,14 +174,11 @@ FW, FH = 320, 112
 MAX_Y = FH - Y_OFFSET - CELL_H
 SOUNDS = [("Goal celebration", "#2e9e3e"), ("Referee whistle", "#d4b000"), ("Disapproval whistles", "#e07020"), ("Missed-goal disappointment", "#3a5bd0")]
 KINDS = {"T": "Goal (scored)", "V": "Missed chance"}
-VARIANTS = {"": "Normal", "E": "Penalty", "J": "Jux"} 
+VARIANTS = {"": "None", "E": "Penalty", "J": "Joke"} 
 PATH_COLORS = {"ball": "#ffd54a", "ref": "#d0d0d0", "red": "#ff6e6e", "blue": "#6ea8ff"}
 PATH_COLOR_LABELS = (("ball", "Ball"), ("ref", "Referee"), ("red", "Red team"), ("blue", "Blue team"))
 VIEW_ZOOM_MAX = 12.0
 GHOST_OPTS = ["None", "Selected: previous frame", "Selected: all previous frames", "All sprites: all previous frames"]
-
-def _mir(seq):
-    return [58 - k for k in seq]
 
 DIRS = ["E", "NE", "N", "NW", "W", "SW", "S", "SE"]
 DIR_LABEL = {"E": "East", "NE": "North-East", "N": "North", "NW": "North-West",
@@ -192,32 +189,19 @@ DATA_DIR = os.path.join(APP_DIR, "data")
 ACTIONS_FILE = os.path.join(DATA_DIR, "tore_actions.json")
 POSES_FILE = os.path.join(DATA_DIR, "tore_pose_sets.json")
 KICKOFF_FILE = os.path.join(DATA_DIR, "tore_kickoff.json")
-POSE_NOTE = "Red ids; blue = red+59 (same k). Mirror E<->W is k -> 58-k. Sets marked (?) are unverified."
-
-DEF_ORDER = ["dive", "header", "bicycle", "fall", "getup", "cele", "moonwalk"]
-DEF_ACTIONS = {
-    "dive":    {"label": "Dive", "E": [12, 13, 14, 14, 14, 14, 13], "W": [46, 45, 44, 44, 44, 44, 45]},
-    "header":  {"label": "Header", "E": [15, 16, 17, 18, 19, 20], "W": [43, 42, 41, 40, 39, 38]},
-    "bicycle": {"label": "Bicycle kick", "E": [21, 22, 23, 23, 24, 24], "W": [37, 36, 35, 35, 34, 34]},
-    "fall":    {"label": "Collision fall", "E": [22, 23, 24, 24, 24], "W": [36, 35, 34, 34, 34]},
-    "getup":   {"label": "Get up", "E": [14, 13], "W": [44, 45]},
-    "cele":    {"label": "Celebration", "E": [25, 26, 27, 26, 27, 26, 27], "W": [25, 26, 27, 26, 27, 26, 27], "single": True},
-    "moonwalk": {"label": "Moonwalk", "travel": True, "E": [55, 54, 53, 52, 51, 50], "W": [3, 4, 5, 6, 7, 8]},
-}
-DEF_MOVES = {"E": [3, 4, 5], "SE": [6, 7, 8], "NE": [0, 1, 2], "W": [53, 54, 55], "SW": [50, 51, 52],
-             "NW": [56, 57, 58], "N": [28, 29, 30], "S": [31, 32, 33]}
-DEF_STAND = {"E": 0, "W": 58}
-DEF_REF = {"move": {"E": [121, 122, 123], "W": [135, 136]}, "stand": 126}
-DEF_UNKNOWN = [("Unassigned (?) 10,11,47,48", [10, 11, 47, 48])]
-DEF_REF_CATS = [("Referee walk E", [121, 122, 123]), ("Referee walk W (A)", [135, 136]),
-                ("Referee walk W (B) 132-134", [132, 133, 134]), ("Referee standing", [126]),
-                ("Referee - side A (all)", list(range(118, 129))), ("Referee - side B (all)", list(range(129, 142)))]
-DEF_BALL = [("rotation", [142, 143, 144]), ("shadow", [145])]
 
 ACTIONS, ACTION_ORDER, MOVE_E, STAND_K = {}, [], {}, {}
-REF_MOVE, REF_STAND, BALL_ROT = {}, 126, [142, 143, 144]
+REF_MOVE, REF_STAND, BALL_ROT = {}, {}, []
 PLAYER_CATS, REF_CATS, BALL_CATS, BALL_ALL = [], [], [], []
 DATA_WARNINGS = []
+
+
+class DataError(Exception):
+    pass
+
+
+def _why(ex):
+    return "missing key %s" % ex if isinstance(ex, KeyError) else str(ex)
 
 
 def _uniq(seq):
@@ -270,12 +254,28 @@ def _read_json(path):
         return None
 
 
+def _load_json(path):
+    if not os.path.isfile(path):
+        raise DataError("file not found in %s" % os.path.dirname(path))
+    raw = _read_json(path)
+    if not isinstance(raw, dict):
+        raise DataError("unreadable or not a JSON object")
+    return raw
+
+
 def _dump(path, obj):
     txt = json.dumps(obj, indent=1, ensure_ascii=False)
     txt = re.sub(r"\[\s*([\d,\s-]*?)\s*\]", lambda m: "[" + re.sub(r"\s+", " ", m.group(1)) + "]", txt)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(txt + "\n")
+
+
+def _dump_merge(path, updates):
+    cur = _read_json(path)
+    cur = cur if isinstance(cur, dict) else {}
+    cur.update(updates)
+    _dump(path, cur)
 
 
 def _ks(v, lo, hi):
@@ -291,32 +291,11 @@ def _cats(d, lo, hi):
     return [(str(n), _ks(v, lo, hi)) for n, v in d.items()]
 
 
-def default_actions_file():
-    return {"order": list(DEF_ORDER), "actions": copy.deepcopy(DEF_ACTIONS), "moves": copy.deepcopy(DEF_MOVES),
-            "stand": dict(DEF_STAND), "referee": copy.deepcopy(DEF_REF)}
-
-
-def default_poses_file():
-    c = [("Stand - facing E", [DEF_STAND["E"]]), ("Stand - facing W", [DEF_STAND["W"]])]
-    for d in DIRS:
-        c.append(("Run %s (%s)" % (d, DIR_LABEL[d]), list(DEF_MOVES[d])))
-    c.append(("Run E - long cycle", list(range(3, 10))))
-    c.append(("Run W - long cycle", list(range(49, 56))))
-    for key in DEF_ORDER:
-        for side in action_sides(key, DEF_ACTIONS):
-            c.append((action_label(key, side, DEF_ACTIONS), _uniq(DEF_ACTIONS[key][side])))
-    c += DEF_UNKNOWN
-    return _poses_file(dict(c), dict(DEF_REF_CATS), dict(DEF_BALL))
-
-
 def _poses_file(red, referee, ball):
-    return {"red": red, "blue": {n: [k + 59 for k in v] for n, v in red.items()}, "referee": referee,
-            "ball": ball, "goals": {"left": [1000], "right": [1024]}, "_note": POSE_NOTE}
+    return {"red": red, "blue": {n: [k + 59 for k in v] for n, v in red.items()}, "referee": referee, "ball": ball}
 
 
 def _clean_actions(raw):
-    if not isinstance(raw, dict):
-        raise ValueError("unreadable or not a JSON object")
     acts = {}
     for key, a in raw["actions"].items():
         e = _ks(a["E"], 0, 58)
@@ -328,52 +307,48 @@ def _clean_actions(raw):
         acts[str(key)] = d
     order = [k for k in raw.get("order", []) if k in acts]
     order += [k for k in acts if k not in order]
-    mv = raw.get("moves", {})
-    moves = {d: _ks(mv[d], 0, 58) if d in mv else list(DEF_MOVES[d]) for d in DIRS}
-    st = raw.get("stand", {})
-    stand = {s: int(st.get(s, DEF_STAND[s])) for s in "EW"}
-    rf = raw.get("referee", {})
-    rm = rf.get("move", {})
-    ref = {"move": {s: _ks(rm[s], 118, 141) if s in rm else list(DEF_REF["move"][s]) for s in "EW"},"stand": int(rf.get("stand", DEF_REF["stand"]))}
-    return acts, order, moves, stand, ref
+    moves = {d: _ks(raw["moves"][d], 0, 58) for d in DIRS}
+    rst = raw.get("stand") or {}
+    stand = {d: int(rst[d]) if d in rst else moves[d][0] for d in DIRS}
+    rf = raw["referee"]
+    rm, rs = rf["move"], rf["stand"]
+    rmove = {d: _ks(rm[d] if d in rm else rm["W" if "W" in d else "E"], 118, 141) for d in DIRS}
+    if isinstance(rs, dict):
+        rstand = {d: int(rs[d]) if d in rs else rmove[d][0] for d in DIRS}
+    else:
+        rstand = {d: int(rs) if d in "EW" else rmove[d][0] for d in DIRS}
+    return acts, order, moves, stand, {"move": rmove, "stand": rstand}
 
 
 def load_data():
     global ACTIONS, ACTION_ORDER, MOVE_E, STAND_K, REF_MOVE, REF_STAND, BALL_ROT
     global PLAYER_CATS, REF_CATS, BALL_CATS, BALL_ALL
     warn = []
-    for path, default in ((ACTIONS_FILE, default_actions_file), (POSES_FILE, default_poses_file)):
-        if not os.path.isfile(path):
-            try:
-                _dump(path, default())
-            except OSError as ex:
-                warn.append("%s: cannot create (%s)" % (os.path.basename(path), ex))
     try:
-        acts, order, moves, stand, ref = _clean_actions(_read_json(ACTIONS_FILE))
-    except (TypeError, ValueError, KeyError, AttributeError) as ex:
-        warn.append("%s: %s - built-in defaults used" % (os.path.basename(ACTIONS_FILE), ex))
-        acts, order, moves, stand, ref = _clean_actions(default_actions_file())
+        acts, order, moves, stand, ref = _clean_actions(_load_json(ACTIONS_FILE))
+    except (DataError, TypeError, ValueError, KeyError, AttributeError) as ex:
+        warn.append("%s: %s - actions and movement unavailable" % (os.path.basename(ACTIONS_FILE), _why(ex)))
+        acts, order, moves, stand, ref = {}, [], {}, {}, {"move": {}, "stand": {}}
     ACTIONS, ACTION_ORDER, MOVE_E, STAND_K = acts, order, moves, stand
     REF_MOVE, REF_STAND = ref["move"], ref["stand"]
-    raw = _read_json(POSES_FILE)
     try:
+        raw = _load_json(POSES_FILE)
         red = _cats(raw["red"], 0, 58)
         refc = _cats(raw["referee"], 118, 141)
         ball = _cats(raw["ball"], 142, 145)
-    except (TypeError, ValueError, KeyError, AttributeError) as ex:
-        warn.append("%s: %s - built-in defaults used" % (os.path.basename(POSES_FILE), ex))
-        raw = default_poses_file()
-        red, refc, ball = _cats(raw["red"], 0, 58), _cats(raw["referee"], 118, 141), _cats(raw["ball"], 142, 145)
+    except (DataError, TypeError, ValueError, KeyError, AttributeError) as ex:
+        warn.append("%s: %s - pose sets unavailable" % (os.path.basename(POSES_FILE), _why(ex)))
+        red, refc, ball = [], [], []
     PLAYER_CATS, REF_CATS, BALL_ALL = red, refc, ball
     BALL_CATS = [(n, v) for n, v in ball if n != "shadow"]
-    BALL_ROT = dict(ball).get("rotation") or [142, 143, 144]
+    BALL_ROT = list(dict(ball).get("rotation") or [])
     DATA_WARNINGS[:] = warn
     return warn
 
 
 def save_data_files(pg, ad):
     _dump(ACTIONS_FILE, {"order": ad["order"], "actions": ad["actions"], "moves": ad["moves"], "stand": ad["stand"], "referee": ad["referee"]})
-    _dump(POSES_FILE, _poses_file(pg["red"], pg["referee"], pg["ball"]))
+    _dump_merge(POSES_FILE, _poses_file(pg["red"], pg["referee"], pg["ball"]))
 
 
 load_data()
@@ -455,19 +430,31 @@ def loco_cycle(sid, d):
     t = team_of(sid)
     if t in ("R", "B"):
         off = 0 if t == "R" else 59
-        return [off + k for k in MOVE_E[d]]
+        return [off + k for k in MOVE_E[d]] if d in MOVE_E else None
     if t == "A":
-        return list(REF_MOVE["W" if "W" in d else "E"])
-    return list(BALL_ROT) if cls(sid) == "B" else None
+        return list(REF_MOVE.get(d) or []) or None
+    return (list(BALL_ROT) or None) if cls(sid) == "B" else None
 
 
 def stand_id(sid, face):
     t = team_of(sid)
     if t in ("R", "B"):
-        return (0 if t == "R" else 59) + STAND_K[face]
+        k = STAND_K.get(face, STAND_K.get(face[-1:]))
+        return sid if k is None else (0 if t == "R" else 59) + k
     if t == "A":
-        return REF_STAND
+        return REF_STAND.get(face, REF_STAND.get(face[-1:], sid))
     return sid
+
+
+def dir_of_sprite(sid):
+    cycs = [(d, loco_cycle(sid, d)) for d in DIRS]
+    for d, c in cycs:
+        if c and sid == c[0]:
+            return d
+    for d, c in cycs:
+        if c and sid in c:
+            return d
+    return facing_of(sid)
 
 
 def loco_ids(sid):
@@ -579,13 +566,18 @@ def persp_from_world(wx, wv):
     return left + wx / _PERSP_WREF * max(20.0, right - left), y
 
 
-def stop_outside(seq):
-    out, held = [], None
+def xlim(sid):
+    return 0, FW - sprite_w(sid)
+
+
+def clamp_field(seq, xlo=0, xhi=FW - 1, tol=0.5):
+    out, hit = [], False
     for x, y in seq:
-        if held is None and not (-0.01 <= x <= FW - 0.99 and -0.01 <= y <= MAX_Y + 0.01):
-            held = (min(max(x, 0.0), FW - 1.0), min(max(y, 0.0), float(MAX_Y)))
-        out.append(held if held is not None else (x, y))
-    return out, held is not None
+        cx, cy = min(max(x, float(xlo)), float(xhi)), min(max(y, 0.0), float(MAX_Y))
+        if abs(cx - x) > tol or abs(cy - y) > tol:
+            hit = True
+        out.append((cx, cy))
+    return out, hit
 
 
 def _densify(p, step=2.0):
@@ -760,31 +752,7 @@ def _match(prev, recs, prev2=None):
     return m
 
 
-KICKOFF_CX = FW // 2 - CELL_W // 2
-KICKOFF_CY = 24
-KICKOFF_SCROLL = (FW // 2 - WIN_W // 2, 12)
-
-
-def kickoff_figs():
-    ys = [KICKOFF_CY - 21, KICKOFF_CY - 7, KICKOFF_CY + 7, KICKOFF_CY + 21]
-    red = [(28, KICKOFF_CY)]
-    red += [(64, y) for y in ys]
-    red += [(104, y) for y in ys]
-    red += [(KICKOFF_CX - 8, KICKOFF_CY), (KICKOFF_CX - 20, KICKOFF_CY + 14)]
-    figs = [[x, y, stand_id(0, "E")] for x, y in red]
-    figs += [[FW - CELL_W - x, y, stand_id(59, "W")] for x, y in red]
-    figs.append([KICKOFF_CX, 6, REF_STAND])
-    bx = FW // 2 - 2
-    figs.append([bx, KICKOFF_CY + 1, 145])
-    figs.append([bx, KICKOFF_CY, 142])
-    figs.append([bx, 28, 1000])
-    figs.append([bx, 28, 1024])
-    assert len(figs) == N_RECORDS
-    return figs
-
-
 KICKOFF_COUNTS = [11, 11, 1, 1, 1, 1, 1]
-KICKOFF_NOTE = "Kick-off formation used by New scene: 27 records [x, y, sprite id] (red, blue, referee, shadow, ball, goals)."
 
 
 def _grp(sid):
@@ -817,36 +785,23 @@ def save_kickoff(figs, scroll):
         return err
     ordered = [g for _, g in sorted(enumerate(figs), key=lambda t: (_grp(t[1][2]), t[0]))]
     try:
-        _dump(KICKOFF_FILE, {"_note": KICKOFF_NOTE, "scroll": [int(scroll[0]), int(scroll[1])], "figs": ordered})
+        _dump_merge(KICKOFF_FILE, {"scroll": [int(scroll[0]), int(scroll[1])], "figs": ordered})
     except OSError as ex:
         return str(ex)
     return None
 
 
-def reset_kickoff():
-    _dump(KICKOFF_FILE, {"_note": KICKOFF_NOTE, "scroll": list(KICKOFF_SCROLL), "figs": kickoff_figs()})
-
-
 def load_kickoff():
-    if not os.path.isfile(KICKOFF_FILE):
-        try:
-            reset_kickoff()
-        except OSError:
-            pass
-        return list(KICKOFF_SCROLL), kickoff_figs()
-    raw = _read_json(KICKOFF_FILE)
     try:
-        if not isinstance(raw, dict):
-            raise ValueError("unreadable JSON")
+        raw = _load_json(KICKOFF_FILE)
         figs = [[int(v) for v in g] for g in raw["figs"]]
         err = _kick_check(figs)
         if err:
             raise ValueError(err)
         sc = [max(0, min(SCROLL_MAX_X, int(raw["scroll"][0]))), max(0, min(SCROLL_MAX_Y, int(raw["scroll"][1])))]
         return sc, figs
-    except (TypeError, ValueError, KeyError, IndexError) as ex:
-        DATA_WARNINGS.append("%s: %s - default formation used" % (os.path.basename(KICKOFF_FILE), ex))
-        return list(KICKOFF_SCROLL), kickoff_figs()
+    except (DataError, TypeError, ValueError, KeyError, IndexError) as ex:
+        raise DataError("%s: %s" % (os.path.basename(KICKOFF_FILE), _why(ex)))
 
 
 class Scene:
@@ -856,11 +811,22 @@ class Scene:
         self.author = ""
         self.frames = []
         self.path = None
+        self.kind = "T"
+        self.variant = ""
+
+    def ext(self):
+        return self.kind + self.variant
 
     @staticmethod
     def new():
         s = Scene()
-        sc, figs = load_kickoff()
+        try:
+            sc, figs = load_kickoff()
+        except DataError as ex:
+            msg = "%s - empty scene created" % ex
+            if msg not in DATA_WARNINGS:
+                DATA_WARNINGS.append(msg)
+            sc, figs = [0, 0], []
         s.frames = [Frame(sc, figs)]
         return s
 
@@ -875,6 +841,9 @@ class Scene:
             raise ValueError("Truncated file")
         s = Scene()
         s.path, s.sig = path, d[:12]
+        e = os.path.splitext(path)[1][1:].upper()
+        s.kind = e[0] if e[:1] in ("T", "V") else "T"
+        s.variant = e[1] if len(e) > 1 and e[1] in ("E", "J") else ""
         s.events = [None if b == 255 else b for b in d[12:16]]
         prev = prev2 = None
         for i in range(n):
@@ -937,10 +906,10 @@ def transform_frame(f, flip, swap):
         if c == "P":
             g[2] = xform_id(sid, flip, swap)
             if flip:
-                g[0] = max(0, FW - CELL_W - x)
+                g[0] = max(xlim(sid)[0], min(xlim(sid)[1], FW - CELL_W - x))
         elif c in "SB":
             if flip:
-                g[0] = max(0, FW - 4 - x)
+                g[0] = max(xlim(sid)[0], min(xlim(sid)[1], FW - 4 - x))
         elif flip:
             g[2] = 1024 if sid == 1000 else 1000
     if flip:
@@ -1032,22 +1001,20 @@ def compose(gfx, fr, ghosts=()):
     return img
 
 
+def path_h(sid):
+    return CELL_H / 2 if cls(sid) in "SB" else CELL_H
+
+
 def sprite_w(sid):
     return 4 if sid >= 142 else CELL_W
 
 
-# ----------------------------------------------------------------------------
-# Animated GIF export (pure functions: no Tk, easy to test)
-# ----------------------------------------------------------------------------
 def _pil_enum(group, name):
     return getattr(getattr(Image, group, Image), name)
-
 
 _DITHER_NONE = _pil_enum("Dither", "NONE")
 _DITHER_FS = _pil_enum("Dither", "FLOYDSTEINBERG")
 _Q_MEDIANCUT = _pil_enum("Quantize", "MEDIANCUT")
-
-# name -> (colors, shared palette, dither, use every Nth frame, optimize)
 GIF_PRESETS = {
     "Smallest file":   dict(colors=32, shared=True, dither=False, step=2, optimize=True),
     "Small":           dict(colors=64, shared=True, dither=False, step=1, optimize=True),
@@ -1062,7 +1029,6 @@ class GifCancelled(Exception):
 
 
 def _gif_shared_palette(frames, colors):
-    """One palette image (mode P) valid for every frame of the animation."""
     union = set()
     for im in frames:
         found = im.getcolors(1 << 20)
@@ -1074,13 +1040,13 @@ def _gif_shared_palette(frames, colors):
             union = None
             break
     pal = Image.new("P", (1, 1))
-    if union is not None:                      # few enough colors: exact palette, no loss
+    if union is not None:
         flat = []
         for c in sorted(union):
             flat.extend(c[:3])
         pal.putpalette(flat)
         return pal
-    n = len(frames)                            # otherwise median-cut on a sample of frames
+    n = len(frames)
     pick = frames if n <= 48 else [frames[round(i * (n - 1) / 47)] for i in range(48)]
     sheet = Image.new("RGB", (pick[0].width, pick[0].height * len(pick)))
     for i, im in enumerate(pick):
@@ -1088,13 +1054,7 @@ def _gif_shared_palette(frames, colors):
     return sheet.quantize(colors=colors, method=_Q_MEDIANCUT, dither=_DITHER_NONE)
 
 
-def build_gif(frames, durations, colors=256, dither=False, shared=True, optimize=True,
-              loop=True, scale=1, smooth=False, progress=None):
-    """Encode RGB PIL images as an animated GIF and return the file bytes.
-
-    durations: one delay per frame in ms (multiples of 10).
-    progress(i, n) may return False to cancel (raises GifCancelled).
-    """
+def build_gif(frames, durations, colors=256, dither=False, shared=True, optimize=True, loop=True, scale=1, smooth=False, progress=None):
     n = len(frames)
     colors = max(2, min(256, int(colors)))
     dth = _DITHER_FS if dither else _DITHER_NONE
@@ -1108,7 +1068,7 @@ def build_gif(frames, durations, colors=256, dither=False, shared=True, optimize
         if pal is not None:
             return im.quantize(palette=pal, dither=dth)
         q = im.quantize(colors=colors, method=_Q_MEDIANCUT, dither=_DITHER_NONE)
-        return im.quantize(palette=q, dither=dth) if dither else q   # Pillow dithers only against a given palette
+        return im.quantize(palette=q, dither=dth) if dither else q
 
     def rest():
         for i in range(1, n):
@@ -1130,14 +1090,159 @@ def build_gif(frames, durations, colors=256, dither=False, shared=True, optimize
 
 
 def gif_durations(indices, last_index, fps, hold_ms=0):
-    """Per-frame delays (ms, multiples of 10, min 20) keeping the true average speed
-    even when frames are skipped. indices = source frame numbers used, last_index = final one."""
     base = 1000.0 / max(1, fps)
     edges = [round((i - indices[0]) * base / 10) * 10 for i in indices]
     edges.append(round((last_index + 1 - indices[0]) * base / 10) * 10)
     out = [max(20, edges[k + 1] - edges[k]) for k in range(len(indices))]
     out[-1] += max(0, int(hold_ms) // 10 * 10)
     return out
+
+
+def pick_sprite(parent, gfx, lo, hi, current=None):
+    w = tk.Toplevel(parent)
+    w.title("Pick a sprite - click to choose, Esc to cancel")
+    w.transient(parent)
+    w.resizable(False, False)
+    cols, rows = SHEET_COLS, 7
+    im = Image.new("RGBA", (cols * CELL_W, rows * CELL_H), (60, 60, 60, 255))
+    if gfx.sheet:
+        crop = gfx.sheet.crop((0, 0, min(gfx.sheet.width, im.width), min(gfx.sheet.height, im.height)))
+        im.paste(crop, (0, 0), crop)
+    z = max(1, min(6, (w.winfo_screenwidth() - 120) // im.width, (w.winfo_screenheight() - 220) // im.height))
+    photo = ImageTk.PhotoImage(im.resize((im.width * z, im.height * z), Image.NEAREST))
+    cv = tk.Canvas(w, width=im.width * z, height=im.height * z, highlightthickness=0, bg="#3c3c3c")
+    cv.pack()
+    cv.create_image(0, 0, anchor="nw", image=photo)
+    cv._ph = photo
+    info = tk.StringVar(master=w, value="Selectable ids: %d-%d (dimmed cells are not valid here)" % (lo, hi))
+    ttk.Label(w, textvariable=info).pack(anchor="w", padx=6, pady=3)
+    for sid in range(cols * rows):
+        x0, y0 = (sid % cols) * CELL_W * z, (sid // cols) * CELL_H * z
+        x1, y1 = x0 + CELL_W * z, y0 + CELL_H * z
+        if lo <= sid <= hi:
+            cv.create_rectangle(x0, y0, x1, y1, outline="#ff00ff")
+            cv.create_text(x0 + z, y0 + z, anchor="nw", text=str(sid), fill="white", font=("TkDefaultFont", max(6, int(z * 1.2)), "bold"))
+        else:
+            cv.create_rectangle(x0, y0, x1, y1, fill="black", stipple="gray75", outline="")
+    if current is not None and lo <= current <= hi and current < cols * rows:
+        x0, y0 = (current % cols) * CELL_W * z, (current // cols) * CELL_H * z
+        cv.create_rectangle(x0 + 1, y0 + 1, x0 + CELL_W * z - 1, y0 + CELL_H * z - 1, outline="#ffd54a", width=3)
+    result = []
+
+    def cell(e):
+        col, row = int(e.x // (CELL_W * z)), int(e.y // (CELL_H * z))
+        sid = row * cols + col
+        return sid if 0 <= col < cols and 0 <= row < rows and lo <= sid <= hi else None
+
+    def on_click(e):
+        sid = cell(e)
+        if sid is not None:
+            result.append(sid)
+            w.destroy()
+
+    def on_move(e):
+        sid = cell(e)
+        info.set("Sprite %d - click to choose" % sid if sid is not None else "Selectable ids: %d-%d (dimmed cells are not valid here)" % (lo, hi))
+
+    cv.bind("<Button-1>", on_click)
+    cv.bind("<Motion>", on_move)
+    w.bind("<Escape>", lambda e: w.destroy())
+    w.update_idletasks()
+    w.geometry("+%d+%d" % (parent.winfo_rootx() + 30, parent.winfo_rooty() + 30))
+    try:
+        w.wait_visibility()
+        w.grab_set()
+    except tk.TclError:
+        pass
+    parent.wait_window(w)
+    return result[0] if result else None
+
+
+class SpriteStrip(tk.Canvas):
+    PAD = 3
+
+    def __init__(self, master, gfx_fn, var, rng, max_n=None, auto=None, locked=None, per_row=10, zoom=3):
+        self.gfx_fn, self.var, self.rng = gfx_fn, var, rng
+        self.max_n, self.auto, self.locked, self.per_row, self.zoom = max_n, auto, locked, per_row, zoom
+        self.cw, self.ch = max(26, CELL_W * zoom + 6), CELL_H * zoom + 16
+        super().__init__(master, width=per_row * self.cw + 2 * self.PAD, height=self.ch + 2 * self.PAD, bg="#fafafa", highlightthickness=1, highlightbackground="#c8c8c8", cursor="hand2")
+        self._last, self._view, self._ph = [], ([], False, True, False), []
+        self._tid = var.trace_add("write", lambda *_: self.refresh())
+        self.bind("<Button-1>", lambda e: self._edit(e, "pick"))
+        self.bind("<Button-2>" if sys.platform == "darwin" else "<Button-3>", lambda e: self._edit(e, "del"))
+        self.bind("<Destroy>", self._on_destroy)
+        self.refresh()
+
+    def _on_destroy(self, e):
+        if e.widget is self:
+            try:
+                self.var.trace_remove("write", self._tid)
+            except tk.TclError:
+                pass
+
+    def _state(self):
+        if self.locked and self.locked():
+            return list(self.auto()) if self.auto else [], True, True, True
+        txt = self.var.get()
+        if not txt.strip():
+            return (list(self.auto()), True, True, False) if self.auto else ([], False, True, False)
+        try:
+            return parse_ids(txt, *self.rng()), False, True, False
+        except ValueError:
+            return list(self._last), False, False, False
+
+    def refresh(self):
+        ids, dim, ok, locked = self._view = self._state()
+        if ok and not dim:
+            self._last = list(ids)
+        gfx, z, cw, ch, P = self.gfx_fn(), self.zoom, self.cw, self.ch, self.PAD
+        can_add = not locked and (self.max_n is None or len(ids) < self.max_n)
+        cells = len(ids) + (1 if can_add else 0)
+        self.config(height=max(1, -(-cells // self.per_row)) * ch + 2 * P, highlightbackground="#c8c8c8" if ok else "#d32f2f")
+        self.delete("all")
+        self._ph = []
+        for i, pid in enumerate(ids):
+            x0, y0 = P + (i % self.per_row) * cw, P + (i // self.per_row) * ch
+            spr = ghost_sprite(gfx, pid, 0.45) if dim else sprite_of(gfx, pid)
+            if spr is not None:
+                ph = ImageTk.PhotoImage(spr.resize((spr.width * z, spr.height * z), Image.NEAREST))
+                self._ph.append(ph)
+                self.create_image(x0 + cw // 2, y0 + 3 + CELL_H * z // 2, image=ph)
+            self.create_text(x0 + cw // 2, y0 + CELL_H * z + 10, text=str(pid), fill="#aaa" if dim else "#444", font=("TkDefaultFont", 7))
+        if can_add:
+            i = len(ids)
+            x0, y0 = P + (i % self.per_row) * cw, P + (i // self.per_row) * ch
+            self.create_rectangle(x0 + 4, y0 + 3, x0 + cw - 4, y0 + 3 + CELL_H * z, outline="#888", dash=(3, 2))
+            self.create_text(x0 + cw // 2, y0 + 3 + CELL_H * z // 2, text="+", fill="#666", font=("TkDefaultFont", 12, "bold"))
+
+    def _edit(self, e, op):
+        ids, _dim, ok, locked = self._view
+        if locked:
+            return
+        if not ok:
+            return self.bell()
+        c, r = int((e.x - self.PAD) // self.cw), int((e.y - self.PAD) // self.ch)
+        if not 0 <= c < self.per_row or r < 0:
+            return
+        i, ids = r * self.per_row + c, list(ids)
+        can_add = self.max_n is None or len(ids) < self.max_n
+        if op == "pick":
+            if i > len(ids) or (i == len(ids) and not can_add):
+                return
+            cur = ids[i] if i < len(ids) else None
+            lo, hi = self.rng()
+            pid = pick_sprite(self.winfo_toplevel(), self.gfx_fn(), lo, hi, cur)
+            if pid is None:
+                return
+            if cur is None:
+                ids.append(pid)
+            else:
+                ids[i] = pid
+        else:
+            if i >= len(ids) or len(ids) <= 1:
+                return self.bell()
+            del ids[i]
+        self.var.set(ids_text(ids))
 
 
 class ToreEditorPanel(ttk.Frame):
@@ -1191,9 +1296,10 @@ class ToreEditorPanel(ttk.Frame):
         self.tool = tk.StringVar(value="select")
         self.tool_main = tk.StringVar(value="select")
         self.path_kind = tk.StringVar(value="draw")
-        self.cam_whole = tk.BooleanVar(value=False)
+        self.cam_whole = tk.BooleanVar(value=True)
         self.cam_follow = tk.BooleanVar(value=False)
         self.cam_target = None
+        self.cam_i0, self.cam_snap, self.cam_explicit = 0, False, False
         self.pmode = tk.StringVar(value="speed")
         self.pframes = tk.IntVar(value=20)
         self.smooth = tk.BooleanVar(value=True)
@@ -1220,6 +1326,7 @@ class ToreEditorPanel(ttk.Frame):
         if path:
             self.open_path(path)
         else:
+            self.cam_default()
             self.refresh()
         if self.standalone:
             self._startup_job = self.after(100, self.startup)
@@ -1335,7 +1442,7 @@ class ToreEditorPanel(ttk.Frame):
                               (None, None, None), ("Scene properties...", self.props, "")):
             self._add(e, lbl, cmd, acc)
 
-        fg = newmenu("Figure")
+        fg = newmenu("Sprite")
         fg.add_cascade(label="Action here", menu=self._action_menu(fg))
         fg.add_cascade(label="Run (sprites only, to end of film)", menu=self._run_menu(fg))
         for lbl, cmd in (("Auto-sprites along path (from this frame)", self.auto_here),
@@ -1351,7 +1458,7 @@ class ToreEditorPanel(ttk.Frame):
                               (None, None, None),
                               ("Smooth path (from this frame)", self.smooth_path, ""),
                               ("Even speed (from this frame)", self.even_speed, ""),
-                              ("Freeze here (stop figure)", self.freeze_here, ""),
+                              ("Freeze here (stop sprite)", self.freeze_here, ""),
                               ("Interpolate position to frame...", self.tween, ""),
                               (None, None, None),
                               ("Camera follows selected sprite (from this frame)", self.auto_camera, ""),
@@ -1381,10 +1488,9 @@ class ToreEditorPanel(ttk.Frame):
         v.add_command(label="Zoom area reset (whole field)", command=self.view_reset)
 
         dm = newmenu("Data")
-        for lbl, cmd in (("Edit pose sets, actions & movement...", self.edit_data),
+        for lbl, cmd in (("Edit pose sets, actions & path animation...", self.edit_data),
                          ("Reload data files", self.reload_data), (None, None),
-                         ("Save current frame as kick-off formation", self.save_kickoff_here),
-                         ("Reset kick-off formation to default", self.reset_kickoff_file)):
+                         ("Save current frame as kick-off formation", self.save_kickoff_here)):
             self._add(dm, lbl, cmd, "")
 
         h = newmenu("?")
@@ -1458,7 +1564,9 @@ class ToreEditorPanel(ttk.Frame):
         ttk.Separator(o, orient="vertical").pack(side="left", fill="y", padx=8)
         self.cb_camfol = ttk.Checkbutton(o, text="Camera follows selected sprite", variable=self.cam_follow, command=self.on_cam_follow)
         self.cb_camfol.pack(side="left")
-        ttk.Checkbutton(o, text="whole film", variable=self.cam_whole).pack(side="left", padx=6)
+        ttk.Checkbutton(o, text="whole film", variable=self.cam_whole, command=self.on_cam_whole).pack(side="left", padx=6)
+        self.cam_lbl = ttk.Label(o, foreground="#777")
+        self.cam_lbl.pack(side="left", padx=4)
 
         t1 = ttk.Frame(self)
         t1.pack(fill="x", padx=8, pady=(6, 0))
@@ -1524,7 +1632,7 @@ class ToreEditorPanel(ttk.Frame):
             self.tl.bind(b, self.on_tl_right)
         self.tl.bind("<Configure>", lambda e: self.draw_timeline())
         
-        ttk.Label(left,text="Timeline: green = running, grey = standing, orange = special action (selected figure) | drag the two bottom markers to set the play/loop range",foreground="#777").pack(anchor="w")
+        ttk.Label(left,text="Timeline: green = running, grey = standing, orange = special action (selected sprite) | drag the two bottom markers to set the play/loop range",foreground="#777").pack(anchor="w")
         self.status = ttk.Label(left, anchor="w")
         self.status.pack(fill="x", pady=(2, 0))
 
@@ -1535,8 +1643,8 @@ class ToreEditorPanel(ttk.Frame):
         ttk.Label(hdr, text="CTRL+Click = Sprite multi-select").pack(side="left")
         tf = ttk.Frame(right)
         tf.pack(fill="x")
-        self.tree = ttk.Treeview(tf, columns=("x", "y", "pose"), height=8, selectmode="browse", style="Treeview" if self.standalone else "Tore.Treeview")
-        self.tree.heading("#0", text="Figure")
+        self.tree = ttk.Treeview(tf, columns=("x", "y", "pose"), height=6, selectmode="extended", style="Treeview" if self.standalone else "Tore.Treeview")
+        self.tree.heading("#0", text="Sprite")
         for c, w in (("x", 38), ("y", 38), ("pose", 42)):
             self.tree.heading(c, text=c)
             self.tree.column(c, width=w, anchor="e")
@@ -1700,7 +1808,7 @@ class ToreEditorPanel(ttk.Frame):
         if sl in self.multi:
             ids |= self.multi
         for s in list(ids):
-            p = self.partner(s)      # ball and shadow are always one object
+            p = self.partner(s)
             if p is not None:
                 ids.add(p)
         ids = {s for s in ids if cls(self.fr.figs[s][2]) not in "LR"}
@@ -1708,12 +1816,12 @@ class ToreEditorPanel(ttk.Frame):
             rng = range(len(self.scene.frames))
         else:
             rng = self.frames_in_scope()
-        # clamp the whole group at once so shapes / ball height are preserved
         lox, hix, loy, hiy = -10 ** 6, 10 ** 6, -10 ** 6, 10 ** 6
         for i in rng:
             for s in ids:
                 g = self.scene.frames[i].figs[s]
-                lox, hix = max(lox, -g[0]), min(hix, FW - 1 - g[0])
+                xl, xh = xlim(g[2])
+                lox, hix = max(lox, xl - g[0]), min(hix, xh - g[0])
                 loy, hiy = max(loy, -g[1]), min(hiy, MAX_Y - g[1])
         dx = max(lox, min(hix, dx))
         dy = max(loy, min(hiy, dy))
@@ -1744,7 +1852,6 @@ class ToreEditorPanel(ttk.Frame):
         self.refresh()
 
     def ref_slot(self, sl=None):
-        """slot whose position defines the (single) path: the shadow for ball+shadow"""
         sl = self.sel if sl is None else sl
         if sl is None or sl >= len(self.fr.figs):
             return sl
@@ -1771,7 +1878,6 @@ class ToreEditorPanel(ttk.Frame):
         self.path_colors = dict(PATH_COLORS)
         self.refresh()
 
-    # ---- view transform (Zoom area inside the canvas)
     def sc(self):
         return self.z() * self.vz
 
@@ -1841,7 +1947,7 @@ class ToreEditorPanel(ttk.Frame):
         self.refresh(light=True)
 
     def wheel(self, e, d):
-        if e.state & 4:      # Ctrl + wheel: Zoom area around the pointer
+        if e.state & 4:
             self.set_view_zoom(self.vz * (1.25 if d < 0 else 0.8), e.x, e.y)
         else:
             self.step(d)
@@ -1919,7 +2025,6 @@ class ToreEditorPanel(ttk.Frame):
                 return self.refresh()
 
     def hit_all(self, px, py):
-        """every sprite under the point, topmost first"""
         out = []
         for sl in reversed(self.fr.order):
             x, y, sid = self.fr.figs[sl]
@@ -1950,7 +2055,7 @@ class ToreEditorPanel(ttk.Frame):
         self.select(sl)
         if len(cands) > 1:
             self.note("Overlapping sprites: %s (%d/%d) - click again to cycle" % (
-                self.names().get(sl, "figure"), cands.index(sl) + 1, len(cands)))
+                self.names().get(sl, "sprite"), cands.index(sl) + 1, len(cands)))
 
     def on_hover(self, e):
         fxp, fyp = self.fx(e.x), self.fy(e.y)
@@ -1995,7 +2100,7 @@ class ToreEditorPanel(ttk.Frame):
                 self.select(sl)
             rs = self.ref_slot()
             if rs is None or cls(self.fr.figs[rs][2]) in "LR":
-                return self.note("Press on a figure to draw its path (or select it first).")
+                return self.note("Press on a sprite to draw its path (or select it first).")
             g = self.fr.figs[rs]
             now = time.time()
             self.stroke = dict(pts=[(float(g[0]), float(g[1]))], t0=now, samples=[(0.0, float(g[0]), float(g[1]))], sid=g[2])
@@ -2005,10 +2110,11 @@ class ToreEditorPanel(ttk.Frame):
             if sl is not None and self.sel is None:
                 return self.select(sl)
             if self.sel is None:
-                return self.note("Select a figure first, then click the path points.")
+                return self.note("Select a sprite first, then click the path points.")
             sid = self.fr.figs[self.ref_slot()][2]
             x, y = self.ptr_pos(e.x, e.y, sid)
-            x = max(0.0, min(FW - 1.0, x))
+            xl, xh = xlim(sid)
+            x = max(float(xl), min(float(xh), x))
             y = max(0.0, min(float(MAX_Y), y))
             self.way.append((x, y))
             self.draw_overlay()
@@ -2047,7 +2153,8 @@ class ToreEditorPanel(ttk.Frame):
         if k == "stroke":
             sid = self.stroke["sid"]
             x, y = self.ptr_pos(e.x, e.y, sid)
-            x = max(0.0, min(FW - 1.0, x))
+            xl, xh = xlim(sid)
+            x = max(float(xl), min(float(xh), x))
             y = max(0.0, min(float(MAX_Y), y))
             t = time.time() - self.stroke["t0"]
             if e.state & 1:
@@ -2077,6 +2184,7 @@ class ToreEditorPanel(ttk.Frame):
                 d["snapped"] = True
             self.move_fig(d["sl"], dx, dy)
             d["done"] = (dxp, dyp)
+            self._drag_note(d["sl"])
         else:  
             if self.playing and not d["live"]:
                 d.update(live=True, x0=e.x, y0=e.y, a=tuple(self.fr.scroll))
@@ -2100,6 +2208,14 @@ class ToreEditorPanel(ttk.Frame):
                     return
                 self._t_pan = now
         self.refresh(light=True)
+        if k == "fig":
+            self._drag_note(d["sl"])
+
+
+    def _drag_note(self, sl):
+        x, y, sid = self.fr.figs[sl]
+        self.note("x=%d  y(sprite)=%d  |  centre x=%d  |  sprite=%d  |  frame %d/%d" % (
+            x, y, x + sprite_w(sid) // 2, sid, self.idx + 1, len(self.scene.frames)))
 
 
     def on_release(self, e):
@@ -2131,16 +2247,18 @@ class ToreEditorPanel(ttk.Frame):
             else:
                 self.select(None)
             return
+        if k == "fig" and d["snapped"]:
+            self.cam_refollow()
         if k == "fig" and not d["snapped"] and len(self.multi) > 1 and d["sl"] in self.multi and d["sl"] != self.sel:
             self.sel = d["sl"]
-            self.note("Leader of the selection: %s" % self.names().get(d["sl"], "figure"))
+            self.note("Leader of the selection: %s" % self.names().get(d["sl"], "sprite"))
         if k == "fig" and not d["snapped"] and d.get("cyc") and d["cyc"][1] and len(self.multi) <= 1:
             cands = d["cyc"][0]
             if d["sl"] in cands:
                 nxt = cands[(cands.index(d["sl"]) + 1) % len(cands)]
                 self.select(nxt)
                 return self.note("Overlapping sprites: %s (%d/%d) - click again to cycle" % (
-                    self.names().get(nxt, "figure"), cands.index(nxt) + 1, len(cands)))
+                    self.names().get(nxt, "sprite"), cands.index(nxt) + 1, len(cands)))
         if k == "win" and not d["moved"] and self.tool.get() == "select":
             self.select(None)
             return
@@ -2173,19 +2291,18 @@ class ToreEditorPanel(ttk.Frame):
             if sl not in self.multi:
                 self.select(sl)
             sid = self.fr.figs[sl][2]
-            nm = self.names().get(sl, "figure")
+            nm = self.names().get(sl, "sprite")
             m.add_command(label="-- %s --" % nm, state="disabled")
             if len(cands) > 1:
                 sm = tk.Menu(m, tearoff=0)
                 allnames = self.names()
                 for s2 in cands:
-                    sm.add_command(label="%s  (sprite %d)" % (allnames.get(s2, "figure"), self.fr.figs[s2][2]),
-                                   command=lambda s2=s2: self.select(s2))
+                    sm.add_command(label="%s  (sprite %d)" % (allnames.get(s2, "sprite"), self.fr.figs[s2][2]), command=lambda s2=s2: self.select(s2))
                 m.add_cascade(label="Select under cursor (%d sprites)" % len(cands), menu=sm)
             if len(self.multi) > 1 and sl in self.multi:
                 if sl != self.sel:
                     m.add_command(label="Make leader of the selection", command=lambda s=sl: self.set_leader(s))
-                m.add_command(label="Remove figure from group", command=lambda s=sl: self.remove_from_group(s))
+                m.add_command(label="Remove sprite from group", command=lambda s=sl: self.remove_from_group(s))
             if team_of(sid) in ("R", "B"):
                 m.add_cascade(label="Action here", menu=self._action_menu(m))
             if loco_cycle(sid, "E"):
@@ -2196,11 +2313,11 @@ class ToreEditorPanel(ttk.Frame):
             m.add_command(label="Auto-sprites along path", command=self.auto_here)
             m.add_command(label="Smooth path (from here)", command=self.smooth_path)
             m.add_command(label="Even speed (from here)", command=self.even_speed)
-            m.add_command(label="Freeze here (stop figure)", command=self.freeze_here)
+            m.add_command(label="Freeze here (stop sprite)", command=self.freeze_here)
             if cls(sid) in "SB":
                 m.add_command(label="Camera follows this ball", command=self.auto_camera)
             else:
-                m.add_command(label="Camera follows this figure", command=self.auto_camera)
+                m.add_command(label="Camera follows this sprite", command=self.auto_camera)
             m.add_separator()
             m.add_command(label="Tip: draw a path with tool D, or right-click the field", state="disabled")
         elif k is not None:
@@ -2212,8 +2329,8 @@ class ToreEditorPanel(ttk.Frame):
         elif self.sel is not None and cls(self.fr.figs[self.sel][2]) not in "LR":
             sid = self.fr.figs[self.sel][2]
             tx, ty = self.ptr_pos(e.x, e.y, sid)
-            tx, ty = max(0, min(FW - sprite_w(sid), round(tx))), max(0, min(MAX_Y, round(ty)))
-            nm = self.names().get(self.sel, "figure")
+            tx, ty = max(xlim(sid)[0], min(xlim(sid)[1], round(tx))), max(0, min(MAX_Y, round(ty)))
+            nm = self.names().get(self.sel, "sprite")
             m.add_command(label="Path for '%s' to here (straight)" % nm, command=lambda: self.make_path(self.sel, tx, ty))
             m.add_command(label="Path to here in N frames...", command=lambda: self.path_n(tx, ty))
             m.add_command(label="Path to here, arriving at frame...", command=lambda: self.path_to_frame(tx, ty))
@@ -2223,7 +2340,7 @@ class ToreEditorPanel(ttk.Frame):
             m.add_command(label="Draw path (D)", command=lambda: (self.tool.set("draw"), self.set_tool()))
             m.add_command(label="Click path (P)", command=lambda: (self.tool.set("way"), self.set_tool()))
         else:
-            m.add_command(label="Select a figure first (left click)", state="disabled")
+            m.add_command(label="Select a sprite first (left click)", state="disabled")
         m.tk_popup(e.x_root, e.y_root)
 
 
@@ -2241,6 +2358,7 @@ class ToreEditorPanel(ttk.Frame):
         g = self.fr.figs[sl]
         self.snap()
         self.move_fig(sl, tx - g[0], ty - g[1])
+        self.cam_refollow()
         self.refresh()
 
     def path_n(self, tx, ty):
@@ -2267,7 +2385,7 @@ class ToreEditorPanel(ttk.Frame):
 
     def need_sel(self):
         if self.sel is None or cls(self.fr.figs[self.sel][2]) in "LR":
-            messagebox.showinfo("Figure", "Select a figure first.")
+            messagebox.showinfo("Sprite", "Select a sprite first.")
             return False
         return True
 
@@ -2490,20 +2608,39 @@ class ToreEditorPanel(ttk.Frame):
         ttk.Entry(w, textvariable=au, width=24).grid(row=0, column=1, padx=8)
         ttk.Label(w, text="File version:").grid(row=1, column=0, sticky="w", padx=8)
         ttk.Combobox(w, textvariable=ver, values=["BM-Ed1.3-WK", "BM-Ed1.0-WK"], state="readonly", width=14).grid(row=1, column=1, sticky="w", padx=8)
+        kv, vv = tk.StringVar(value=self.scene.kind), tk.StringVar(value=self.scene.variant)
+        ex = tk.StringVar()
+        fk = ttk.LabelFrame(w, text="Result")
+        fk.grid(row=2, column=0, columnspan=2, sticky="we", padx=8, pady=4)
+        ttk.Radiobutton(fk, text="Scored (T)", value="T", variable=kv).pack(side="left", padx=8, pady=2)
+        ttk.Radiobutton(fk, text="Failure (V)", value="V", variable=kv).pack(side="left", padx=8)
+        fv = ttk.LabelFrame(w, text="Type")
+        fv.grid(row=3, column=0, columnspan=2, sticky="we", padx=8, pady=4)
+        ttk.Radiobutton(fv, text="Penalty kick (E)", value="E", variable=vv).pack(side="left", padx=8, pady=2)
+        ttk.Radiobutton(fv, text="Joke (J)", value="J", variable=vv).pack(side="left", padx=8)
+        ttk.Radiobutton(fv, text="None", value="", variable=vv).pack(side="left", padx=8)
+        ttk.Label(w, textvariable=ex, foreground="#555").grid(row=4, column=0, columnspan=2, sticky="w", padx=8)
+
+        def upd(*_):
+            ex.set("File extension:  .%s%s" % (kv.get(), vv.get()))
+        kv.trace_add("write", upd)
+        vv.trace_add("write", upd)
+        upd()
 
         def ok():
             self.snap()
+            self.scene.kind, self.scene.variant = kv.get(), vv.get()
             self.scene.author = au.get()
             self.scene.sig = (ver.get() + "\0").encode()
             w.destroy()
-        ttk.Button(w, text="OK", command=ok).grid(row=2, column=1, pady=8, sticky="e", padx=8)
+        ttk.Button(w, text="OK", command=ok).grid(row=5, column=1, pady=8, sticky="e", padx=8)
 
     def help(self):
         messagebox.showinfo("Quick help",
             "TOOLS (top bar or keys)\n"
             " V select/move | Path: D draw freehand, P click waypoints | H camera. Each tool shows only its own options.\n\n"
             "DRAWING A PATH\n"
-            " D: press on a figure and draw; on release the path is baked into the following frames.\n"
+            " D: press on a sprite and draw; on release the path is baked into the following frames.\n"
             "   Path options: speed / fixed duration / 'as drawn' (your real drawing speed). Shift = straight line.\n"
             " P: click points (Enter, double-click or right-click to finish). 'smooth curves' rounds the corners.\n"
             "   'Perspective run' (click mode): speed follows the pitch perspective, so a sprite takes the same time to cross\n"
@@ -2514,23 +2651,23 @@ class ToreEditorPanel(ttk.Frame):
             " (Rope softness = how many frames are pulled). Shift = move only that point.\n"
             " 'Pin selected sprite' keeps the current sprite in place. 'move whole path with sprite': dragging the\n"
             " sprite shifts the entire path unchanged. Path menu: smooth / even speed / freeze / Paths color.\n\n"
-            "ACTIONS (right-click a player, Figure menu or Actions tab)\n"
+            "ACTIONS (right-click a player, Sprite menu or Actions tab)\n"
             " Dive, Header, Bicycle kick, Collision fall, Get up, Celebration, Moonwalk - colour automatic.\n"
             " E/W = direction of the action (for Moonwalk: direction of travel, sprites face the other way).\n\n"
             "CAMERA\n Camera tool > tick 'Camera follows selected sprite' (or right-click a sprite) to generate the scroll keyframes;\n"
             "the box is greyed out when no sprite is selected, and the Camera tool re-selects the sprite being followed.\n Camera limits: X 0-137, Y 0-15.\n\n"
-            "MOUSE\n Drag figure: move (Ctrl+click or box-select for groups). Ball and shadow always move together;\n"
+            "MOUSE\n Drag sprite: move (Ctrl+click or box-select for groups). Ball and shadow always move together;\n"
             " the 'Ball height' box sets their distance. Overlapping sprites: click the same spot again to cycle,\n"
             " or right-click > 'Select under cursor'. Camera tool: left click also selects a sprite.\n"
             " Zoom area (bar 'Zoom area', Ctrl+wheel at the pointer, scrollbars, middle-drag): magnify inside the window.\n"
-            " Drag the cyan camera edge: scroll (also live while playing). Box select: click a selected figure to make it leader.\n"
+            " Drag the cyan camera edge: scroll (also live while playing). Box select: click a selected sprite to make it leader.\n"
             " Wheel / PgUp / PgDn: change frame. Timeline: click, right-click; the two bottom markers set the play/loop range.\n\n"
             "KEYS\n Arrows: move 1 px (Shift = 5) | [ ]: previous/next pose | Space: play from here | Ins/Del: frame\n"
             " Ctrl+Z/Y undo/redo | Ctrl+S save | Ctrl+A select all players | Ctrl +/-: zoom | Esc: cancel/deselect\n\n"
             "A new scene holds ALL 27 sprites in kick-off formation; sprites can never be deleted.\n\n"
             "DATA FILES (in the .\\data folder next to the script, read at start-up)\n"
             " tore_pose_sets.json / tore_actions.json / tore_kickoff.json - edit them by hand or with the Data menu:\n"
-            " Edit pose sets, actions & movement (add / edit ids) and Save current frame as kick-off formation.\n"
+            " Edit pose sets, actions & path animation (click a sprite to pick it from the sheet, + to add) and Save current frame as kick-off formation.\n"
             " Pose sets marked (?) are still unverified.")
 
     def sel_sid(self):
@@ -2664,7 +2801,7 @@ class ToreEditorPanel(ttk.Frame):
             self.set_pose_all(c[0])
             self.refresh()
             return
-        return self.note("Select a figure first to assign a sprite ID.")
+        return self.note("Select a sprite first to assign a sprite ID.")
 
     def load_gfx(self, p=None):
         pic = locate_pic(p)
@@ -2676,7 +2813,7 @@ class ToreEditorPanel(ttk.Frame):
             self.note("Missing: " + ", ".join(self.gfx.missing))
 
     def choose_pic(self):
-        d = filedialog.askdirectory(parent=self.top, title="PIC folder (containing 26.VGA, 27.VGA, 29.VGA)", initialdir=self.pic_dir or APP_DIR)
+        d = filedialog.askdirectory(parent=self.top, title="Select PIC folder (containing 26.VGA, 27.VGA, 29.VGA)", initialdir=self.pic_dir or APP_DIR)
         if d:
             self.set_pic_dir(d)
 
@@ -2684,17 +2821,22 @@ class ToreEditorPanel(ttk.Frame):
         return not self.modified or messagebox.askyesno("Unsaved changes", "Discard changes?")
 
     def new_scene(self):
+        try:
+            load_kickoff()
+        except DataError as ex:
+            return messagebox.showwarning("Kick-off formation", "Cannot create a new scene: %s" % ex, parent=self.top)
         if self.confirm_discard():
             self.scene = Scene.new()
             self.cam_release()
             self.idx, self.sel, self.modified = 0, None, False
             self.undo_s.clear()
+            self.cam_default()
             self.refresh()
 
     def open_dialog(self):
         if not self.confirm_discard():
             return
-        p = filedialog.askopenfilename(title="Open scene", filetypes=[("Scene", "*.t *.v *.te *.tj *.ve *.vj"), ("Tutti", "*.*")])
+        p = filedialog.askopenfilename(title="Open scene", filetypes=[("Scene", self.SCENE_PATTERNS), ("Tutti", "*.*")])
         if p:
             self.open_path(p)
 
@@ -2720,17 +2862,26 @@ class ToreEditorPanel(ttk.Frame):
             messagebox.showerror("Error", "Could not save: %s" % ex)
             return False
 
+    SCENE_PATTERNS = "*.t *.T *.v *.V *.te *.TE *.tj *.TJ *.ve *.VE *.vj *.VJ"
+
+    def _with_ext(self, p):
+        return os.path.splitext(p)[0] + "." + self.scene.ext()
+
     def save(self):
         if not self.scene.path:
             return self.save_as()
-        self._write(self.scene.path)
+        p = self._with_ext(self.scene.path)
+        if p != self.scene.path and os.path.exists(p) and not messagebox.askyesno(
+                "Existing file", "%s already exists. Overwrite?" % os.path.basename(p), parent=self.top):
+            return
+        self._write(p)
 
     def save_as(self):
-        p = filedialog.asksaveasfilename(title="Save scene", defaultextension=".T",initialfile=os.path.basename(self.scene.path or "1.T"),filetypes=[("Scene", "*.t *.v *.te *.tj *.ve *.vj"), ("Tutti", "*.*")])
+        base = os.path.splitext(os.path.basename(self.scene.path or "1"))[0]
+        p = filedialog.asksaveasfilename(title="Save scene", defaultextension="." + self.scene.ext(), initialfile=base + "." + self.scene.ext(), filetypes=[("Scene", self.SCENE_PATTERNS), ("Tutti", "*.*")])
         if p:
-            self._write(p)
+            self._write(self._with_ext(p))
 
-    # ------------------------------------------------------------------ animated GIF export
     def _gif_indices(self, s):
         n = len(self.scene.frames)
         if s["range"] == "loop":
@@ -2756,7 +2907,6 @@ class ToreEditorPanel(ttk.Frame):
         return out
 
     def _gif_encode(self, s, progress):
-        """Render + encode with the given settings. progress(fraction, text) -> False to cancel."""
         a, b, idx = self._gif_indices(s)
         frames = self._gif_render(s, idx, lambda i, n: progress(0.25 * i / n, "Rendering frame %d/%d" % (i + 1, n)))
         durs = gif_durations(idx, b, s["fps"], s["hold"])
@@ -2766,8 +2916,7 @@ class ToreEditorPanel(ttk.Frame):
         return data, len(frames), (frames[0].width * s["scale"], frames[0].height * s["scale"])
 
     def export_gif(self):
-        dflt = dict(range="all", area="cam", scale=2, smooth=False, fps=self._fps(), step=1, hold=500,
-                    loop=True, preset="High quality", colors=256, shared=True, dither=False, optimize=True)
+        dflt = dict(range="all", area="cam", scale=2, smooth=False, fps=self._fps(), step=1, hold=500, loop=True, preset="High quality", colors=256, shared=True, dither=False, optimize=True)
         cfg = dict(dflt, **(getattr(self, "_gif_cfg", None) or {}))
         w = tk.Toplevel(self.top)
         w.title("Export animated GIF")
@@ -2826,8 +2975,7 @@ class ToreEditorPanel(ttk.Frame):
         g1 = ttk.LabelFrame(w, text="Content")
         g1.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 4))
         ttk.Label(g1, text="Frames:").grid(row=0, column=0, sticky="w", **P)
-        for i, (val, txt) in enumerate((("all", "whole film"), ("loop", "play range (loop markers)"),
-                                        ("here", "from current frame to end"))):
+        for i, (val, txt) in enumerate((("all", "whole film"), ("loop", "play range (loop markers)"), ("here", "from current frame to end"))):
             ttk.Radiobutton(g1, text=txt, value=val, variable=V["range"]).grid(row=0, column=1 + i, sticky="w", padx=4)
         ttk.Label(g1, text="Area:").grid(row=1, column=0, sticky="w", **P)
         ttk.Radiobutton(g1, text="camera window (182x96, follows scroll)", value="cam", variable=V["area"]).grid(row=1, column=1, columnspan=2, sticky="w", padx=4)
@@ -2945,7 +3093,7 @@ class ToreEditorPanel(ttk.Frame):
         w.title("Save as numbered scene")
         w.transient(self.top)
         w.grab_set()
-        kind, var_ = tk.StringVar(value="T"), tk.StringVar(value=VARIANTS[""])
+        kind, var_ = tk.StringVar(value=self.scene.kind), tk.StringVar(value=VARIANTS[self.scene.variant])
         num = tk.IntVar(value=(vals[0] + 1) if vals else 1)
         ttk.Label(w, text="Type:").grid(row=0, column=0, sticky="w", padx=8, pady=6)
         for i, (k, nm) in enumerate(KINDS.items()):
@@ -2961,6 +3109,7 @@ class ToreEditorPanel(ttk.Frame):
             vi = list(VARIANTS.values()).index(var_.get())
             ext = kind.get() + list(VARIANTS)[vi]
             p = os.path.join(base, "%d.%s" % (num.get(), ext))
+            self.scene.kind, self.scene.variant = kind.get(), ext[1:]
             if os.path.exists(p) and not messagebox.askyesno("Existing file", "%s already exists. Overwrite?" % os.path.basename(p), parent=w):
                 return
             if self._write(p) and an and vals and num.get() > vals[vi]:
@@ -3042,9 +3191,20 @@ class ToreEditorPanel(ttk.Frame):
         self.refresh()
 
     def on_tree(self, _e):
-        s = self.tree.selection()
-        if s and int(s[0]) != self.sel:
-            self.select(int(s[0]))
+        ids = {int(i) for i in self.tree.selection() if cls(self.fr.figs[int(i)][2]) not in "LR"}
+        if ids == self.multi:
+            return
+        if not ids:
+            return self.select(None)
+        if len(ids) == 1:
+            return self.select(next(iter(ids)))
+        added = ids - self.multi
+        self.multi = ids
+        if len(added) == 1:
+            self.sel = next(iter(added))
+        elif self.sel not in ids:
+            self.sel = self.pick_leader(ids)
+        self.refresh()
 
     def refresh(self, light=False):
         sc, z = self.scene, self.z()
@@ -3108,10 +3268,10 @@ class ToreEditorPanel(ttk.Frame):
         sel_ref = self.ref_slot() if self.sel is not None else None
         slots = []
         if self.all_paths.get():
-            slots = [i for i, g in enumerate(f.figs) if cls(g[2]) not in "LRB"]   # ball is drawn through its shadow
+            slots = [i for i, g in enumerate(f.figs) if cls(g[2]) not in "LRB"]
         if self.show_path.get() and sel_ref is not None and sel_ref not in slots:
             slots.append(sel_ref)
-        slots.sort(key=lambda i: i == sel_ref)                                       # selected one on top
+        slots.sort(key=lambda i: i == sel_ref)
         for i in slots:
             col = self.path_color(f.figs[i][2])
             pts = [self.ctr(g.figs[i]) for g in sc.frames]
@@ -3135,8 +3295,11 @@ class ToreEditorPanel(ttk.Frame):
         self.tree.delete(*self.tree.get_children())
         for sl, g in enumerate(self.fr.figs):
             self.tree.insert("", "end", iid=str(sl), text=nm[sl], values=tuple(g))
+        if self.multi:
+            self.tree.selection_set([str(i) for i in sorted(self.multi)])
         if self.sel is not None:
-            self.tree.selection_set(str(self.sel))
+            self.tree.focus(str(self.sel))
+            self.tree.see(str(self.sel))
         self.tree.bind("<<TreeviewSelect>>", self.on_tree)
 
     def draw_timeline(self):
@@ -3151,7 +3314,7 @@ class ToreEditorPanel(ttk.Frame):
             c.create_rectangle(x0, 4, x0 + cw - 1, 18, outline="", fill="#1e88e5" if i == self.idx else ("#d8d8d8" if i % 2 else "#c4c4c4"))
             if self.sel is not None and self.sel < len(fs[i].figs):
                 sid = fs[i].figs[self.sel][2]
-                stand = {stand_id(sid, "E"), stand_id(sid, "W")}
+                stand = {stand_id(sid, d) for d in DIRS}
                 col = "#9e9e9e" if sid in stand else "#66bb6a" if sid in loco_ids(sid) else "#ff9800"
                 c.create_rectangle(x0, 20, x0 + cw - 1, 27, outline="", fill=col)
             if cw >= 16 or i % 5 == 4 or i == self.idx:
@@ -3189,11 +3352,11 @@ class ToreEditorPanel(ttk.Frame):
 
 
     HINTS = {
-        "select": "\nClick: select | Ctrl+click: add | Drag figure: move | Drag a path dot: pull the rope | "
-                  "Drag empty: box select\nClick a selected figure: make it leader | "
+        "select": "\nClick: select | Ctrl+click: add | Drag sprite: move | Drag a path dot: pull the rope | "
+                  "Drag empty: box select\nClick a selected sprite: make it leader | "
                   "Drag the cyan camera edge: scroll | Right-click: menu (lists every sprite under the cursor)\n"
                   "Overlapping sprites: click the same spot again to cycle through them",
-        "draw": "\nPress on a figure and draw its path; release to bake it into the frames | Shift: straight line | Esc: cancel",
+        "draw": "\nPress on a sprite and draw its path; release to bake it into the frames | Shift: straight line | Esc: cancel",
         "way": "\nClick points to lay out a path | Enter / double-click / right-click: finish | Backspace: undo point | Esc: cancel",
         "pan": "\nDrag to move the camera (works live during playback) | Click a sprite to select it (click again to cycle if overlapped)",
     }
@@ -3244,7 +3407,7 @@ class ToreEditorPanel(ttk.Frame):
         self.hint = self.HINTS[t]
         self.set_tool_cursor()
         ct = self.cam_target
-        if (t == "pan" and self.cam_follow.get() and ct is not None and ct != self.sel
+        if (t == "pan" and self.cam_follow.get() and self.cam_explicit and ct is not None and ct != self.sel
                 and ct < len(self.fr.figs) and cls(self.fr.figs[ct][2]) in "PB"):
             self.select(ct)
         self.note(self.hint)
@@ -3273,17 +3436,17 @@ class ToreEditorPanel(ttk.Frame):
 
     def ctr(self, g):
         w = sprite_w(g[2])
-        return self.cx(g[0] + w / 2), self.cy(g[1] + Y_OFFSET + CELL_H / 2)
+        return self.cx(g[0] + w / 2), self.cy(g[1] + Y_OFFSET + path_h(g[2]))
 
 
     def pos_ctr(self, x, y, sid):
         w = sprite_w(sid)
-        return self.cx(x + w / 2), self.cy(y + Y_OFFSET + CELL_H / 2)
+        return self.cx(x + w / 2), self.cy(y + Y_OFFSET + path_h(sid))
 
 
     def ptr_pos(self, ex, ey, sid):
         w = sprite_w(sid)
-        return self.fx(ex) - w / 2, self.fy(ey) - Y_OFFSET - CELL_H / 2
+        return self.fx(ex) - w / 2, self.fy(ey) - Y_OFFSET - path_h(sid)
 
 
     def pick_leader(self, ids):
@@ -3294,7 +3457,7 @@ class ToreEditorPanel(ttk.Frame):
         if sl in self.multi and sl != self.sel:
             self.sel = sl
             self.refresh()
-            self.note("Leader of the selection: %s" % self.names().get(sl, "figure"))
+            self.note("Leader of the selection: %s" % self.names().get(sl, "sprite"))
 
     def group_slots(self):
         base = set(self.multi) if self.multi else ({self.sel} if self.sel is not None else set())
@@ -3384,8 +3547,9 @@ class ToreEditorPanel(ttk.Frame):
             return 3.0
 
 
-    def _clampx(self, v):
-        return max(0, min(FW - 1, int(round(v))))
+    def _clampx(self, v, sid):
+        lo, hi = xlim(sid)
+        return max(lo, min(hi, int(round(v))))
 
 
     def _clampy(self, v):
@@ -3409,11 +3573,16 @@ class ToreEditorPanel(ttk.Frame):
         if poly_len(path) < 1:
             return self.note("Destination is too close.")
         mode = self.pmode.get()
-        wpath = [persp_to_world(x, y) for x, y in _densify(path)] if persp else None
+        hw = sprite_w(fs[self.idx].figs[sl][2]) / 2.0
+        wpath = [persp_to_world(x + hw, y) for x, y in _densify(path)] if persp else None
+
+        def pfw(w):
+            px_, py_ = persp_from_world(*w)
+            return px_ - hw, py_
 
         def rs(nn):
             if persp:
-                return [persp_from_world(*w) for w in resample_steps(wpath, nn)]
+                return [pfw(w) for w in resample_steps(wpath, nn)]
             return resample_steps(path, nn)
 
         if n is not None:
@@ -3441,12 +3610,17 @@ class ToreEditorPanel(ttk.Frame):
         endold = {s: (fs[self.idx + n].figs[s][0], fs[self.idx + n].figs[s][1]) for s in slots}
         slotpos = None
         if persp:
-            w0 = persp_to_world(*start)
-            wpos = [persp_to_world(px, py) for px, py in pos]
+            w0 = persp_to_world(start[0] + hw, start[1])
+            wpos = [persp_to_world(px + hw, py) for px, py in pos]
             slotpos, blocked = {}, 0
             for s in slots:
-                bw = persp_to_world(*base[s])
-                slotpos[s], hit = stop_outside([persp_from_world(bw[0] + wx - w0[0], bw[1] + wv - w0[1]) for wx, wv in wpos])
+                hs = sprite_w(fs[self.idx].figs[s][2]) / 2.0
+                bw = persp_to_world(base[s][0] + hs, base[s][1])
+                seq = []
+                for wx, wv in wpos:
+                    qx, qy = persp_from_world(bw[0] + wx - w0[0], bw[1] + wv - w0[1])
+                    seq.append((qx - hs, qy))
+                slotpos[s], hit = clamp_field(seq, *xlim(fs[self.idx].figs[s][2]))
                 blocked += hit
             shadow = next((t for t in slots if cls(fs[self.idx].figs[t][2]) == "S"), None)
             if shadow is not None:
@@ -3461,22 +3635,23 @@ class ToreEditorPanel(ttk.Frame):
                     tx, ty = slotpos[s][k - 1]
                 else:
                     tx, ty = base[s][0] + px - start[0], base[s][1] + py - start[1]
-                f.figs[s][0] = self._clampx(tx)
+                f.figs[s][0] = self._clampx(tx, f.figs[s][2])
                 f.figs[s][1] = self._clampy(ty)
             f.touch()
         if self.follow.get():
             fe = fs[self.idx + n]
             for j in range(self.idx + n + 1, len(fs)):
                 for s in slots:
-                    fs[j].figs[s][0] = self._clampx(fs[j].figs[s][0] + fe.figs[s][0] - endold[s][0])
+                    fs[j].figs[s][0] = self._clampx(fs[j].figs[s][0] + fe.figs[s][0] - endold[s][0], fs[j].figs[s][2])
                     fs[j].figs[s][1] = self._clampy(fs[j].figs[s][1] + fe.figs[s][1] - endold[s][1])
                 fs[j].touch()
         if self.auto_spr.get():
             self.auto_sprites(slots, self.idx + 1, self.idx + n, force=True)
+        self.cam_refollow()
         self.refresh()
         self.note("Path baked%s: %d frames (%d -> %d), length %.0f px%s" % (
             " (perspective)" if persp else "", n, self.idx + 1, self.idx + n + 1, poly_len(path),
-            "; %d sprite(s) stopped at the field limit" % blocked if persp and blocked else ""))
+            "; %d sprite(s) kept on the field border" % blocked if persp and blocked else ""))
 
 
     def auto_sprites(self, slots, i0, i1, force=True):
@@ -3489,6 +3664,8 @@ class ToreEditorPanel(ttk.Frame):
             if c in (None, "S", "L", "R"):
                 continue
             if c == "B":
+                if not BALL_ROT:
+                    continue
                 for i in range(i0, i1 + 1):
                     fs[i].figs[sl][2] = BALL_ROT[i % 3]
                     fs[i].touch()
@@ -3503,22 +3680,24 @@ class ToreEditorPanel(ttk.Frame):
                 dirs.append(dir8(p1[0] - p0[0], p1[1] - p0[1], diag) or dir8(b[0] - a[0], b[1] - a[1], diag))
             dirs = _stabilize(dirs)
             prev_sid = fs[i0 - 1].figs[sl][2]
-            face = facing_of(prev_sid)
+            face = dir_of_sprite(prev_sid)
             ph = 0
             for n, i in enumerate(range(i0, i1 + 1)):
                 f = fs[i]
                 g = f.figs[sl]
                 if not force and g[2] not in loco_ids(g[2]):
-                    prev_sid, face, ph = g[2], facing_of(g[2]), 0
+                    prev_sid, face, ph = g[2], dir_of_sprite(g[2]), 0
                     continue
                 d = dirs[n]
                 if d is None:
                     new = stand_id(g[2], face)
                     ph = 0
                 else:
-                    if "E" in d or "W" in d:
-                        face = "W" if "W" in d else "E"
+                    face = d
                     cyc = loco_cycle(g[2], d)
+                    if not cyc:
+                        prev_sid = g[2]
+                        continue
                     if prev_sid in cyc and ph == 0:
                         ph = (cyc.index(prev_sid) + 1) % len(cyc)
                     new = cyc[ph % len(cyc)]
@@ -3547,11 +3726,20 @@ class ToreEditorPanel(ttk.Frame):
         self.snap()
         for sl in tg:
             sid = self.fr.figs[sl][2]
-            new = stand_id(sid, facing_of(sid))
+            new = stand_id(sid, self.run_dir(sl, self.idx) or dir_of_sprite(sid))
             for f in self.scene.frames[self.idx:]:
                 f.figs[sl][2] = new
                 f.touch()
         self.refresh()
+
+
+    def run_dir(self, sl, i):
+        fs = self.scene.frames
+        for j in range(min(i, len(fs) - 1), 0, -1):
+            a, b = fs[j - 1].figs[sl], fs[j].figs[sl]
+            if math.hypot(b[0] - a[0], b[1] - a[1]) >= 0.5:
+                return dir8(b[0] - a[0], b[1] - a[1], self.diag.get())
+        return None
 
 
     def do_cycle(self, d):
@@ -3593,7 +3781,7 @@ class ToreEditorPanel(ttk.Frame):
                 if self.idx + len(seq) < len(fs):
                     self.auto_sprites([sl], self.idx + len(seq), len(fs) - 1, force=False)
         self.refresh()
-        self.note("%s: %d frames from frame %d (%d figure%s)" % (action_label(key, side), nmax, self.idx + 1, len(seqs), "" if len(seqs) == 1 else "s"))
+        self.note("%s: %d frames from frame %d (%d sprite%s)" % (action_label(key, side), nmax, self.idx + 1, len(seqs), "" if len(seqs) == 1 else "s"))
 
 
     def tween_to(self, end):
@@ -3609,6 +3797,7 @@ class ToreEditorPanel(ttk.Frame):
                 fs[self.idx + k].touch()
         if self.auto_spr.get():
             self.auto_sprites(self.group_slots(), self.idx + 1, end, force=False)
+        self.cam_refollow()
         self.refresh()
 
 
@@ -3635,12 +3824,13 @@ class ToreEditorPanel(ttk.Frame):
                 old = [(fs[i].figs[s][0], fs[i].figs[s][1]) for i in range(self.idx, j + 1)]
                 for i in range(self.idx + 1, j):
                     w = old[max(0, i - self.idx - 2):i - self.idx + 3]
-                    fs[i].figs[s][0] = self._clampx(sum(p[0] for p in w) / len(w))
+                    fs[i].figs[s][0] = self._clampx(sum(p[0] for p in w) / len(w), fs[i].figs[s][2])
                     fs[i].figs[s][1] = self._clampy(sum(p[1] for p in w) / len(w))
         for i in range(self.idx, len(fs)):
             fs[i].touch()
         if self.auto_spr.get():
             self.auto_sprites(self.group_slots(), self.idx + 1, len(fs) - 1, force=False)
+        self.cam_refollow()
         self.refresh()
 
 
@@ -3658,10 +3848,11 @@ class ToreEditorPanel(ttk.Frame):
                 continue
             pos = resample_steps(path, j - self.idx)
             for k, (px, py) in enumerate(pos, start=1):
-                fs[self.idx + k].figs[s][0] = self._clampx(px)
+                fs[self.idx + k].figs[s][0] = self._clampx(px, fs[self.idx + k].figs[s][2])
                 fs[self.idx + k].figs[s][1] = self._clampy(py)
         for i in range(self.idx, len(fs)):
             fs[i].touch()
+        self.cam_refollow()
         self.refresh()
         self.note("Path re-spaced at constant speed.")
 
@@ -3687,48 +3878,83 @@ class ToreEditorPanel(ttk.Frame):
                 and cls(self.fr.figs[self.sel][2]) in "PB")
 
     def sync_cam_follow(self):
-        self.cb_camfol.state(["!disabled"] if self.cam_sel_ok() else ["disabled"])
+        ok = self.cam_sel_ok() or self.fr.index_of("B") is not None or self.cam_follow.get()
+        self.cb_camfol.state(["!disabled"] if ok else ["disabled"])
+        txt = ""
+        ct = self.cam_target
+        if self.cam_follow.get() and ct is not None and ct < len(self.fr.figs):
+            txt = "focus: %s" % self.names().get(ct, "sprite")
+        self.cam_lbl.config(text=txt)
 
     def on_cam_follow(self):
         if not self.cam_follow.get():
             self.cam_target = None
+            self.sync_cam_follow()
             return
-        if not self.cam_sel_ok():
+        if not self.cam_sel_ok() and self.fr.index_of("B") is None:
             self.cam_follow.set(False)
             return
         self.auto_camera(self.cam_whole.get())
+
+    def on_cam_whole(self):
+        if self.cam_follow.get() and (self.cam_sel_ok() or self.cam_target is not None):
+            self.auto_camera(self.cam_whole.get(), keep_target=not self.cam_sel_ok())
 
     def cam_release(self):
         if self.cam_follow.get():
             self.cam_follow.set(False)
         self.cam_target = None
+        self.cam_explicit = False
 
-    def auto_camera(self, whole=False):
+    def cam_default(self):
+        b = self.fr.index_of("B")
+        if b is None:
+            return
+        self.cam_target, self.cam_i0, self.cam_snap, self.cam_explicit = b, 0, False, False
+        self.cam_follow.set(True)
+
+    def _cam_build(self, tgt, i0, snap):
         fs = self.scene.frames
-        i0 = 0 if whole else self.idx
-        tgt = self.sel if (self.sel is not None and cls(self.fr.figs[self.sel][2]) in "PB") else None
-        if tgt is None and fs[i0].index_of("B") is None:
-            return self.note("Select a sprite first.")
-        self.snap()
+        i0 = max(0, min(i0, len(fs) - 1))
         sx, sy = float(fs[i0].scroll[0]), float(fs[i0].scroll[1])
         for i in range(i0, len(fs)):
             f = fs[i]
             b = tgt if tgt is not None else f.index_of("B")
-            if b is None:
+            if b is None or b >= len(f.figs):
                 continue
             g = f.figs[b]
             wx = max(0.0, min(float(SCROLL_MAX_X), g[0] + sprite_w(g[2]) / 2 - WIN_W / 2))
             wy = max(0.0, min(float(SCROLL_MAX_Y), g[1] + Y_OFFSET - WIN_H / 2))
-            if i == i0 and whole:
+            if i == i0 and snap:
                 sx, sy = wx, wy
             sx += max(-6.0, min(6.0, (wx - sx) * 0.35))
             sy += max(-2.0, min(2.0, (wy - sy) * 0.35))
             f.scroll = [int(round(sx)), int(round(sy))]
             f.dirty = True
         self.cam_target = tgt if tgt is not None else fs[i0].index_of("B")
+        self.cam_i0, self.cam_snap = i0, snap
         self.cam_follow.set(True)
+
+    def cam_refollow(self):
+        ct = self.cam_target
+        if not self.cam_follow.get() or ct is None or ct >= len(self.fr.figs):
+            return
+        self._cam_build(ct, self.cam_i0, self.cam_snap)
+
+    def auto_camera(self, whole=False, keep_target=False):
+        fs = self.scene.frames
+        i0 = 0 if whole else self.idx
+        if keep_target and self.cam_target is not None:
+            tgt = self.cam_target
+        else:
+            tgt = self.sel if self.cam_sel_ok() else None
+        if tgt is None and fs[i0].index_of("B") is None:
+            return self.note("Select a sprite first.")
+        self.snap()
+        self._cam_build(tgt, i0, bool(whole))
+        self.cam_explicit = True
         self.refresh()
-        self.note("Camera keyframes generated (smoothed, max 6 px/frame).")
+        self.note("Camera keyframes generated (%s, smoothed, max 6 px/frame)." % ("whole film" if whole else "from this frame"))
 
 
     def finish_stroke(self):
@@ -3793,7 +4019,7 @@ class ToreEditorPanel(ttk.Frame):
                 continue
             for s in d["slots"]:
                 bx, by = d["base"][s][i]
-                f.figs[s][0] = self._clampx(bx + dx * wi)
+                f.figs[s][0] = self._clampx(bx + dx * wi, f.figs[s][2])
                 f.figs[s][1] = self._clampy(by + dy * wi)
             f.touch()
             d["changed"].add(i)
@@ -3804,6 +4030,8 @@ class ToreEditorPanel(ttk.Frame):
         ch = d["changed"]
         if ch and self.auto_spr.get():
             self.auto_sprites(d["slots"], min(ch), max(ch) + 1, force=False)
+        if ch:
+            self.cam_refollow()
         self.refresh()
 
 
@@ -3854,8 +4082,14 @@ class ToreEditorPanel(ttk.Frame):
 
     def reload_data(self):
         warn = load_data()
+        try:
+            load_kickoff()
+        except DataError as ex:
+            warn.append(str(ex))
         self.after_data_change()
-        self.note("Data files reloaded" + (" - " + "; ".join(warn) if warn else ""))
+        if warn:
+            messagebox.showwarning("Data files", "\n".join(warn), parent=self.top)
+        self.note("Data files reloaded" + (" - with warnings" if warn else ""))
 
     def save_kickoff_here(self):
         if not messagebox.askyesno("Kick-off formation", "Save the sprites, positions and window of the CURRENT frame as the kick-off\n"
@@ -3866,44 +4100,25 @@ class ToreEditorPanel(ttk.Frame):
             return messagebox.showerror("Kick-off formation", "Cannot save this frame: %s" % err)
         self.note("Kick-off formation saved to %s" % KICKOFF_FILE)
 
-    def reset_kickoff_file(self):
-        if messagebox.askyesno("Kick-off formation", "Restore the built-in kick-off formation in\n%s ?" % KICKOFF_FILE):
-            try:
-                reset_kickoff()
-            except OSError as ex:
-                return messagebox.showerror("Kick-off formation", str(ex))
-            self.note("Kick-off formation reset to default")
-
     def edit_data(self):
         if getattr(self, "_dw", None) is not None and self._dw.winfo_exists():
             return self._dw.lift()
         w = self._dw = tk.Toplevel(self.top)
-        w.title("Edit pose sets, actions & movement")
+        w.title("Edit pose sets, actions & path animation")
         w.transient(self.top)
         pg = {"red": {n: list(v) for n, v in PLAYER_CATS}, "referee": {n: list(v) for n, v in REF_CATS}, "ball": {n: list(v) for n, v in BALL_ALL}}
         ad = {"order": list(ACTION_ORDER), "actions": copy.deepcopy(ACTIONS),
               "moves": {d: list(v) for d, v in MOVE_E.items()}, "stand": dict(STAND_K),
-              "referee": {"move": {s: list(v) for s, v in REF_MOVE.items()}, "stand": REF_STAND}}
+              "referee": {"move": {d: list(v) for d, v in REF_MOVE.items()}, "stand": dict(REF_STAND)}}
         nb = ttk.Notebook(w)
         nb.pack(fill="both", expand=True, padx=6, pady=6)
+        GROUP_RNG = {"red": (0, 58), "referee": (118, 141), "ball": (142, 145)}
+
+        def gfx():
+            return self.gfx
 
         def err(title, ex):
             messagebox.showerror(title, str(ex), parent=w)
-
-        def preview(cv, rows):
-            cv.delete("all")
-            cv._ph = []
-            for r, (lab, ids) in enumerate(rows):
-                y = r * 46
-                cv.create_text(2, y + 22, anchor="w", text=lab, fill="#333")
-                for n, pid in enumerate(ids[:14]):
-                    x = 40 + n * 38
-                    spr = sprite_of(self.gfx, pid)
-                    if spr is not None:
-                        ph = ImageTk.PhotoImage(spr.resize((spr.width * 3, spr.height * 3), Image.NEAREST))
-                        cv._ph.append(ph)
-                        cv.create_image(x + 18, y + 20, image=ph)
-                    cv.create_text(x + 18, y + 42, text=str(pid), fill="#555", font=("TkDefaultFont", 7))
 
         def safe_ids(text, lo, hi):
             try:
@@ -3917,7 +4132,7 @@ class ToreEditorPanel(ttk.Frame):
         top = ttk.Frame(t1)
         top.pack(fill="x", pady=4)
         ttk.Label(top, text="Group:").pack(side="left")
-        gcb = ttk.Combobox(top, textvariable=grp, values=["red", "referee", "ball"], state="readonly", width=10)
+        gcb = ttk.Combobox(top, textvariable=grp, values=list(GROUP_RNG), state="readonly", width=10)
         gcb.pack(side="left", padx=4)
         ttk.Label(top, text="red: ids 0-58 (blue = +59 automatic) | referee: 118-141 | ball: 142-145", foreground="#666").pack(side="left", padx=8)
         body = ttk.Frame(t1)
@@ -3927,18 +4142,24 @@ class ToreEditorPanel(ttk.Frame):
         form = ttk.Frame(body)
         form.pack(side="left", fill="both", expand=True, padx=8)
         name_v, ids_v = tk.StringVar(), tk.StringVar()
+
+        def rng():
+            return GROUP_RNG[grp.get()]
+
         ttk.Label(form, text="Name").grid(row=0, column=0, sticky="w")
         ttk.Entry(form, textvariable=name_v, width=44).grid(row=0, column=1, sticky="we", pady=2)
         ttk.Label(form, text="IDs").grid(row=1, column=0, sticky="w")
         ttk.Entry(form, textvariable=ids_v, width=44).grid(row=1, column=1, sticky="we", pady=2)
-        ttk.Label(form, text="e.g.  3,4,5   or   15-20   or   43-38 (descending ok)",foreground="#666").grid(row=2, column=1, sticky="w")
-        pv = tk.Canvas(form, width=40 + 14 * 38, height=46, highlightthickness=0)
-        pv.grid(row=3, column=0, columnspan=2, pady=8, sticky="w")
+        ttk.Label(form, text="e.g.  3,4,5   or   15-20   or   43-38 (descending ok)", foreground="#666").grid(row=2, column=1, sticky="w")
+        ttk.Label(form, text="Sprites").grid(row=3, column=0, sticky="nw", pady=8)
+        pv = SpriteStrip(form, gfx, ids_v, rng)
+        pv.grid(row=3, column=1, sticky="w", pady=8)
+        ttk.Label(form, text="Click a sprite to pick another from the sprite sheet, click + to add one, right-click a sprite to remove it.\nThe IDs field and the sprites always stay in sync.",
+                  foreground="#666", justify="left").grid(row=4, column=1, sticky="w")
         bt = ttk.Frame(form)
-        bt.grid(row=4, column=0, columnspan=2, sticky="w")
+        bt.grid(row=5, column=0, columnspan=2, sticky="w", pady=6)
 
-        def rng():
-            return {"red": (0, 58), "referee": (118, 141), "ball": (142, 145)}[grp.get()]
+        loading = [False]
 
         def fill_list(sel=None):
             lb.delete(0, "end")
@@ -3948,74 +4169,95 @@ class ToreEditorPanel(ttk.Frame):
                 lb.selection_set(sel)
                 lb.see(sel)
 
-        def show_prev(*_):
-            preview(pv, [("", safe_ids(ids_v.get(), *rng()))])
-
         def on_sel(_e=None):
-            s = lb.curselection()
-            if s:
-                n = lb.get(s[0])
+            s_ = lb.curselection()
+            if s_:
+                n = lb.get(s_[0])
+                loading[0] = True
                 name_v.set(n)
                 ids_v.set(ids_text(pg[grp.get()][n]))
+                loading[0] = False
 
         def p_read(exclude=None):
             nm = name_v.get().strip()
             if not nm:
                 raise ValueError("Enter a name")
             if nm != exclude and nm in pg[grp.get()]:
-                raise ValueError("'%s' already exists - select it and use Update" % nm)
+                raise ValueError("'%s' already exists" % nm)
             return nm, parse_ids(ids_v.get(), *rng())
 
-        def p_add():
-            try:
-                nm, ids = p_read()
-            except ValueError as ex:
-                return err("Pose set", ex)
-            pg[grp.get()][nm] = ids
-            fill_list(len(pg[grp.get()]) - 1)
-
-        def p_upd():
-            s = lb.curselection()
-            if not s:
-                return err("Pose set", "Select a set in the list first")
-            d = pg[grp.get()]
-            old = lb.get(s[0])
+        def p_live(*_):
+            s_ = lb.curselection()
+            if loading[0] or not s_:
+                return
+            old = lb.get(s_[0])
             try:
                 nm, ids = p_read(exclude=old)
-            except ValueError as ex:
-                return err("Pose set", ex)
+            except ValueError:
+                return
+            d = pg[grp.get()]
+            if nm == old and ids == d[old]:
+                return
             items = list(d.items())
-            items[s[0]] = (nm, ids)
+            items[s_[0]] = (nm, ids)
             d.clear()
             d.update(items)
-            fill_list(s[0])
+            if nm != old:
+                lb.delete(s_[0])
+                lb.insert(s_[0], nm)
+                lb.selection_set(s_[0])
+
+        def p_add():
+            d = pg[grp.get()]
+            nm, k = "New set", 2
+            while nm in d:
+                nm, k = "New set %d" % k, k + 1
+            d[nm] = [rng()[0]]
+            fill_list(len(d) - 1)
+            on_sel()
 
         def p_del():
-            s = lb.curselection()
-            if s and messagebox.askyesno("Delete", "Delete '%s'?" % lb.get(s[0]), parent=w):
-                del pg[grp.get()][lb.get(s[0])]
-                fill_list(min(s[0], lb.size() - 2))
+            s_ = lb.curselection()
+            if s_ and messagebox.askyesno("Delete", "Delete '%s'?" % lb.get(s_[0]), parent=w):
+                del pg[grp.get()][lb.get(s_[0])]
+                fill_list(min(s_[0], lb.size() - 2))
+                on_sel()
+                if not lb.curselection():
+                    loading[0] = True
+                    name_v.set("")
+                    ids_v.set("")
+                    loading[0] = False
 
         def p_move(delta):
-            s = lb.curselection()
-            if not s:
+            s_ = lb.curselection()
+            if not s_:
                 return
             d = pg[grp.get()]
             items = list(d.items())
-            i, j = s[0], s[0] + delta
+            i, j = s_[0], s_[0] + delta
             if 0 <= j < len(items):
                 items[i], items[j] = items[j], items[i]
                 d.clear()
                 d.update(items)
                 fill_list(j)
 
-        for txt, cmd in (("Add new", p_add), ("Update selected", p_upd), ("Delete", p_del), ("Up", lambda: p_move(-1)), ("Down", lambda: p_move(1))):
+        for txt, cmd in (("Add new", p_add), ("Delete", p_del), ("Up", lambda: p_move(-1)), ("Down", lambda: p_move(1))):
             ttk.Button(bt, text=txt, command=cmd).pack(side="left", padx=2)
+        name_v.trace_add("write", p_live)
+        ids_v.trace_add("write", p_live)
         lb.bind("<<ListboxSelect>>", on_sel)
-        ids_v.trace_add("write", show_prev)
-        gcb.bind("<<ComboboxSelected>>", lambda e: (fill_list(), name_v.set(""), ids_v.set(""), show_prev()))
+
+        def on_group(_e=None):
+            fill_list()
+            loading[0] = True
+            name_v.set("")
+            ids_v.set("")
+            loading[0] = False
+            pv.refresh()
+
+        gcb.bind("<<ComboboxSelected>>", on_group)
         fill_list()
-        show_prev()
+
         t2 = ttk.Frame(nb)
         nb.add(t2, text="Actions")
         body2 = ttk.Frame(t2)
@@ -4026,16 +4268,26 @@ class ToreEditorPanel(ttk.Frame):
         f2.pack(side="left", fill="both", expand=True, padx=8)
         key_v, lab_v, e_v, w_v = tk.StringVar(), tk.StringVar(), tk.StringVar(), tk.StringVar()
         single_v, travel_v = tk.BooleanVar(), tk.BooleanVar()
-        for r, (txt, var) in enumerate((("Key", key_v), ("Label", lab_v), ("Sequence E", e_v), ("Sequence W", w_v))):
+        for r, (txt, var) in ((0, ("Key", key_v)), (1, ("Label", lab_v)), (2, ("Sequence E", e_v)), (4, ("Sequence W", w_v))):
             ttk.Label(f2, text=txt).grid(row=r, column=0, sticky="w")
             ttk.Entry(f2, textvariable=var, width=44).grid(row=r, column=1, sticky="we", pady=2)
-        ttk.Label(f2, text="Red ids 0-58 (blue +59 automatic). Empty W = mirror of E (k -> 58-k). Repeat ids to hold a pose.", foreground="#666", wraplength=420, justify="left").grid(row=4, column=0, columnspan=2, sticky="w")
-        ttk.Checkbutton(f2, text="No direction (single entry, W = E)", variable=single_v).grid(row=5, column=0, columnspan=2, sticky="w")
-        ttk.Checkbutton(f2, text="E/W is the direction of travel (e.g. moonwalk)", variable=travel_v).grid(row=6, column=0, columnspan=2, sticky="w")
-        pv2 = tk.Canvas(f2, width=40 + 14 * 38, height=92, highlightthickness=0)
-        pv2.grid(row=7, column=0, columnspan=2, pady=6, sticky="w")
+        se = SpriteStrip(f2, gfx, e_v, lambda: (0, 58))
+        se.grid(row=3, column=1, sticky="w", pady=(0, 6))
+        sw = SpriteStrip(f2, gfx, w_v, lambda: (0, 58), locked=single_v.get,
+                         auto=lambda: safe_ids(e_v.get(), 0, 58) if single_v.get() else [58 - k for k in safe_ids(e_v.get(), 0, 58)])
+        sw.grid(row=5, column=1, sticky="w", pady=(0, 6))
+        for v in (e_v, single_v):
+            v.trace_add("write", lambda *_: sw.refresh())
+        ttk.Label(f2, text="Red ids 0-58 (blue +59 automatic). Click a sprite to change it, + to add, right-click to remove. Repeat ids to hold a pose.\n"
+                           "Empty W = automatic mirror of E (k -> 58-k), shown dimmed; editing it makes it your own sequence.\n"
+                           "Standing/idle poses are not set here: see the 'Path animation' tab (first sprite of each direction).",
+                  foreground="#666", wraplength=460, justify="left").grid(row=6, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(f2, text="No direction (single entry, W = E)", variable=single_v).grid(row=7, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(f2, text="E/W is the direction of travel (e.g. moonwalk)", variable=travel_v).grid(row=8, column=0, columnspan=2, sticky="w")
         bt2 = ttk.Frame(f2)
-        bt2.grid(row=8, column=0, columnspan=2, sticky="w")
+        bt2.grid(row=9, column=0, columnspan=2, sticky="w", pady=6)
+
+        loading2 = [False]
 
         def fill2(sel=None):
             lb2.delete(0, "end")
@@ -4045,31 +4297,27 @@ class ToreEditorPanel(ttk.Frame):
                 lb2.selection_set(sel)
                 lb2.see(sel)
 
-        def show_prev2(*_):
-            e = safe_ids(e_v.get(), 0, 58)
-            wv = [58 - k for k in e] if single_v.get() is False and not w_v.get().strip() else safe_ids(w_v.get(), 0, 58)
-            if single_v.get():
-                wv = e
-            preview(pv2, [("E", e), ("W", wv)])
-
         def on_sel2(_e=None):
-            s = lb2.curselection()
-            if s:
-                k = ad["order"][s[0]]
-                a = ad["actions"][k]
+            s_ = lb2.curselection()
+            if s_:
+                k = ad["order"][s_[0]]
+                a_ = ad["actions"][k]
+                loading2[0] = True
                 key_v.set(k)
-                lab_v.set(a["label"])
-                e_v.set(ids_text(a["E"]))
-                w_v.set(ids_text(a["W"]))
-                single_v.set(bool(a.get("single")))
-                travel_v.set(bool(a.get("travel")))
+                lab_v.set(a_["label"])
+                e_v.set(ids_text(a_["E"]))
+                w_v.set(ids_text(a_["W"]))
+                single_v.set(bool(a_.get("single")))
+                travel_v.set(bool(a_.get("travel")))
+                loading2[0] = False
+                sw.refresh()
 
         def a_read(exclude=None):
             key = key_v.get().strip()
             if not re.fullmatch(r"[a-z0-9_]+", key):
                 raise ValueError("Key: lowercase letters, digits and _ only")
             if key != exclude and key in ad["actions"]:
-                raise ValueError("Key '%s' already exists - select it and use Update" % key)
+                raise ValueError("Key '%s' already exists" % key)
             e = parse_ids(e_v.get(), 0, 58)
             if single_v.get():
                 wv = list(e)
@@ -4084,82 +4332,172 @@ class ToreEditorPanel(ttk.Frame):
                 d["travel"] = True
             return key, d
 
-        def a_add():
-            try:
-                key, d = a_read()
-            except ValueError as ex:
-                return err("Action", ex)
-            ad["actions"][key] = d
-            ad["order"].append(key)
-            fill2(len(ad["order"]) - 1)
-
-        def a_upd():
-            s = lb2.curselection()
-            if not s:
-                return err("Action", "Select an action in the list first")
-            old = ad["order"][s[0]]
+        def a_live(*_):
+            s_ = lb2.curselection()
+            if loading2[0] or not s_:
+                return
+            old = ad["order"][s_[0]]
             try:
                 key, d = a_read(exclude=old)
-            except ValueError as ex:
-                return err("Action", ex)
+            except ValueError:
+                return
+            if key == old and d == ad["actions"][old]:
+                return
             del ad["actions"][old]
             ad["actions"][key] = d
-            ad["order"][s[0]] = key
-            fill2(s[0])
+            ad["order"][s_[0]] = key
+            lb2.delete(s_[0])
+            lb2.insert(s_[0], "%s  (%s)" % (key, d["label"]))
+            lb2.selection_set(s_[0])
+
+        def a_add():
+            key, k = "new_action", 2
+            while key in ad["actions"]:
+                key, k = "new_action_%d" % k, k + 1
+            ad["actions"][key] = {"label": "New action", "E": [0], "W": [58]}
+            ad["order"].append(key)
+            fill2(len(ad["order"]) - 1)
+            on_sel2()
 
         def a_del():
-            s = lb2.curselection()
-            if s and messagebox.askyesno("Delete", "Delete action '%s'?" % ad["order"][s[0]], parent=w):
-                del ad["actions"][ad["order"].pop(s[0])]
-                fill2(min(s[0], lb2.size() - 2))
+            s_ = lb2.curselection()
+            if s_ and messagebox.askyesno("Delete", "Delete action '%s'?" % ad["order"][s_[0]], parent=w):
+                del ad["actions"][ad["order"].pop(s_[0])]
+                fill2(min(s_[0], lb2.size() - 2))
+                on_sel2()
 
         def a_move(delta):
-            s = lb2.curselection()
-            if s and 0 <= s[0] + delta < len(ad["order"]):
-                o, i, j = ad["order"], s[0], s[0] + delta
+            s_ = lb2.curselection()
+            if s_ and 0 <= s_[0] + delta < len(ad["order"]):
+                o, i, j = ad["order"], s_[0], s_[0] + delta
                 o[i], o[j] = o[j], o[i]
                 fill2(j)
 
-        for txt, cmd in (("Add new", a_add), ("Update selected", a_upd), ("Delete", a_del), ("Up", lambda: a_move(-1)), ("Down", lambda: a_move(1))):
+        for txt, cmd in (("Add new", a_add), ("Delete", a_del), ("Up", lambda: a_move(-1)), ("Down", lambda: a_move(1))):
             ttk.Button(bt2, text=txt, command=cmd).pack(side="left", padx=2)
+        for v in (key_v, lab_v, e_v, w_v, single_v, travel_v):
+            v.trace_add("write", a_live)
         lb2.bind("<<ListboxSelect>>", on_sel2)
-        for v in (e_v, w_v, single_v):
-            v.trace_add("write", show_prev2)
         fill2()
-        show_prev2()
 
         t3 = ttk.Frame(nb)
-        nb.add(t3, text="Movement / stand")
-        ttk.Label(t3, text="Run cycles (red ids; used by Draw path / Auto-sprites / Run), stand ids and referee ids.", foreground="#666").grid(row=0, column=0, columnspan=2, sticky="w", pady=4)
-        mv = {}
-        rows = [("Run %s (%s)" % (d, DIR_LABEL[d]), "m:" + d, ad["moves"][d], (0, 58)) for d in DIRS]
-        rows += [("Stand E", "s:E", [ad["stand"]["E"]], (0, 58)), ("Stand W", "s:W", [ad["stand"]["W"]], (0, 58)),
-                 ("Referee walk E", "rm:E", ad["referee"]["move"]["E"], (118, 141)),
-                 ("Referee walk W", "rm:W", ad["referee"]["move"]["W"], (118, 141)),
-                 ("Referee stand", "rs", [ad["referee"]["stand"]], (118, 141))]
-        for r, (lab, key, val, (lo, hi)) in enumerate(rows, start=1):
-            ttk.Label(t3, text=lab).grid(row=r, column=0, sticky="w", padx=4)
-            var = tk.StringVar(value=ids_text(val))
-            ttk.Entry(t3, textvariable=var, width=30).grid(row=r, column=1, sticky="w", pady=1)
-            mv[key] = (var, lo, hi)
+        nb.add(t3, text="Path animation")
+        mtop = ttk.Frame(t3)
+        mtop.pack(fill="x", pady=4)
+        ttk.Label(mtop, text="Group:").pack(side="left")
+        mgrp = tk.StringVar(value="red")
+        mcb = ttk.Combobox(mtop, textvariable=mgrp, values=list(GROUP_RNG), state="readonly", width=10)
+        mcb.pack(side="left", padx=4)
+        mhint = ttk.Label(mtop, foreground="#666")
+        mhint.pack(side="left", padx=8)
+        ttk.Label(t3, text="Poses a sprite takes by itself while it follows a path (Draw path, Click path, Auto-sprites, Run menu). "
+                           "Each direction has an IDLE sprite (small box on the left) followed by the rest of the run cycle: the idle is the first frame of the cycle "
+                           "and also the standing pose used when the sprite pauses or with 'stand', facing the last direction of travel. "
+                           "This is not the browsable lists of 'Pose sets' nor the one-shot moves of 'Actions'.",
+                  foreground="#666", wraplength=620, justify="left").pack(anchor="w", pady=(0, 4))
+        mrows = ttk.Frame(t3)
+        mrows.pack(fill="both", expand=True)
+        mv = []
+
+        GRID = {"NW": (0, 0), "N": (0, 1), "NE": (0, 2), "W": (1, 0), "E": (1, 2), "SW": (2, 0), "S": (2, 1), "SE": (2, 2)}
+
+        def parse_opt(text, lo, hi):
+            return parse_ids(text, lo, hi) if text.strip() else []
+
+        built = [None]
+
+        def live(fn):
+            def cb(*_a):
+                try:
+                    fn()
+                except ValueError:
+                    pass
+            return cb
+
+        def build_move_rows(*_):
+            g = mgrp.get()
+            built[0] = g
+            mrows.pack_forget()
+            for wd in mrows.winfo_children():
+                wd.destroy()
+            mv.clear()
+            lo, hi = GROUP_RNG[g]
+            mhint.config(text={"red": "red ids 0-58 shown (blue = +59 automatic)",
+                               "referee": "referee ids 118-141 (118-128 face E, 129-141 face W)",
+                               "ball": "ball ids 142-145"}[g])
+            big = ("TkDefaultFont", 14, "bold")
+            if g == "ball":
+                var = tk.StringVar(value=ids_text(pg["ball"].get("rotation", [])))
+                ttk.Label(mrows, text="Rotation", font=big, foreground="#b4b4b4", anchor="center").grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
+                SpriteStrip(mrows, gfx, var, lambda: (lo, hi), per_row=6, zoom=3).grid(row=1, column=0, padx=6, pady=(0, 6))
+
+                def ap(var=var):
+                    pg["ball"]["rotation"] = parse_ids(var.get(), lo, hi)
+                var.trace_add("write", live(ap))
+                mv.append(("Rotation cycle", ap))
+            else:
+                moves = ad["moves"] if g == "red" else ad["referee"]["move"]
+                stand = ad["stand"] if g == "red" else ad["referee"]["stand"]
+                for d in DIRS:
+                    r, c = GRID[d]
+                    cyc = list(moves.get(d, []))
+                    idle0 = stand[d] if d in stand else (cyc[0] if cyc else lo)
+                    bx = ttk.Frame(mrows, borderwidth=1, relief="groove", padding=3)
+                    bx.grid(row=r, column=c, padx=4, pady=4, sticky="n")
+                    ttk.Label(bx, text=DIR_LABEL[d], font=big, foreground="#b4b4b4", anchor="center").grid(row=0, column=0, columnspan=2, sticky="ew")
+                    iv, rv = tk.StringVar(value=str(idle0)), tk.StringVar(value=ids_text(cyc[1:]))
+                    SpriteStrip(bx, gfx, iv, lambda: (lo, hi), max_n=1, per_row=1, zoom=3).grid(row=1, column=0, sticky="n", padx=(0, 6))
+                    SpriteStrip(bx, gfx, rv, lambda: (lo, hi), per_row=4, zoom=3).grid(row=1, column=1, sticky="n")
+
+                    def ap(d=d, iv=iv, rv=rv):
+                        idle = parse_ids(iv.get(), lo, hi)
+                        if len(idle) != 1:
+                            raise ValueError("needs exactly one idle id")
+                        moves[d] = idle + parse_opt(rv.get(), lo, hi)
+                        stand[d] = idle[0]
+                    iv.trace_add("write", live(ap))
+                    rv.trace_add("write", live(ap))
+                    mv.append(("%s (%s)" % (d, DIR_LABEL[d]), ap))
+                ttk.Label(mrows, text="left box = idle\n(first sprite of the cycle)", foreground="#aaa", justify="center").grid(row=1, column=1)
+            mrows.pack(fill="both", expand=True)
+
+        def on_tab(_e=None):
+            cur = nb.select()
+            if cur == str(t3):
+                if built[0] != mgrp.get():
+                    build_move_rows()
+            elif cur == str(t1):
+                on_sel()
+            elif cur == str(t2):
+                on_sel2()
+
+        mcb.bind("<<ComboboxSelected>>", build_move_rows)
+        nb.bind("<<NotebookTabChanged>>", on_tab)
+
+        def check_selected():
+            s_ = lb.curselection()
+            if s_:
+                try:
+                    p_read(exclude=lb.get(s_[0]))
+                except ValueError as ex:
+                    return "Pose set '%s': %s" % (lb.get(s_[0]), ex)
+            s_ = lb2.curselection()
+            if s_:
+                try:
+                    a_read(exclude=ad["order"][s_[0]])
+                except ValueError as ex:
+                    return "Action '%s': %s" % (ad["order"][s_[0]], ex)
+            return None
 
         def apply_all():
-            try:
-                for k, (var, lo, hi) in mv.items():
-                    vals = parse_ids(var.get(), lo, hi)
-                    if k.startswith("m:"):
-                        ad["moves"][k[2:]] = vals
-                    elif k.startswith("rm:"):
-                        ad["referee"]["move"][k[3:]] = vals
-                    else:
-                        if len(vals) != 1:
-                            raise ValueError("Stand ids need exactly one id (%s)" % k)
-                        if k.startswith("s:"):
-                            ad["stand"][k[2:]] = vals[0]
-                        else:
-                            ad["referee"]["stand"] = vals[0]
-            except ValueError as ex:
-                return err("Movement / stand", ex)
+            msg = check_selected()
+            if msg:
+                return err("Invalid entry", msg + "\n\nFix it (or select another item) before saving.")
+            for name, fn in mv:
+                try:
+                    fn()
+                except ValueError as ex:
+                    return err("Path animation", "%s: %s" % (name, ex))
             ad2 = dict(ad, actions={k: ad["actions"][k] for k in ad["order"]})
             try:
                 save_data_files(pg, ad2)
@@ -4170,10 +4508,26 @@ class ToreEditorPanel(ttk.Frame):
             self.after_data_change()
             self.note("Saved %s and %s" % (os.path.basename(POSES_FILE), os.path.basename(ACTIONS_FILE)))
 
+        def snapshot():
+            return json.dumps([pg, ad], sort_keys=True)
+
+        base_state = snapshot()
+
+        def on_close():
+            if snapshot() != base_state:
+                ans = messagebox.askyesnocancel("Unsaved changes", "Pose sets / actions / path animation were changed but not saved to the files.\n\n"
+                                                "Save them before closing?  (No = discard the changes)", parent=w)
+                if ans is None:
+                    return
+                if ans:
+                    return apply_all()
+            w.destroy()
+
+        w.protocol("WM_DELETE_WINDOW", on_close)
         bar = ttk.Frame(w)
         bar.pack(fill="x", padx=6, pady=(0, 6))
-        ttk.Label(bar, text="Add/Update change the lists; 'Save to files' writes the JSON files and applies them now.", foreground="#666").pack(side="left")
-        ttk.Button(bar, text="Close", command=w.destroy).pack(side="right")
+        ttk.Label(bar, text="Edits are kept in memory as you type; 'Save to files' writes the JSON files and applies them now.", foreground="#666").pack(side="left")
+        ttk.Button(bar, text="Close", command=on_close).pack(side="right")
         ttk.Button(bar, text="Save to files", command=apply_all).pack(side="right", padx=4)
 
 
