@@ -1,4 +1,5 @@
 import os
+import re
 import struct
 import sys
 
@@ -26,6 +27,28 @@ PAL_DEFAULT = _hex_palette(
     "000000A0A0C08080A0707090606080505070404060303050000070907050B0A080D0C0B0506010607020608030709040600010900010B00020C07020A060207040103040C0F0F000B0A070908050806040604030503020F0F0F0C030C0000000",
     scale=1)
 _ALPHA_LUT = bytes([0] + [255] * 255)
+FILTERS = (("T", "Score"), ("V", "Failure"), ("E", "Penalty kick"), ("J", "Joke"))
+FILTER_LETTERS = set(k for k, _ in FILTERS)
+BASE_LETTERS = {"T", "V"}
+MOD_LETTERS = {"E", "J"}
+ALL_LABEL = ""
+
+
+def ext_letters(filename):
+    ext = os.path.splitext(filename)[1][1:].upper()
+    letters = set(ext)
+    if ext and letters <= FILTER_LETTERS:
+        return letters
+    return None
+
+
+def leading_number(filename):
+    m = re.match(r"\d+", filename)
+    return int(m.group()) if m else None
+
+
+def natural_key(name):
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name)]
 
 
 def _palette_to_flat_rgb(pal, size=256):
@@ -106,12 +129,17 @@ class TEFile:
             self.author = tail[1:1 + tail[0]].split(b"\x00")[0].decode("cp437", "replace")
 
 def find_pic_dir(te_path):
-    game_dir = os.path.dirname(os.path.dirname(os.path.abspath(te_path)))
-    if os.path.isdir(game_dir):
-        for name in os.listdir(game_dir):
-            p = os.path.join(game_dir, name)
-            if name.lower() == "pic" and os.path.isdir(p):
-                return p
+    folder = os.path.dirname(os.path.abspath(te_path))
+    for _ in range(3):
+        if os.path.isdir(folder):
+            for name in os.listdir(folder):
+                p = os.path.join(folder, name)
+                if name.lower() == "pic" and os.path.isdir(p):
+                    return p
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            break
+        folder = parent
     return None
 
 
@@ -125,7 +153,7 @@ def find_file(folder, stem):
 
 def _to_rgba(img_p):
     rgba = img_p.convert("RGBA")
-    mask = Image.frombytes("L", img_p.size, img_p.tobytes().translate(_ALPHA_LUT))  # indice 0 = trasparente
+    mask = Image.frombytes("L", img_p.size, img_p.tobytes().translate(_ALPHA_LUT))
     rgba.putalpha(mask)
     return rgba
 
@@ -198,9 +226,36 @@ def run_gui(path=None):
             self._photo = None
             self.canvas = tk.Canvas(self, bg="black", highlightthickness=0,width=WIN_W * 3, height=WIN_H * 3)
             self.canvas.pack(padx=6, pady=6)
+            self.folder = None
+            self.files = {}
+            self._job = None
+            top = ttk.Frame(self)
+            top.pack(fill="x", padx=6, pady=(6, 0))
+            ttk.Button(top, text="Cartella...", command=self.choose_folder).pack(side="left")
+            self.filters = {}
+            for letter, label in FILTERS:
+                v = tk.BooleanVar(value=True)
+                self.filters[letter] = v
+                ttk.Checkbutton(top, text="%s (%s)" % (label, letter), variable=v,
+                                command=self.refresh_list).pack(side="left", padx=(8, 0))
+            top2 = ttk.Frame(self)
+            top2.pack(fill="x", padx=6, pady=(4, 0))
+            ttk.Label(top2, text="N.").pack(side="left")
+            self.num_var = tk.StringVar(value=ALL_LABEL)
+            vcmd = (self.register(lambda s: s == "" or s.isdigit()), "%P")
+            self.num_spin = ttk.Spinbox(top2, values=(ALL_LABEL,), width=6, wrap=True,textvariable=self.num_var, command=self.refresh_list,validate="key", validatecommand=vcmd)
+            self.num_spin.pack(side="left", padx=(2, 10))
+            self.num_spin.bind("<KeyRelease>", lambda e: self.refresh_list())
+            self.num_spin.bind("<Return>", lambda e: self.focus_set())
+            ttk.Button(top2, text="Reset filters", command=self.reset_filters).pack(side="left", padx=(0, 10))
+            ttk.Label(top2, text="Scena").pack(side="left")
+            self.combo = ttk.Combobox(top2, state="readonly", width=30)
+            self.combo.pack(side="left", padx=(6, 6))
+            self.combo.bind("<<ComboboxSelected>>", self.on_select)
+            self.count = ttk.Label(top2, text="")
+            self.count.pack(side="left")
             bar = ttk.Frame(self)
-            bar.pack(fill="x", padx=6)
-            ttk.Button(bar, text="Open Scene", command=self.open_te).pack(side="left")
+            bar.pack(fill="x", padx=6, pady=(6, 0))
             ttk.Button(bar, text="|<", width=3, command=lambda: self.goto(0)).pack(side="left", padx=(8, 0))
             ttk.Button(bar, text="<", width=3, command=lambda: self.step(-1)).pack(side="left")
             self.btn = ttk.Button(bar, text="Play", width=6, command=self.toggle)
@@ -221,26 +276,105 @@ def run_gui(path=None):
             self.slider.pack(fill="x", padx=6, pady=4)
             self.status = ttk.Label(self, anchor="w")
             self.status.pack(fill="x", padx=6, pady=(0, 6))
-            self.bind("<space>", lambda e: self.toggle())
-            self.bind("<Left>", lambda e: self.step(-1))
-            self.bind("<Right>", lambda e: self.step(1))
-            self.bind("<Home>", lambda e: self.goto(0))
-            self.bind("<End>", lambda e: self.goto_end())
-            if path:
-                self.load(path)
+            self.bind("<space>", self._unless_typing(self.toggle))
+            self.bind("<Left>",  self._unless_typing(lambda: self.step(-1)))
+            self.bind("<Right>", self._unless_typing(lambda: self.step(1)))
+            self.bind("<Home>",  self._unless_typing(lambda: self.goto(0)))
+            self.bind("<End>",   self._unless_typing(self.goto_end))
+            self.after(100, lambda: self.startup(path))
 
-        def open_te(self):
-            p = filedialog.askopenfilename(title="Open Goal scene",filetypes=[("Scenes", "*.t *.te *.tj *.v *.ve *.vj"), ("Tutti", "*.*")])
-            if p:
-                self.load(p)
+        def _unless_typing(self, fn):
+            def handler(e):
+                if self.focus_get() is not self.num_spin:
+                    fn()
+            return handler
+
+        def startup(self, path):
+            if path and os.path.isdir(path):
+                self.set_folder(path)
+                return
+            if path and os.path.isfile(path):
+                self.set_folder(os.path.dirname(os.path.abspath(path)))
+                name = os.path.basename(path)
+                if name in self.files:
+                    self.combo.set(name)
+                    if self.load(self.files[name]):
+                        self.play()
+                return
+            folder = filedialog.askdirectory(title="Seleziona la cartella TORE (Goal scenes)", mustexist=True)
+            if not folder:
+                self.destroy()
+                return
+            self.set_folder(folder)
+
+        def choose_folder(self):
+            folder = filedialog.askdirectory(title="Seleziona la cartella TORE (Goal scenes)",
+                                             mustexist=True, initialdir=self.folder)
+            if folder:
+                self.set_folder(folder)
+
+        def set_folder(self, folder):
+            self.folder = folder
+            nums = set()
+            for fn in os.listdir(folder):
+                if ext_letters(fn) and os.path.isfile(os.path.join(folder, fn)):
+                    n = leading_number(fn)
+                    if n is not None:
+                        nums.add(n)
+            self.num_spin.config(values=[ALL_LABEL] + [str(n) for n in sorted(nums)])
+            self.num_var.set(ALL_LABEL)
+            self.refresh_list()
+
+        def reset_filters(self):
+            for v in self.filters.values():
+                v.set(True)
+            self.num_var.set(ALL_LABEL)
+            self.refresh_list()
+
+        def refresh_list(self):
+            selected = set(k for k, v in self.filters.items() if v.get())
+            num = self.num_var.get()
+            bases, mods = selected & BASE_LETTERS, selected & MOD_LETTERS
+            self.files = {}
+            if self.folder:
+                for fn in os.listdir(self.folder):
+                    full = os.path.join(self.folder, fn)
+                    letters = ext_letters(fn)
+                    if not letters or not os.path.isfile(full):
+                        continue
+                    if selected and selected != FILTER_LETTERS:
+                        f_base, f_mods = letters & BASE_LETTERS, letters & MOD_LETTERS
+                        if bases and not (f_base and f_base <= bases):
+                            continue
+                        if f_mods != mods:
+                            continue
+                    if num != ALL_LABEL and leading_number(fn) != int(num):
+                        continue
+                    self.files[fn] = full
+            names = sorted(self.files, key=natural_key)
+            self.combo["values"] = names
+            if self.combo.get() not in self.files:
+                self.combo.set("")
+            self.count.config(text="%d file" % len(names))
+
+        def on_select(self, _event=None):
+            name = self.combo.get()
+            if name in self.files and self.load(self.files[name]):
+                self.play()
+            self.focus_set()
 
         def load(self, p):
             try:
                 self.te = TEFile(p)
-            except Exception as e:  # noqa
-                messagebox.showerror("Error", str(e))
-                return
-            pic = find_pic_dir(p)
+            except Exception as e:
+                messagebox.showerror("Errore", str(e))
+                return False
+            pic = find_pic_dir(p) or getattr(self, "pic_dir", None)
+            if pic is None:
+                pic = filedialog.askdirectory(title="Cartella PIC non trovata: selezionala (contiene 26.VGA, 27.VGA, 29.VGA)")
+                pic = pic or None
+            if pic:
+                self.pic_dir = pic
             self.gfx = Graphics(pic)
             if pic is None:
                 self.status.config(text="Cartella PIC non trovata accanto a %s" % os.path.basename(os.path.dirname(os.path.abspath(p))))
@@ -248,11 +382,11 @@ def run_gui(path=None):
                 self.status.config(text="In %s mancano: %s" % (pic, ", ".join(self.gfx.missing)))
             else:
                 self.status.config(text="Grafica da " + pic)
-            self.playing = False
-            self.btn.config(text="Play")
+            self.stop()
             self.slider.config(to=len(self.te.frames) - 1)
             self.title("TE viewer - %s (%s, %s)" % (os.path.basename(p), self.te.version, self.te.author))
             self.goto(0)
+            return True
 
         def goto(self, i):
             if not self.te:
@@ -275,21 +409,35 @@ def run_gui(path=None):
                 self.idx = i
                 self.redraw()
 
+        def play(self):
+            if not self.te or self.playing:
+                return
+            self.playing = True
+            self.btn.config(text="Pausa")
+            self.tick()
+
+        def stop(self):
+            self.playing = False
+            if self._job is not None:
+                self.after_cancel(self._job)
+                self._job = None
+            self.btn.config(text="Play")
+
         def toggle(self):
             if not self.te:
                 return
-            self.playing = not self.playing
-            self.btn.config(text="Pausa" if self.playing else "Play")
             if self.playing:
-                self.tick()
+                self.stop()
+            else:
+                self.play()
 
         def tick(self):
+            self._job = None
             if not self.playing:
                 return
             if self.idx >= len(self.te.frames) - 1:
                 if not self.loop.get():
-                    self.playing = False
-                    self.btn.config(text="Play")
+                    self.stop()
                     return
                 self.goto(0)
             else:
@@ -298,7 +446,7 @@ def run_gui(path=None):
                 fps = max(1, int(self.fps.get()))
             except (tk.TclError, ValueError):
                 fps = 12
-            self.after(int(1000 / fps), self.tick)
+            self._job = self.after(int(1000 / fps), self.tick)
 
         def redraw(self):
             if not self.te:
