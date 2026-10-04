@@ -3390,26 +3390,34 @@ class ToreEditorPanel(ttk.Frame):
             return
         f = self.fr
         slots, sel_ref = self._path_slots(f)
+
+        # A frozen path is represented by identical frame positions.  Only the
+        # currently selected sprites (and their paired ball/shadow) use the
+        # movement endpoint; all other sprites keep their full film path.
+        cut_slots = set(self.group_slots())
+
         for i in slots:
             sid = f.figs[i][2]
             col = self.path_color(sid)
+            end = self.moving_span(i) if i in cut_slots else len(sc.frames) - 1
             self._path_cache.append({
                 "slot": i,
                 "color": col,
-                "pts": [self.ctr(fr.figs[i]) for fr in sc.frames],
+                "pts": [self.ctr(fr.figs[i]) for fr in sc.frames[:end + 1]],
                 "main": i == sel_ref and self.show_path.get(),
             })
             b = f.index_of("B") if cls(sid) == "S" else None
             if b is not None:
                 up, runs = self._ball_runs(sc.frames, i, b)
                 if runs:
+                    bend = self.moving_span(b) if b in cut_slots else len(sc.frames) - 1
                     self._path_cache.append({
                         "slot": b,
                         "color": self._lighten(col),
-                        "pts": [self.ctr(fr.figs[b]) for fr in sc.frames],
+                        "pts": [self.ctr(fr.figs[b]) for fr in sc.frames[:bend + 1]],
                         "main": False,
                         "runs": runs,
-                        "show": up,
+                        "show": up[:bend + 1],
                     })
 
     @staticmethod
@@ -3827,8 +3835,9 @@ class ToreEditorPanel(ttk.Frame):
         if self.sel is None or not self.show_path.get() or len(self.scene.frames) < 2:
             return None
         rs = self.ref_slot()
+        end = self.moving_span(rs)
         best, bd = None, tol
-        for k, f in enumerate(self.scene.frames):
+        for k, f in enumerate(self.scene.frames[:end + 1]):
             cx, cy = self.ctr(f.figs[rs])
             d = math.hypot(cx - ex, cy - ey)
             if d < bd:
