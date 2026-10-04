@@ -78,6 +78,24 @@ def _bundle_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def configure(prefix: str = None) -> None:
+    """Use a different language-file prefix and forget everything loaded.
+
+    The default prefix is ``lang_`` (``data/lang/lang_en.py``).  A program that
+    shares the ``data/lang`` folder with other programs calls this once at
+    start-up with its own prefix, e.g. ``configure(prefix="tore_lang_")``, so
+    each program only ever sees its own files.  Programs that never call it
+    behave exactly as before.
+    """
+    global _PREFIX, _embedded, _embedded_tried
+    if prefix:
+        _PREFIX = prefix
+    _tables.clear()
+    _failed.clear()
+    _embedded = None
+    _embedded_tried = False
+
+
 def _lang_file(base: str, code: str) -> str:
     return os.path.join(base, LANG_SUBDIR, _PREFIX + code + _SUFFIX)
 
