@@ -15,7 +15,6 @@ from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 from PIL import Image, ImageDraw, ImageTk
 
 import i18n
-from i18n import tr
 
 FRAME_SIZE = 164
 N_RECORDS = 27
@@ -220,11 +219,14 @@ def _save_language(code):
         pass
 
 
+LANG = i18n.Translator(prefix=I18N_PREFIX)
+tr = LANG.tr
+
+
 def _init_language():
-    i18n.configure(prefix=I18N_PREFIX)
     code = str(_load_settings().get("lang", i18n.FALLBACK_LANGUAGE))
-    if not i18n.set_language(code):
-        i18n.set_language(i18n.FALLBACK_LANGUAGE)
+    if not LANG.set_language(code):
+        LANG.set_language(i18n.FALLBACK_LANGUAGE)
 
 
 _init_language()
@@ -1308,7 +1310,7 @@ class ToreEditorPanel(ttk.Frame):
         self._i18n_widgets, self._i18n_tabs = [], []
         self._i18n_menus, self._i18n_titles = [], []
         self._menubtns = []
-        self.lang_var = tk.StringVar(value=i18n.current_language())
+        self.lang_var = tk.StringVar(value=LANG.current_language())
         self.on_state_change = None
         self.info_lbl = None
         self.menubar_frame = None
@@ -1491,8 +1493,8 @@ class ToreEditorPanel(ttk.Frame):
             self._mi(menu, "command", key, command=cmd, accelerator=acc)
 
     def set_language(self, code):
-        if not i18n.set_language(code):
-            self.lang_var.set(i18n.current_language())
+        if not LANG.set_language(code):
+            self.lang_var.set(LANG.current_language())
             return False
         _save_language(code)
         self.lang_var.set(code)
@@ -1552,11 +1554,11 @@ class ToreEditorPanel(ttk.Frame):
         self.note(self.hint)
 
     def _lang_menu(self, lm):
-        self.lang_var.set(i18n.current_language())
-        for code, name in i18n.discover_languages():
+        self.lang_var.set(LANG.current_language())
+        for code, name in LANG.discover_languages():
             lm.add_radiobutton(label=name, value=code, variable=self.lang_var,
                                command=lambda c=code: self.set_language(c))
-        for msg in i18n.take_problems():
+        for msg in LANG.take_problems():
             self.after(200, lambda m=msg: messagebox.showwarning(self.tr("mb.datafiles"), m, parent=self.top))
 
     def _menus(self):
@@ -2475,15 +2477,15 @@ class ToreEditorPanel(ttk.Frame):
                 m.add_cascade(label=tr("cx.run"), menu=self._run_menu(m))
             m.add_command(label=tr("s.mirrorpose"), command=self.mirror_sel)
             m.add_command(label=tr("s.lock"), command=self.clear_anim)
+            m.add_separator()
+            m.add_command(label=tr("cx.auto"), command=self.auto_here)
+            m.add_command(label=tr("cx.smooth_here"), command=self.smooth_path)
+            m.add_command(label=tr("cx.even_here"), command=self.even_speed)
             m.add_command(label=tr("p.freeze"), command=self.freeze_here)
             if cls(sid) in "SB":
                 m.add_command(label=tr("cx.cam_ball"), command=self.auto_camera)
             else:
                 m.add_command(label=tr("cx.cam_sprite"), command=self.auto_camera)
-            m.add_separator()
-            m.add_command(label=tr("cx.auto"), command=self.auto_here)
-            m.add_command(label=tr("cx.smooth_here"), command=self.smooth_path)
-            m.add_command(label=tr("cx.even_here"), command=self.even_speed)
             m.add_separator()
             m.add_command(label=tr("cx.tip"), state="disabled")
         elif k is not None:

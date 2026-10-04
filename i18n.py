@@ -26,6 +26,12 @@ Running from source both resolve to the same folder, so there is exactly one
 English file and no duplication.  Only a frozen build has two copies, and they
 are produced by the same build step from the same source file.
 
+Several programs can share this module in one process (the main editor and the
+embedded TORE panel, for instance).  Each one owns a :class:`Translator` with
+its own file prefix, tables, problems and current language, so they can never
+overwrite each other's settings.  The module-level functions (``tr``,
+``set_language`` ...) drive one default translator with the prefix ``lang_``.
+
 The lookup order is: selected language, then English, then the raw key.  A key
 that is missing everywhere renders as ``menu.file.open`` rather than as an
 empty label, so a mistake is visible instead of silent.  A damaged optional
@@ -39,15 +45,8 @@ import sys
 
 LANG_SUBDIR = os.path.join("data", "lang")
 FALLBACK_LANGUAGE = "en"
-_PREFIX = "lang_"
+DEFAULT_PREFIX = "lang_"
 _SUFFIX = ".py"
-
-_tables = {}          # code -> table dict (successful external loads)
-_failed = set()       # codes whose external file could not be used
-_problems = []        # human-readable load problems, drained by the GUI
-_embedded = None      # embedded English table, loaded at most once
-_embedded_tried = False
-_current = FALLBACK_LANGUAGE
 
 
 def _program_dir() -> str:
@@ -78,188 +77,183 @@ def _bundle_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def configure(prefix: str = None) -> None:
-    """Use a different language-file prefix and forget everything loaded.
-
-    The default prefix is ``lang_`` (``data/lang/lang_en.py``).  A program that
-    shares the ``data/lang`` folder with other programs calls this once at
-    start-up with its own prefix, e.g. ``configure(prefix="tore_lang_")``, so
-    each program only ever sees its own files.  Programs that never call it
-    behave exactly as before.
-    """
-    global _PREFIX, _embedded, _embedded_tried
-    if prefix:
-        _PREFIX = prefix
-    _tables.clear()
-    _failed.clear()
-    _embedded = None
-    _embedded_tried = False
+def _load_module(path: str, modname: str):
+    spec = importlib.util.spec_from_file_location(modname, path)
+    if spec is None or spec.loader is None:
+        raise ImportError("no loader for %s" % path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def _lang_file(base: str, code: str) -> str:
-    return os.path.join(base, LANG_SUBDIR, _PREFIX + code + _SUFFIX)
+class Translator:
+    """Independent translation state for one family of ``<prefix><code>.py`` files."""
 
+    def __init__(self, prefix: str = DEFAULT_PREFIX):
+        self.prefix = prefix or DEFAULT_PREFIX
+        self.current = FALLBACK_LANGUAGE
+        self.problems = []        # human-readable load problems, drained by the GUI
+        self._reset()
 
-def _read_table(path: str, code: str):
-    """Load one language file by absolute path; return its table or ``None``.
+    def _reset(self):
+        self._tables = {}         # code -> table dict (successful external loads)
+        self._failed = set()      # codes whose external file could not be used
+        self._embedded = None     # embedded English table, loaded at most once
+        self._embedded_tried = False
 
-    Every failure is caught, including ``SyntaxError``: a broken translation is
-    a cosmetic problem and must never propagate into the editor start.
-    """
-    try:
-        if not os.path.isfile(path):
+    def configure(self, prefix: str = None) -> None:
+        """Use a different language-file prefix and forget everything loaded."""
+        if prefix:
+            self.prefix = prefix
+        self._reset()
+
+    def _lang_file(self, base: str, code: str) -> str:
+        return os.path.join(base, LANG_SUBDIR, self.prefix + code + _SUFFIX)
+
+    def _read_table(self, path: str, code: str):
+        """Load one language file by absolute path; return its table or ``None``.
+
+        Every failure is caught, including ``SyntaxError``: a broken translation
+        is a cosmetic problem and must never propagate into the editor start.
+        """
+        try:
+            if not os.path.isfile(path):
+                return None
+            module = _load_module(path, "_bmh_lang_%s%s" % (self.prefix, code))
+            table = getattr(module, "TEXTS_" + code.upper(), None)
+            if table is None:
+                table = getattr(module, "TEXTS", None)
+            if not isinstance(table, dict) or not table:
+                raise ValueError("TEXTS_%s missing or empty" % code.upper())
+            for key, value in table.items():
+                if not isinstance(key, str) or not isinstance(value, str):
+                    raise ValueError("non-string entry for %r" % (key,))
+            return table
+        except Exception as exc:                  # noqa: BLE001 - fail visible
+            self.problems.append("%s: %s" % (os.path.basename(path), exc))
             return None
-        spec = importlib.util.spec_from_file_location(
-            "_bmh_lang_" + code, path)
-        if spec is None or spec.loader is None:
-            raise ImportError("no loader for %s" % path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        table = getattr(module, "TEXTS_" + code.upper(), None)
+
+    def _external(self, code: str):
+        """External table for ``code``, loaded once; ``None`` when unusable."""
+        if code in self._tables:
+            return self._tables[code]
+        if code in self._failed:
+            return None
+        table = self._read_table(self._lang_file(_program_dir(), code), code)
         if table is None:
-            table = getattr(module, "TEXTS", None)
-        if not isinstance(table, dict) or not table:
-            raise ValueError("TEXTS_%s missing or empty" % code.upper())
-        for key, value in table.items():
-            if not isinstance(key, str) or not isinstance(value, str):
-                raise ValueError("non-string entry for %r" % (key,))
+            self._failed.add(code)
+            return None
+        self._tables[code] = table
         return table
-    except Exception as exc:                      # noqa: BLE001 - fail visible
-        _problems.append("%s: %s" % (os.path.basename(path), exc))
-        return None
 
+    def _embedded_english(self):
+        """Embedded English table from the bundle; ``None`` when unavailable."""
+        if self._embedded_tried:
+            return self._embedded
+        self._embedded_tried = True
+        external = self._lang_file(_program_dir(), FALLBACK_LANGUAGE)
+        path = self._lang_file(_bundle_dir(), FALLBACK_LANGUAGE)
+        # Running from source both paths are the same file.  It already failed as
+        # the external table, so retrying it would only duplicate the message.
+        if os.path.normcase(os.path.abspath(path)) == os.path.normcase(
+                os.path.abspath(external)):
+            return None
+        self._embedded = self._read_table(path, FALLBACK_LANGUAGE)
+        return self._embedded
 
-def _external(code: str):
-    """External table for ``code``, loaded once; ``None`` when unusable."""
-    if code in _tables:
-        return _tables[code]
-    if code in _failed:
-        return None
-    table = _read_table(_lang_file(_program_dir(), code), code)
-    if table is None:
-        _failed.add(code)
-        return None
-    _tables[code] = table
-    return table
+    def _english(self):
+        """English table: external first, embedded copy as guaranteed fallback."""
+        return self._external(FALLBACK_LANGUAGE) or self._embedded_english()
 
+    def available_languages(self) -> set:
+        """Codes that can actually be loaded right now (English always included)."""
+        codes = set()
+        folder = os.path.join(_program_dir(), LANG_SUBDIR)
+        try:
+            names = os.listdir(folder)
+        except Exception:                         # noqa: BLE001
+            names = []
+        for name in names:
+            if not (name.startswith(self.prefix) and name.endswith(_SUFFIX)):
+                continue
+            code = name[len(self.prefix):-len(_SUFFIX)]
+            if code and self._external(code) is not None:
+                codes.add(code)
+        if self._english() is not None:
+            codes.add(FALLBACK_LANGUAGE)
+        return codes
 
-def _embedded_english():
-    """Embedded English table from the bundle; ``None`` when unavailable."""
-    global _embedded, _embedded_tried
-    if _embedded_tried:
-        return _embedded
-    _embedded_tried = True
-    external = _lang_file(_program_dir(), FALLBACK_LANGUAGE)
-    path = _lang_file(_bundle_dir(), FALLBACK_LANGUAGE)
-    # Running from source both paths are the same file.  It already failed as
-    # the external table, so retrying it would only duplicate the message.
-    if os.path.normcase(os.path.abspath(path)) == os.path.normcase(
-            os.path.abspath(external)):
-        return None
-    _embedded = _read_table(path, FALLBACK_LANGUAGE)
-    return _embedded
+    def discover_languages(self):
+        """Loadable languages as ``[(code, display name)]``, English first.
 
+        The display name is the ``LANG_NAME`` of the language file itself, so a
+        new translation names itself and needs no editor change.
+        """
+        result = []
+        for code in self.available_languages():
+            name = None
+            if self._external(code) is not None:
+                name = self._lang_name(self._lang_file(_program_dir(), code), code)
+            if not name and code == FALLBACK_LANGUAGE:
+                name = "English"
+            result.append((code, name or code.upper()))
+        result.sort(key=lambda item: (item[0] != FALLBACK_LANGUAGE, item[0]))
+        return result
 
-def _english():
-    """English table: external first, embedded copy as guaranteed fallback."""
-    return _external(FALLBACK_LANGUAGE) or _embedded_english()
+    def _lang_name(self, path: str, code: str):
+        try:
+            name = getattr(_load_module(path, "_bmh_langname_%s%s" % (self.prefix, code)), "LANG_NAME", None)
+            return name if isinstance(name, str) and name else None
+        except Exception:                         # noqa: BLE001
+            return None
 
+    def set_language(self, code: str) -> bool:
+        """Select ``code``; returns whether it is actually usable."""
+        if self._external(code) is None and code != FALLBACK_LANGUAGE:
+            return False
+        self.current = code
+        return True
 
-def available_languages() -> set:
-    """Codes that can actually be loaded right now.
+    def current_language(self) -> str:
+        return self.current
 
-    English is always included: even without an external file the embedded
-    copy answers for it.
-    """
-    codes = set()
-    folder = os.path.join(_program_dir(), LANG_SUBDIR)
-    try:
-        names = os.listdir(folder)
-    except Exception:                             # noqa: BLE001
-        names = []
-    for name in names:
-        if not (name.startswith(_PREFIX) and name.endswith(_SUFFIX)):
-            continue
-        code = name[len(_PREFIX):-len(_SUFFIX)]
-        if code and _external(code) is not None:
-            codes.add(code)
-    if _english() is not None:
-        codes.add(FALLBACK_LANGUAGE)
-    return codes
+    def take_problems(self):
+        """Drain collected load problems so the GUI can report them once."""
+        found = list(self.problems)
+        del self.problems[:]
+        return found
 
+    def tr(self, key: str, **fmt) -> str:
+        """Translate ``key``; fall back to English, then to the raw key.
 
-def discover_languages():
-    """Loadable languages as ``[(code, display name)]``, English first.
-
-    The display name is the ``LANG_NAME`` of the language file itself, so a new
-    translation names itself and needs no editor change.
-    """
-    result = []
-    for code in sorted(available_languages()):
-        table = _external(code)
-        name = None
+        Formatting is guarded: a translation with a wrong placeholder yields the
+        unformatted text instead of raising, so a single bad entry can never
+        abort building a dialog.
+        """
+        text = None
+        table = self._external(self.current) if self.current != FALLBACK_LANGUAGE else self._english()
         if table is not None:
-            path = _lang_file(_program_dir(), code)
-            name = _lang_name(path, code)
-        if not name and code == FALLBACK_LANGUAGE:
-            name = "English"
-        result.append((code, name or code.upper()))
-    result.sort(key=lambda item: (item[0] != FALLBACK_LANGUAGE, item[0]))
-    return result
+            text = table.get(key)
+        if text is None:
+            english = self._english()
+            if english is not None:
+                text = english.get(key)
+        if text is None:
+            return key
+        if not fmt:
+            return text
+        try:
+            return text.format(**fmt)
+        except Exception:                         # noqa: BLE001
+            return text
 
 
-def _lang_name(path: str, code: str):
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "_bmh_langname_" + code, path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        name = getattr(module, "LANG_NAME", None)
-        return name if isinstance(name, str) and name else None
-    except Exception:                             # noqa: BLE001
-        return None
-
-
-def set_language(code: str) -> bool:
-    """Select ``code``; returns whether it is actually usable."""
-    global _current
-    if _external(code) is None and code != FALLBACK_LANGUAGE:
-        return False
-    _current = code
-    return True
-
-
-def current_language() -> str:
-    return _current
-
-
-def take_problems():
-    """Drain collected load problems so the GUI can report them once."""
-    found = list(_problems)
-    del _problems[:]
-    return found
-
-
-def tr(key: str, **fmt) -> str:
-    """Translate ``key``; fall back to English, then to the raw key.
-
-    Formatting is guarded: a translation with a wrong placeholder yields the
-    unformatted text instead of raising, so a single bad entry can never abort
-    building a dialog.
-    """
-    text = None
-    table = _external(_current) if _current != FALLBACK_LANGUAGE else _english()
-    if table is not None:
-        text = table.get(key)
-    if text is None:
-        english = _english()
-        if english is not None:
-            text = english.get(key)
-    if text is None:
-        return key
-    if not fmt:
-        return text
-    try:
-        return text.format(**fmt)
-    except Exception:                             # noqa: BLE001
-        return text
+# Default translator (prefix ``lang_``): the module-level API used by the main editor.
+_default = Translator()
+configure = _default.configure
+available_languages = _default.available_languages
+discover_languages = _default.discover_languages
+set_language = _default.set_language
+current_language = _default.current_language
+take_problems = _default.take_problems
+tr = _default.tr
