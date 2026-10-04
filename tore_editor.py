@@ -97,14 +97,19 @@ def load_vga_image(vga_path, palette):
         return None
 
 
-def find_pic_dir(te_path):
-    game_dir = os.path.dirname(os.path.dirname(os.path.abspath(te_path)))
-    if os.path.isdir(game_dir):
-        for name in os.listdir(game_dir):
-            p = os.path.join(game_dir, name)
-            if name.lower() == "pic" and os.path.isdir(p):
+def find_subdir(parent, name):
+    try:
+        for fn in os.listdir(parent):
+            p = os.path.join(parent, fn)
+            if fn.lower() == name.lower() and os.path.isdir(p):
                 return p
+    except OSError:
+        pass
     return None
+
+
+def find_pic_dir(te_path):
+    return find_subdir(os.path.dirname(os.path.dirname(os.path.abspath(te_path))), "pic")
 
 
 def find_file(folder, stem):
@@ -221,7 +226,6 @@ def _save_language(code):
 
 LANG = i18n.Translator(prefix=I18N_PREFIX)
 tr = LANG.tr
-
 
 def _init_language():
     code = str(_load_settings().get("lang", i18n.FALLBACK_LANGUAGE))
@@ -1007,8 +1011,9 @@ def locate_pic(p=None):
         cand = [here, os.path.dirname(here)]
     else:
         cand = []
+    cand.append(find_subdir(APP_DIR, "pic"))
     cand.append(APP_DIR)
-    for d in cand:
+    for d in filter(None, cand):
         if find_file(d, "27"):
             return d
     return None
@@ -1403,7 +1408,8 @@ class ToreEditorPanel(ttk.Frame):
             self.after(300, self._show_data_warnings)
 
     def startup(self):
-        self.choose_pic()
+        if not self.pic_dir:
+            self.choose_pic()
         self._show_data_warnings()
 
     def _show_data_warnings(self):
