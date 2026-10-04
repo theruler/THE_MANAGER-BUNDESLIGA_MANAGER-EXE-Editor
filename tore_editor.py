@@ -2475,15 +2475,15 @@ class ToreEditorPanel(ttk.Frame):
                 m.add_cascade(label=tr("cx.run"), menu=self._run_menu(m))
             m.add_command(label=tr("s.mirrorpose"), command=self.mirror_sel)
             m.add_command(label=tr("s.lock"), command=self.clear_anim)
-            m.add_separator()
-            m.add_command(label=tr("cx.auto"), command=self.auto_here)
-            m.add_command(label=tr("cx.smooth_here"), command=self.smooth_path)
-            m.add_command(label=tr("cx.even_here"), command=self.even_speed)
             m.add_command(label=tr("p.freeze"), command=self.freeze_here)
             if cls(sid) in "SB":
                 m.add_command(label=tr("cx.cam_ball"), command=self.auto_camera)
             else:
                 m.add_command(label=tr("cx.cam_sprite"), command=self.auto_camera)
+            m.add_separator()
+            m.add_command(label=tr("cx.auto"), command=self.auto_here)
+            m.add_command(label=tr("cx.smooth_here"), command=self.smooth_path)
+            m.add_command(label=tr("cx.even_here"), command=self.even_speed)
             m.add_separator()
             m.add_command(label=tr("cx.tip"), state="disabled")
         elif k is not None:
