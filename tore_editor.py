@@ -8,12 +8,9 @@ import shutil
 import struct
 import sys
 import time
-
 import tkinter as tk
 from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
-
 from PIL import Image, ImageDraw, ImageTk
-
 import i18n
 
 FRAME_SIZE = 164
@@ -356,7 +353,9 @@ def _clean_actions(raw):
         rstand = {d: int(rs[d]) if d in rs else rmove[d][0] for d in DIRS}
     else:
         rstand = {d: int(rs) if d in "EW" else rmove[d][0] for d in DIRS}
-    return acts, order, moves, stand, {"move": rmove, "stand": rstand}
+    br = raw.get("ball")
+    rot = br.get("rotation") if isinstance(br, dict) else None
+    return acts, order, moves, stand, {"move": rmove, "stand": rstand}, rot
 
 
 def load_data():
@@ -364,10 +363,15 @@ def load_data():
     global PLAYER_CATS, REF_CATS, BALL_CATS, BALL_ALL
     warn = []
     try:
-        acts, order, moves, stand, ref = _clean_actions(_load_json(ACTIONS_FILE))
+        acts, order, moves, stand, ref, rot = _clean_actions(_load_json(ACTIONS_FILE))
     except (DataError, TypeError, ValueError, KeyError, AttributeError) as ex:
         warn.append("%s: %s - actions and movement unavailable" % (os.path.basename(ACTIONS_FILE), _why(ex)))
-        acts, order, moves, stand, ref = {}, [], {}, {}, {"move": {}, "stand": {}}
+        acts, order, moves, stand, ref, rot = {}, [], {}, {}, {"move": {}, "stand": {}}, None
+    try:
+        rot = _ks(rot, 142, 144) if rot else None
+    except (TypeError, ValueError) as ex:
+        warn.append("%s: ball rotation: %s - using the default rotation" % (os.path.basename(ACTIONS_FILE), ex))
+        rot = None
     ACTIONS, ACTION_ORDER, MOVE_E, STAND_K = acts, order, moves, stand
     REF_MOVE, REF_STAND = ref["move"], ref["stand"]
     try:
@@ -380,13 +384,13 @@ def load_data():
         red, refc, ball = [], [], []
     PLAYER_CATS, REF_CATS, BALL_ALL = red, refc, ball
     BALL_CATS = [(n, v) for n, v in ball if n != "shadow"]
-    BALL_ROT = list(dict(ball).get("rotation") or [])
+    BALL_ROT = rot or [k for k in (dict(ball).get("rotation") or []) if 142 <= k <= 144]
     DATA_WARNINGS[:] = warn
     return warn
 
 
 def save_data_files(pg, ad):
-    _dump(ACTIONS_FILE, {"order": ad["order"], "actions": ad["actions"], "moves": ad["moves"], "stand": ad["stand"], "referee": ad["referee"]})
+    _dump(ACTIONS_FILE, {"order": ad["order"], "actions": ad["actions"], "moves": ad["moves"], "stand": ad["stand"], "referee": ad["referee"], "ball": ad["ball"]})
     _dump_merge(POSES_FILE, _poses_file(pg["red"], pg["referee"], pg["ball"]))
 
 
@@ -1088,7 +1092,8 @@ GIF_PRESETS = {
     "High quality":    dict(colors=256, shared=True, dither=False, step=1, optimize=True),
     "Maximum quality": dict(colors=256, shared=False, dither=True, step=1, optimize=True),
 }
-GIF_PRESET_KEYS = {"Smallest file": "gif.p.smallest", "Small": "gif.p.small", "Balanced": "gif.p.balanced", "High quality": "gif.p.high", "Maximum quality": "gif.p.max", "Custom": "gif.p.custom"}
+GIF_PRESET_KEYS = {"Smallest file": "gif.p.smallest", "Small": "gif.p.small", "Balanced": "gif.p.balanced",
+                   "High quality": "gif.p.high", "Maximum quality": "gif.p.max", "Custom": "gif.p.custom"}
 
 
 class GifCancelled(Exception):
@@ -1603,22 +1608,33 @@ class ToreEditorPanel(ttk.Frame):
         f = newmenu("m.file")
         for key, cmd, acc in (("f.new", self.new_scene, "Ctrl+N"), ("f.open", self.open_dialog, "Ctrl+O"),
                               ("f.save", self.save, "Ctrl+S"), ("f.saveas", self.save_as, "Ctrl+Shift+S"),
-                              ("f.numbered", self.save_numbered, ""),  (None, None, None), ("f.gif", self.export_gif, ""), (None, None, None),
-                              ("f.pic", self.choose_pic, ""), ("f.delete", self.delete_file, ""), *self._exit_items()):
+                              ("f.numbered", self.save_numbered, ""),
+                              (None, None, None),
+                              ("f.gif", self.export_gif, ""),
+                              (None, None, None),
+                              ("f.pic", self.choose_pic, ""), ("f.delete", self.delete_file, ""),
+                              *self._exit_items()):
             self._add(f, key, cmd, acc)
 
         e = newmenu("m.edit")
         for key, cmd, acc in (("undo", self.undo, "Ctrl+Z"), ("redo", self.redo, "Ctrl+Y"), (None, None, None),
                               ("e.selall", self.select_all, "Ctrl+A"), (None, None, None),
-                              ("e.insframe", self.ins_frame, "Ins"), ("e.delframe", self.del_frame, "Del"),
-                              ("e.clearfilm", self.clear_film, ""), (None, None, None), ("e.mirror", lambda: self.mirror(True, True), ""),
-                              ("e.swap", lambda: self.mirror(False, True), ""), (None, None, None), ("e.props", self.props, "")):
+                              ("e.insframe", self.ins_frame, "Ins"),
+                              ("e.delframe", self.del_frame, "Del"),
+                              ("e.clearfilm", self.clear_film, ""), (None, None, None),
+                              ("e.mirror", lambda: self.mirror(True, True), ""),
+                              ("e.swap", lambda: self.mirror(False, True), ""),
+                              (None, None, None), ("e.props", self.props, "")):
             self._add(e, key, cmd, acc)
 
         fg = newmenu("m.sprite")
         self._mi(fg, "cascade", "s.action", menu=self._action_menu(fg))
         self._mi(fg, "cascade", "s.run", menu=self._run_menu(fg))
-        for key, cmd in (("s.auto_here", self.auto_here), ("s.auto_all", lambda: self.auto_here(True)), (None, None), ("s.mirrorpose", self.mirror_sel), ("s.lock", self.clear_anim), ("s.program", self.program_anim)):
+        for key, cmd in (("s.auto_here", self.auto_here),
+                         ("s.auto_all", lambda: self.auto_here(True)),
+                         (None, None), ("s.mirrorpose", self.mirror_sel),
+                         ("s.lock", self.clear_anim),
+                         ("s.program", self.program_anim)):
             self._add(fg, key, cmd, "")
 
         p = newmenu("m.path")
@@ -1824,7 +1840,7 @@ class ToreEditorPanel(ttk.Frame):
         pf = ttk.Frame(nb)
         nb.add(self._reg_tab(pf, "tab.poses"), text=tr("tab.poses"))
         self.cat_cb = ttk.Combobox(pf, textvariable=self.cat_var, state="readonly", width=34)
-        self.cat_cb.pack(padx=4, pady=4)
+        self.cat_cb.pack(anchor="w",padx=4, pady=4)
         self.cat_cb.bind("<<ComboboxSelected>>", lambda e: self.draw_poses())
         self.pose_cv = tk.Canvas(pf, width=5 * 44, height=150, highlightthickness=0)
         self.pose_cv.pack(padx=4)
@@ -3059,7 +3075,9 @@ class ToreEditorPanel(ttk.Frame):
         a, b, idx = self._gif_indices(s)
         frames = self._gif_render(s, idx, lambda i, n: progress(0.25 * i / n, tr("gif.rendering", i=i + 1, n=n)))
         durs = gif_durations(idx, b, s["fps"], s["hold"])
-        data = build_gif(frames, durs, colors=s["colors"], dither=s["dither"], shared=s["shared"], optimize=s["optimize"], loop=s["loop"], scale=s["scale"], smooth=s["smooth"], progress=lambda i, n: progress(0.25 + 0.75 * i / n, tr("gif.encoding", i=min(i + 1, n), n=n)))
+        data = build_gif(frames, durs, colors=s["colors"], dither=s["dither"], shared=s["shared"],
+                         optimize=s["optimize"], loop=s["loop"], scale=s["scale"], smooth=s["smooth"],
+                         progress=lambda i, n: progress(0.25 + 0.75 * i / n, tr("gif.encoding", i=min(i + 1, n), n=n)))
         return data, len(frames), (frames[0].width * s["scale"], frames[0].height * s["scale"])
 
     def export_gif(self):
@@ -3190,7 +3208,10 @@ class ToreEditorPanel(ttk.Frame):
             path = None
             if save:
                 base = os.path.splitext(os.path.basename(self.scene.path or "scene"))[0]
-                path = filedialog.asksaveasfilename(parent=w, title=tr("gif.title"), defaultextension=".gif", initialfile=base + ".gif", initialdir=os.path.dirname(os.path.abspath(self.scene.path)) if self.scene.path else None, filetypes=[(tr("gif.type"), "*.gif"), (tr("ft.all"), "*.*")])
+                path = filedialog.asksaveasfilename(parent=w, title=tr("gif.title"), defaultextension=".gif",
+                                                    initialfile=base + ".gif",
+                                                    initialdir=os.path.dirname(os.path.abspath(self.scene.path)) if self.scene.path else None,
+                                                    filetypes=[(tr("gif.type"), "*.gif"), (tr("ft.all"), "*.*")])
                 if not path:
                     return
             running[0], cancel[0] = True, False
@@ -4053,7 +4074,7 @@ class ToreEditorPanel(ttk.Frame):
                 if not BALL_ROT:
                     continue
                 for i in range(i0, i1 + 1):
-                    fs[i].figs[sl][2] = BALL_ROT[i % 3]
+                    fs[i].figs[sl][2] = BALL_ROT[i % len(BALL_ROT)]
                     fs[i].touch()
                 continue
             dirs = []
@@ -4495,7 +4516,8 @@ class ToreEditorPanel(ttk.Frame):
         pg = {"red": {n: list(v) for n, v in PLAYER_CATS}, "referee": {n: list(v) for n, v in REF_CATS}, "ball": {n: list(v) for n, v in BALL_ALL}}
         ad = {"order": list(ACTION_ORDER), "actions": copy.deepcopy(ACTIONS),
               "moves": {d: list(v) for d, v in MOVE_E.items()}, "stand": dict(STAND_K),
-              "referee": {"move": {d: list(v) for d, v in REF_MOVE.items()}, "stand": dict(REF_STAND)}}
+              "referee": {"move": {d: list(v) for d, v in REF_MOVE.items()}, "stand": dict(REF_STAND)},
+              "ball": {"rotation": list(BALL_ROT)}}
         nb = ttk.Notebook(w)
         nb.pack(fill="both", expand=True, padx=6, pady=6)
         GROUP_RNG = {"red": (0, 58), "referee": (118, 141), "ball": (142, 145)}
@@ -4798,16 +4820,16 @@ class ToreEditorPanel(ttk.Frame):
             for wd in mrows.winfo_children():
                 wd.destroy()
             mv.clear()
-            lo, hi = GROUP_RNG[g]
+            lo, hi = (142, 144) if g == "ball" else GROUP_RNG[g]
             mhint.config(text=tr({"red": "de.hint_red", "referee": "de.hint_ref", "ball": "de.hint_ball"}[g]))
             big = ("TkDefaultFont", 14, "bold")
             if g == "ball":
-                var = tk.StringVar(value=ids_text(pg["ball"].get("rotation", [])))
+                var = tk.StringVar(value=ids_text(ad["ball"]["rotation"]))
                 self._reg(ttk.Label(mrows, font=big, foreground="#b4b4b4", anchor="center"), "de.rotation").grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
                 SpriteStrip(mrows, gfx, var, lambda: (lo, hi), per_row=6, zoom=3).grid(row=1, column=0, padx=6, pady=(0, 6))
 
                 def ap(var=var):
-                    pg["ball"]["rotation"] = parse_ids(var.get(), lo, hi)
+                    ad["ball"]["rotation"] = parse_ids(var.get(), lo, hi)
                 var.trace_add("write", live(ap))
                 mv.append((tr("de.rot_cycle"), ap))
             else:
