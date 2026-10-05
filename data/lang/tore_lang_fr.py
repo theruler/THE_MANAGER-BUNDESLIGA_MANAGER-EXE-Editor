@@ -145,9 +145,9 @@ TEXTS_FR = {
     "sel.first": "Sélectionnez d'abord un sprite.",
 
     # ---- poses / actions / sound / names    
-    "act.intro": "Appliqué à l'image actuelle au\njoueur sélectionné (la couleur de l'équipe est automatique).",
+    "act.intro": "Appliqué à l'image actuelle au\njoueur sélectionné (couleur automatique).",
     "act.resume": "puis reprendre automatiquement la course",
-    "act.rundir": "Direction de course (sprites, jusqu'à la fin du film) :",
+    "act.rundir": "Direction de course (jusqu'à la fin du film) :",
     "act.stand": "à l'arrêt",
     "snd.none": "aucun",
     "act.go": "Avancer",

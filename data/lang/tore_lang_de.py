@@ -67,7 +67,7 @@ TEXTS_DE = {
 "tl.frame": "Frame {n}", "tl.loop_start": "Schleifenanfang hier setzen", "tl.loop_end": "Schleifenende hier setzen",
 "tl.loop_reset": "Schleifenbereich zurücksetzen", "tl.delete": "Frame löschen", "tl.sound": "Sound bei diesem Frame",
 "sel.first": "Zuerst einen Sprite auswählen.",
-"act.intro": "Wird im aktuellen Frame auf den\ngewählten Spieler angewendet (Teamfarbe automatisch).",
+"act.intro": "Wird im aktuellen Frame auf den\ngewählten Spieler angewendet (farbe auto).",
 "act.resume": "danach automatisch weiterlaufen",
 "act.rundir": "Laufrichtung (Sprites, bis Filmende):",
 "act.stand": "stehen", "snd.none": "keiner", "act.go": "Los",
