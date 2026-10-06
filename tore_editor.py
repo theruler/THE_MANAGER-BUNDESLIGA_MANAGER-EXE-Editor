@@ -146,7 +146,7 @@ class Graphics:
         if sid not in self._cache:
             w = 4 if sid >= 142 else CELL_W
             t = team_of(sid)
-            if sid == 145:
+            if 145 <= sid <= 147:
                 im = Image.new("RGBA", (w, CELL_H), (0, 0, 0, 0))
                 ImageDraw.Draw(im).ellipse((0, 4, w - 1, 8), fill=(0, 0, 0, 140))
             elif sid >= 142:
@@ -378,7 +378,7 @@ def load_data():
         raw = _load_json(POSES_FILE)
         red = _cats(raw["red"], 0, 58)
         refc = _cats(raw["referee"], 118, 141)
-        ball = _cats(raw["ball"], 142, 145)
+        ball = _cats(raw["ball"], 142, 147)
     except (DataError, TypeError, ValueError, KeyError, AttributeError) as ex:
         warn.append("%s: %s - pose sets unavailable" % (os.path.basename(POSES_FILE), _why(ex)))
         red, refc, ball = [], [], []
@@ -402,7 +402,7 @@ def cls(sid):
         return "L"
     if sid > 1000:
         return "R"
-    if sid == 145:
+    if 145 <= sid <= 147:
         return "S"
     if sid >= 142:
         return "B"
@@ -436,6 +436,8 @@ def cats_for(sid):
         return [(n, [k + off for k in ks]) for n, ks in PLAYER_CATS]
     if t == "A":
         return REF_CATS
+    if cls(sid) == "S":
+        return [(n, v) for n, v in BALL_ALL if n == "shadow"]
     return BALL_CATS if cls(sid) == "B" else []
 
 
@@ -768,7 +770,7 @@ class Frame:
         self.dirty = False
 
     def sorted_order(self):
-        sh = next((f for f in self.figs if f[2] == 145), None)
+        sh = next((f for f in self.figs if cls(f[2]) == "S"), None)
 
         def key(i):
             x, y, sid = self.figs[i]
@@ -824,7 +826,7 @@ def _grp(sid):
         return 5
     if sid > 1000:
         return 6
-    if sid == 145:
+    if 145 <= sid <= 147:
         return 3
     if sid >= 142:
         return 4
@@ -2192,7 +2194,7 @@ class ToreEditorPanel(ttk.Frame):
                 self.set_pose_to(sl, p)
 
     def set_pose_to(self, sl, pid):
-        pid = max(0, min(145, pid))
+        pid = max(0, min(147, pid))
         for i in self.frames_in_scope():
             self.scene.frames[i].figs[sl][2] = pid
             self.scene.frames[i].touch()
@@ -2587,7 +2589,7 @@ class ToreEditorPanel(ttk.Frame):
                 if None in sq:
                     continue
                 for n, i in enumerate(range(self.idx, len(self.scene.frames))):
-                    self.scene.frames[i].figs[sl][2] = max(0, min(145, sq[n % len(sq)]))
+                    self.scene.frames[i].figs[sl][2] = max(0, min(147, sq[n % len(sq)]))
                     self.scene.frames[i].touch()
             self.refresh()
 
@@ -4520,7 +4522,7 @@ class ToreEditorPanel(ttk.Frame):
               "ball": {"rotation": list(BALL_ROT)}}
         nb = ttk.Notebook(w)
         nb.pack(fill="both", expand=True, padx=6, pady=6)
-        GROUP_RNG = {"red": (0, 58), "referee": (118, 141), "ball": (142, 145)}
+        GROUP_RNG = {"red": (0, 58), "referee": (118, 141), "ball": (142, 147)}
 
         def gfx():
             return self.gfx
