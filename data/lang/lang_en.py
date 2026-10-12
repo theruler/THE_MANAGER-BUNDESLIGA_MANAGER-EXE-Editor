@@ -289,6 +289,8 @@ TEXTS_EN = {
     "preview.sum.status": "Overall status: {value}",
     "preview.sum.profile": "Profile: {value}",
     "preview.sum.normal": "Normal strings changed: {value}",
+    "preview.sum.news_title":   "Newspaper title strings changed: {value}",
+    "preview.sum.news_article": "Newspaper article strings changed: {value}",
     "preview.sum.fixed": "Fixed strings changed: {value}",
     "preview.sum.codeonly": "Code-only strings changed: {value}",
     "preview.sum.glyphs": "Unique glyphs changed: {value}",

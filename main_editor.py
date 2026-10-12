@@ -46,7 +46,7 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.9.3"
+APP_VERSION = "2.9.4"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -1045,18 +1045,16 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.entry_index_by_id = mapping
 
     @staticmethod
-    def _entry_filter_kind(entry, newspaper_ids=frozenset()):
+    def _entry_filter_kind(entry, newspaper_kinds=None):
+        newspaper_kinds = newspaper_kinds or {}
         if entry.get("fixed"):
             return "fixed"
         if entry.get("ptr_addrs"):
-            if entry.get("string_id") in newspaper_ids:
-                return "newspaper"
-            return "normal"
+            return newspaper_kinds.get(entry.get("string_id"), "normal")
         if entry.get("code_ptr_addrs"):
             return "code-only"
         raise SearchFilterError(
-            f"Entry {entry.get('string_id', '?')} has no supported reference kind"
-        )
+            f"Entry {entry.get('string_id', '?')} has no supported reference kind")
 
     def _rebuild_baseline_filter_index(self):
         if not self.profile or not self.profile_name or not self.initial_unpacked_data:
@@ -1136,7 +1134,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._sync_entry_index()
         if set(self.entry_index_by_id) != set(self.baseline_filter_data):
             raise SearchFilterError("Search baseline does not match current entries")
-        newspaper_ids = self._newspaper_ids()
+        newspaper_kinds = self._newspaper_kinds()
         preview = self.diff_preview_cache.get() or {}
         preview_rows = preview.get("strings_by_id", {})
         rows = []
@@ -1154,7 +1152,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             preview_status = preview_rows.get(string_id, {}).get("status")
             rows.append({
                 "string_id": string_id,
-                "kind": self._entry_filter_kind(entry, newspaper_ids),
+                "kind": self._entry_filter_kind(entry, newspaper_kinds),
                 "font": font,
                 "current_text": current_text,
                 "baseline_text": baseline["text"],
@@ -1188,15 +1186,18 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.current_range_label.config(text="")
         self._update_save_state()
 
-    def _newspaper_ids(self, strict=False):
+    def _newspaper_kinds(self, strict=False):
         try:
             if not self.profile_name or not newspaper_csv.is_supported(self.profile_name):
-                return set()
-            return {e["string_id"] for e in newspaper_csv.collect(self.profile_name, self.entries)}
+                return {}
+            return newspaper_csv.collect_kinds(self.profile_name, self.entries)
         except Exception:
             if strict:
                 raise
-            return set()
+            return {}
+    
+    def _newspaper_ids(self, strict=False):
+        return set(self._newspaper_kinds(strict))
 
     def _is_newspaper_entry(self, entry: dict) -> bool:
         return self._supported_loaded() and entry.get("string_id") in self._newspaper_ids()
@@ -1265,11 +1266,19 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         def _ptr_addrs(entry):
             return entry.get("ptr_addrs") or entry.get("code_ptr_addrs") or []
 
-        def _first_ptr(sid):
-            addrs = _ptr_addrs(self.entries[self.entry_index_by_id[sid]])
-            return addrs[0] if addrs else 0xFFFFFFFF
+        def _stable_key(entry):
+            if entry.get("ptr_addrs"):
+                return (0, entry["ptr_addrs"][0])
+            if entry.get("code_ptr_addrs"):
+                return (1, entry["code_ptr_addrs"][0])
+            return (2, entry.get("original_str_addr", entry["str_addr"]))
 
-        self.visible_string_ids = sorted(visible, key=_first_ptr)
+        row_number = {
+            e["string_id"]: n
+            for n, e in enumerate(sorted(self.entries, key=_stable_key), start=1)
+        }
+
+        self.visible_string_ids = sorted(visible, key=row_number.__getitem__)
         ds_start = self.profile.get("ds_start", 0) if self.profile else 0
         for string_id in self.visible_string_ids:
             index = self.entry_index_by_id[string_id]
@@ -1282,7 +1291,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 first_ptr = hex(ptr_val)
                 if entry.get("ptr_addrs"):
                     ptr_ds_offset = hex(ptr_addrs[0] - ds_start) if ds_start else hex(ptr_addrs[0])
-            self.tree.insert("", tk.END, iid=string_id, values=(index + 1, ptr_ds_offset, first_ptr, self._decode_entry_text(entry)),)
+            self.tree.insert("", tk.END, iid=string_id, values=(row_number[string_id], ptr_ds_offset, first_ptr, self._decode_entry_text(entry)))
         total, shown = len(self.entries), len(self.visible_string_ids)
         self._set_counter(shown, total)
         if self.filter_index_error:
@@ -1437,14 +1446,14 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
     def _ask_translate_all_scope(self):
         try:
-            newspaper_ids = self._newspaper_ids(strict=True)
+            newspaper_kinds = self._newspaper_kinds(strict=True)
         except Exception as exc:
             messagebox.showerror(self.tr("dlg.translate_all.blocked"),self.tr("dlg.translate_all.nochange", detail=exc))
             return None
         kinds = {}
         for entry in self.entries:
             try:
-                kinds[entry["string_id"]] = self._entry_filter_kind(entry, newspaper_ids)
+                   kinds[entry["string_id"]] = self._entry_filter_kind(entry, newspaper_kinds)
             except SearchFilterError:
                 pass
         total = len(self.entries)
@@ -1486,7 +1495,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             if normal_var.get():
                 allowed.add("normal")
             if news_var.get():
-                allowed.add("newspaper")
+                allowed.update(("news-title", "news-article"))
             return {entry["string_id"] for number, entry in enumerate(self.entries, 1)
                     if lo <= number <= hi and kinds.get(entry["string_id"]) in allowed}
 
@@ -1983,6 +1992,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 self._get_font_for_entry(entry),
                 pending_raw=pending_raw,
                 cached_snapshot=self.diff_preview_cache.get(),
+                kind_override=self._newspaper_kinds().get(entry["string_id"]),
             )
         except (DiffPreviewError, KeyError, ValueError) as exc:
             self.current_range_label.config(text=self.tr("edit.diff_unavailable", error=exc), foreground="#C0392B")

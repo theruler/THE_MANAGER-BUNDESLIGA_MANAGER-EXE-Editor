@@ -290,6 +290,8 @@ TEXTS_FR = {
     "preview.sum.profile": "Profil : {value}",
     "preview.sum.normal": "Chaînes normales modifiées : {value}",
     "preview.sum.fixed": "Chaînes fixes modifiées : {value}",
+    "preview.sum.news_title":   "Chaînes de titre de journal modifiées : {value}",
+    "preview.sum.news_article": "Chaînes d'article de journal modifiées : {value}",
     "preview.sum.codeonly": "Chaînes code uniquement modifiées : {value}",
     "preview.sum.glyphs": "Glyphes uniques modifiés : {value}",
     "preview.sum.fonts": "Polices affectées : {value}",

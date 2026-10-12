@@ -76,6 +76,8 @@ def show_preview_dialog(
         tr("preview.sum.normal",    value=summary["normal_changed"]),
         tr("preview.sum.fixed",     value=summary["fixed_changed"]),
         tr("preview.sum.codeonly",  value=summary["code_only_changed"]),
+        tr("preview.sum.news_title",   value=summary.get("news_title_changed", 0)),
+        tr("preview.sum.news_article", value=summary.get("news_article_changed", 0)),
         tr("preview.sum.pointers",  value=summary["pointer_sources_changed"]),
         tr("preview.sum.integrity_fix",  value=flag(summary.get("integrity_fix_applied", False))),
         "",

@@ -7,7 +7,8 @@ class SearchFilterError(ValueError):
     pass
 
 
-KIND_FILTERS = ("All", "Normal", "Newspaper", "Fixed", "Code-only", "Suffix-Shared")
+KIND_FILTERS = ("All", "Normal", "Newspaper", "News-Title", "News-Article", "Fixed", "Code-only", "Suffix-Shared")
+NEWS_KINDS = frozenset(("news-title", "news-article"))
 CHANGE_FILTERS = ("All", "Changed", "Unchanged")
 STATUS_FILTERS = (
     "All",
@@ -78,7 +79,7 @@ def build_filter_records(rows: Iterable[Mapping]) -> tuple[FilterRecord, ...]:
 
         if not isinstance(string_id, str) or not string_id or string_id in seen_ids:
             raise SearchFilterError(f"Missing or duplicate string_id at row {source_index}")
-        if kind not in {"normal", "newspaper", "fixed", "code-only"}:
+        if kind not in {"normal", "fixed", "code-only"} | NEWS_KINDS:
             raise SearchFilterError(f"Invalid string kind for {string_id}: {kind!r}")
         if not isinstance(font, str) or not font:
             raise SearchFilterError(f"Invalid effective font for {string_id}")
@@ -142,7 +143,11 @@ def filter_string_ids(
             continue
         if kind_filter == "Normal" and (record.kind != "normal" or record.suffix_shared):
             continue
-        if kind_filter == "Newspaper" and record.kind != "newspaper":
+        if kind_filter == "Newspaper" and record.kind not in NEWS_KINDS:
+            continue
+        if kind_filter == "News-Title" and record.kind != "news-title":
+            continue
+        if kind_filter == "News-Article" and record.kind != "news-article":
             continue
         if kind_filter == "Fixed" and record.kind != "fixed":
             continue

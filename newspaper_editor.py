@@ -1117,21 +1117,20 @@ class NewspaperEditorPanel(ttk.Frame):
             ed = ed_by_id.get(comp["component_id"])
             if ed:
                 try:
-                    display_text = ed.get_display()
+                    raw_text = ed.get_source()
                 except CharmapEncodeError as exc:
                     self._err_lbl.config(text=str(exc))
                     return None
             else:
-                display_text = self._decode_fn(comp["source_text"])
-
+                raw_text = comp["source_text"]
             rows_data.append({
-                "component_id":   comp["component_id"],
-                "parent_id":      comp.get("parent_id", ""),
-                "selector":       comp.get("selector", ""),
-                "selector_code":  comp.get("selector_code", ""),
-                "branch_index":   comp.get("branch_index", ""),
-                "source_text":    comp["source_text"],
-                "translated_text": display_text,
+                "component_id":    comp["component_id"],
+                "parent_id":       comp.get("parent_id", ""),
+                "selector":        comp.get("selector", ""),
+                "selector_code":   comp.get("selector_code", ""),
+                "branch_index":    comp.get("branch_index", ""),
+                "source_text":     comp["source_text"],
+                "translated_text": raw_text,
             })
         sid = self._entry.get("string_id", "?") if self._entry else "?"
         try:

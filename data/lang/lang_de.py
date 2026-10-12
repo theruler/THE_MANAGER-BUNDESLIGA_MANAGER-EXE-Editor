@@ -288,6 +288,8 @@ TEXTS_DE = {
     "preview.sum.profile": "Profil: {value}",
     "preview.sum.normal": "Geänderte normale Strings: {value}",
     "preview.sum.fixed": "Geänderte Fixed-Strings: {value}",
+    "preview.sum.news_title":   "Geänderte Zeichenketten für Zeitungstitel: {value}",
+    "preview.sum.news_article": "Geänderte Zeichenketten für Zeitungsartikel: {value}",
     "preview.sum.codeonly": "Geänderte Code-only-Strings: {value}",
     "preview.sum.glyphs": "Geänderte eindeutige Glyphen: {value}",
     "preview.sum.fonts": "Betroffene Fonts: {value}",

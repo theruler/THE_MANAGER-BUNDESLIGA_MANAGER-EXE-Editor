@@ -26,6 +26,21 @@ NOTE_UNKNOWN_SELECTOR = ("ORIGINAL DEFECT: selector code {code} is not a valid c
 class NewspaperCsvError(ValueError):
     pass
 
+def kind_of(profile_id, entry):
+    source = _source_of(entry)
+    if source is None:
+        return None
+    headlines, articles = NEWSPAPER_SOURCES[profile_id]
+    if headlines[0] <= source < headlines[1]:
+        return "news-title"
+    if articles[0] <= source < articles[1]:
+        return "news-article"
+    return None
+
+
+def collect_kinds(profile_id, entries):
+    return {e["string_id"]: kind_of(profile_id, e)
+            for e in collect(profile_id, entries)}
 
 def is_supported(profile_id):
     return profile_id in NEWSPAPER_SOURCES
@@ -203,6 +218,6 @@ def preflight_import(profile_id, entries, decode, raw_csv):
     return replacements
 
 
-__all__ = ["FORMAT_NAME", "FORMAT_VERSION", "COLUMNS", "NEWSPAPER_SOURCES",
+__all__ = ["FORMAT_NAME", "FORMAT_VERSION", "COLUMNS", "NEWSPAPER_SOURCES", "kind_of", "collect_kinds",
            "MAX_WORD_LENGTH", "NewspaperCsvError", "is_supported", "collect",
            "build_rows", "export_csv_bytes", "parse_csv_bytes", "preflight_import"]

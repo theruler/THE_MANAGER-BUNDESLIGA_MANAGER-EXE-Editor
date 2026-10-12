@@ -2,6 +2,7 @@ from __future__ import annotations
 import copy
 import re
 import struct
+import newspaper_csv
 from dataclasses import dataclass
 from typing import Callable
 from font_safety import (
@@ -545,11 +546,13 @@ def selected_string_status(
     *,
     pending_raw: bytes | None = None,
     cached_snapshot: dict | None = None,
+    kind_override: str | None = None
 ) -> dict:
     old_raw = _baseline_raw_for_entry(baseline_data, entry, profile)
     new_raw = pending_raw if pending_raw is not None else _raw(entry)
     string_id = entry["string_id"]
     kind = _kind(entry)
+    kind = kind_override or kind
     block = None if kind == "fixed" else _block_for_entry(baseline_data, profile, entry)
     status = "PENDING" if pending_raw is not None else (
         "PASS" if old_raw != new_raw else "UNCHANGED"
@@ -723,6 +726,11 @@ def build_diff_preview(
     preview_meta = _document_by_id(
         profile_id, profile, preview_entries, charmaps, effective_font, font_codes
     )
+    try:
+        news_kinds = (newspaper_csv.collect_kinds(profile_id, preview_entries)
+                    if newspaper_csv.is_supported(profile_id) else {})
+    except Exception:
+        news_kinds = {}
     baseline_by_id = {entry["string_id"]: entry for entry in baseline_entries}
     preview_by_id = {entry["string_id"]: entry for entry in preview_entries}
     if set(baseline_by_id) != set(preview_by_id):
@@ -757,13 +765,13 @@ def build_diff_preview(
 
     string_rows = []
     logical_errors = []
-    changed_counts = {"normal": 0, "fixed": 0, "code-only": 0}
+    changed_counts = {"normal": 0, "fixed": 0, "code-only": 0, "news-title": 0, "news-article": 0}
     for string_id in sorted(baseline_by_id):
         old_entry = baseline_by_id[string_id]
         new_entry = preview_by_id[string_id]
         old_raw, new_raw = _raw(old_entry), _raw(new_entry)
         old_meta, new_meta = baseline_meta[string_id], preview_meta[string_id]
-        kind = new_meta["kind"]
+        kind = news_kinds.get(string_id) or new_meta["kind"]
         changed = old_raw != new_raw
         shared = bool(old_meta["suffix_links"] or new_meta["suffix_links"])
         row_error = None
@@ -840,6 +848,8 @@ def build_diff_preview(
     fonts_affected = sorted({row["font"] for row in font_rows})
     repack_needed = bool(
         changed_counts["normal"]
+        or changed_counts["news-title"]
+        or changed_counts["news-article"]
         or changed_counts["code-only"]
         or pointer_rows
         or dynamic_pending
@@ -869,6 +879,8 @@ def build_diff_preview(
             "normal_changed": changed_counts["normal"],
             "fixed_changed": changed_counts["fixed"],
             "code_only_changed": changed_counts["code-only"],
+            "news_title_changed": changed_counts["news-title"],
+            "news_article_changed": changed_counts["news-article"],
             "glyphs_changed": len(font_rows),
             "fonts_affected": fonts_affected,
             "pointer_sources_changed": len(pointer_rows),
