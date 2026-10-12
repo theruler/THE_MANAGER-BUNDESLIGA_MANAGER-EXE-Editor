@@ -1,5 +1,6 @@
 {
  "order": [
+  "kick",
   "dive",
   "header",
   "bicycle",
@@ -9,6 +10,11 @@
   "cele"
  ],
  "actions": {
+  "kick": {
+   "label": "Power Kick",
+   "E": [1, 10, 11],
+   "W": [49, 48, 47]
+  },
   "dive": {
    "label": "Dive",
    "E": [12, 13, 14, 14, 14, 14],
