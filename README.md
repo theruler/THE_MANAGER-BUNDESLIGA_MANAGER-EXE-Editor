@@ -29,6 +29,7 @@ Executable profiles are detected automatically. File names do not matter.
 - MANA.DAT editor
 - VGA/CP editor
 - GOAL Scenes (TORE) Editor
+- "IL MISTER" Mini Arcade Tactical Soccer Game
 
 
 ## String editor
@@ -124,8 +125,20 @@ Your new scene is only one click away!
 
 <img width="1248" height="769" alt="immagine" src="https://github.com/user-attachments/assets/68031d9d-a414-4e75-9803-3b4f63e1a7b0" />
 
+## "IL MISTER"
+
+I've started this project as proof of concept, but using the experience made with the editor the concept evolved in a proper Mini arcade/tactica soccer game!
+The game uses the graphics of the original game, MANA.DAT for Teams and players, and features two game mode: mouse click realtime game, and PAUSE tactical Manager game.
+
+<img width="1014" height="805" alt="immagine" src="https://github.com/user-attachments/assets/259b2857-6ad1-4d4c-8918-e017a61e3d50" />
+
+<img width="1020" height="801" alt="immagine" src="https://github.com/user-attachments/assets/a4e98994-8c67-4734-b3db-5e05f5264439" />
+
+<img width="1437" height="863" alt="immagine" src="https://github.com/user-attachments/assets/6259a003-958e-41b1-b5aa-8d23b6520a64" />
+
 
 ## Usage
+You need a copy of installed THE MANAGER / BMP DOS program to use the graphic, font and data of the game
 
 1. Open a supported EXE.
 2. Have fun.
