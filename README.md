@@ -129,6 +129,8 @@ Your new scene is only one click away!
 
 I've started this project as proof of concept, but using the experience made with the editor the concept evolved in a proper Mini arcade/tactica soccer game!
 The game uses the graphics of the original game, MANA.DAT for Teams and players, and features two game mode: mouse click realtime game, and PAUSE tactical Manager game.
+Use ingame HELP (H) for a full commands and features.
+
 
 <img width="1014" height="805" alt="immagine" src="https://github.com/user-attachments/assets/259b2857-6ad1-4d4c-8918-e017a61e3d50" />
 
