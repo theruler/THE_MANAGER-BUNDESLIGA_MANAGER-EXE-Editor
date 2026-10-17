@@ -6395,14 +6395,15 @@ def main():
     if args.seed is not None:
         random.seed(args.seed)
     app_dir = os.path.dirname(os.path.abspath(__file__))
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False) else app_dir
     cwd = os.getcwd()
-    dirs = ([args.data] if args.data else []) + [os.path.join(app_dir, "data"), app_dir, os.path.join(cwd, "data"), cwd]
+    dirs = ([args.data] if args.data else []) + [os.path.join(exe_dir, "data"), exe_dir, os.path.join(app_dir, "data"), app_dir, os.path.join(cwd, "data"), cwd]
     notes = load_data(dirs)
-    teams, team_note = load_teams([app_dir, cwd], args.mana)
-    pic = locate_pic(app_dir, args.pic)
+    teams, team_note = load_teams([exe_dir, app_dir, cwd], args.mana)
+    pic = locate_pic(exe_dir, args.pic) or (locate_pic(app_dir, args.pic) if app_dir != exe_dir else None)
     if pic is None and not (args.selftest or args.no_dialog):
         pic = ask_pic_dir()
-    asset_dirs = [app_dir, os.path.join(app_dir, "data"), cwd, os.path.join(cwd, "data")] + ([pic] if pic else [])
+    asset_dirs = [exe_dir, os.path.join(exe_dir, "data"), app_dir, os.path.join(app_dir, "data"), cwd, os.path.join(cwd, "data")] + ([pic] if pic else [])
     field_path = find_asset("campo.png", asset_dirs)
     board_path = find_asset("tabellone.png", asset_dirs)
     sheet_path = find_file(pic, "27") if pic else None
@@ -6411,7 +6412,7 @@ def main():
         fatal(missing, [d for d in asset_dirs if d])
     pygame.display.init()
     pygame.font.init()
-    FONTS.load([app_dir, os.path.join(app_dir, "data"), cwd, os.path.join(cwd, "data")])
+    FONTS.load([exe_dir, os.path.join(exe_dir, "data"), app_dir, os.path.join(app_dir, "data"), cwd, os.path.join(cwd, "data")])
     miss_fon = [n for n, f in (("MICRO4.FON", FONTS.micro), ("FLOW.FON", FONTS.flow)) if f is None]
     if miss_fon:
         fatal(miss_fon, [d for d in asset_dirs if d])
@@ -6423,8 +6424,8 @@ def main():
     except pygame.error:
         screen = pygame.display.set_mode((d["W"], d["H"]))
     global LOG_DIR
-    LOG_DIR = os.path.join(app_dir, "log")
-    args.tore_dir = args.tore_dir or os.path.join(app_dir, "TORE_OUT")
+    LOG_DIR = os.path.join(exe_dir, "log")
+    args.tore_dir = args.tore_dir or os.path.join(exe_dir, "TORE_OUT")
     try:
         gfx = Graphics(pic, field_path, board_path, sheet_path)
     except OSError as ex:
