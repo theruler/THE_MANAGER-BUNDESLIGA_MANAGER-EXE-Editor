@@ -157,7 +157,7 @@ s2w = persp_to_world
 
 PITCH_TOP_Y, PITCH_BOT_Y = 0, 66
 GOAL_Y0, GOAL_Y1 = 18, 28
-GOAL_D = 9.0
+GOAL_D = 10.0
 GOAL_FRONT_X = (23, 296)
 BOARD_GOAL_L = (158, 82, 185, 101)
 BOARD_GOAL_R = (188, 82, 215, 101)
@@ -166,7 +166,7 @@ BOARD_ROSTER_ICON = (223, 84, 238, 99)
 GOAL_SCROLL_STEP = 2
 GOAL_SCROLL_INTERVAL = 0.05
 CROWD_FRAMES = 8
-GOAL_NET_H = 9.0
+GOAL_NET_H = 10.0
 GATE_PX = 40.0
 DEPTH_EXP = 0.5
 BALL_DEPTH_K = 0.4
@@ -177,10 +177,10 @@ def depth_slow(dx, dv):
     if n < 1e-9:
         return 1.0
     return n / math.hypot(dx, dv / BALL_DEPTH_K)
-GOAL_H = 11.0
-POST_T = 1.2
-BAR_LO, BAR_HI = 1.0, 1.2
 
+GOAL_H = 10.0
+POST_T = 1.2
+BAR_LO, BAR_HI = 1.0, 1.0
 L = _PERSP_WREF
 
 
@@ -231,7 +231,17 @@ def depth_k(v):
 G = 150.0
 PLAYER_SPEED = 52.0
 DRIBBLE_OFF = 6.0
-REACH_FIRST = 15.0
+REACH_FIRST = 9.0
+PLAYER_CATCH_RADIUS = 5.5
+PLAYER_CATCH_HEIGHT = 5.0
+AIR_MIN_Z = 3.0
+THROW_HOLD_Z = 10.0
+THROW_RELEASE_Z = 11.0
+SLOWMO_KEYS = ("header", "header_dive", "bicycle", "volley")
+STRIKE_REACH = {"kick": (11.0, -1.0, 9.5), "header": (11.0, 4.0, 24.0), "bicycle": (13.0, 7.0, 28.0),
+                "header_dive": (13.0, 4.0, 18.0)}
+KEEPER_CATCH_RADIUS = 8.5
+KEEPER_CATCH_HEIGHT = 10.5
 HUD_H = 76
 SPEEDS = [0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
 SPEED_DEFAULT = 3
@@ -1240,6 +1250,10 @@ class Scoreboard:
             if p.red or p.yellow:
                 lo.fill((230, 30, 30) if p.red else (240, 240, 0), (right - 1, y, 2, 4))
                 right -= 4
+            if p.injured and not out:
+                lo.fill((235, 25, 25), (right - 4, y + 2, 5, 1))
+                lo.fill((235, 25, 25), (right - 2, y, 1, 5))
+                right -= 7
             if any(e["out"] is p for e in g.sub_q[t]):
                 for j in range(3):
                     lo.fill((255, 150, 40), (right - 4 + j, y + j, 5 - 2 * j, 1))
@@ -1250,7 +1264,7 @@ class Scoreboard:
                 right -= icon.get_width() + 2
             c = (110, 70, 80) if p.red else (96, 100, 130) if out else (255, 236, 150) if sel else self.LIT
             nx = x0 + 16
-            role = ROLE_TAG.get(getattr(p, "role", ""), "")
+            role = ROLE_TAG.get(g.natural_role(p.sq), "")
             if role:
                 self.text_at(lo, f, role, c, nx, text_y)
                 nx += 18
@@ -2011,10 +2025,10 @@ class Audio:
 TEAM_NAMES = ["ROSSI", "BLU"]
 TEAM_COL = [(225, 70, 70), (80, 120, 235)]
 ROLE_K = {"GK": 0.0, "DEF": 0.40, "MID": 0.55, "FWD": 0.62}
-KEEP_OFF = 36.0
+KEEP_OFF = 46.0
 LAT_K = 0.28
 REF_NEAR, CARRY_TOL_T, CARRY_TOL_V = 25.0, 0.35, 2.0
-MARK_R, MARK_DIST, MAX_MARK = 60.0, 5.5, 3
+MARK_R, MARK_DIST, MAX_MARK = 45.0, 9.0, 2
 FORMATIONS = {}
 DEFAULT_FORMATION = "4-4-2"
 ROLE_POOLS = {"GK": (0, 2), "DEF": (2, 7), "MID": (7, 15), "FWD": (15, 20)}
@@ -2080,9 +2094,10 @@ register_formation("3-4-3", 3, 4, 3)
 ACT_SPEC = {
     "kick": dict(fdur=0.075, contact=1, hold=0.10),
     "header": dict(fdur=0.085, contact=2, hold=0.08),
+    "header_dive": dict(fdur=0.090, contact=2, hold=0.60),
     "bicycle": dict(fdur=0.075, contact=4, hold=0.20),
     "slide": dict(fdur=0.080, contact=1, hold=0.30, active=(1, 4)),
-    "dive": dict(fdur=0.090, contact=99, hold=0.50, active=(1, 4)),
+    "dive": dict(fdur=0.110, contact=99, hold=0.60, active=(1, 4)),
     "fall": dict(fdur=0.090, contact=99, hold=1.10),
     "throw": dict(fdur=0.120, contact=1, hold=0.10),
     "moonwalk": dict(fdur=0.110, contact=99, hold=0.15),
@@ -2095,6 +2110,7 @@ FLAG_H = 9.0
 FLAG_R = 3.0
 FLAG_FLY_SPEED = 135.0
 INJURY_RATE = 0.0042
+INJURED_SPEED_K = 0.8
 LOG_DIR = None
 
 
@@ -2181,12 +2197,14 @@ class Flag:
             cy -= self.z + FLAG_H / 2
             ux, uy = math.cos(self.ang) * FLAG_H / 2, math.sin(self.ang) * FLAG_H / 2
             return (cx - ux, cy - uy, cx + ux, cy + uy, self.sg)
-        bx, by = ground_to_img(self.x, self.v)
-        by -= self.z
-        s_ = math.sin(self.tilt) * FLAG_H
-        tx, ty = ground_to_img(self.x + self.dx * s_, self.v + self.dv * s_)
-        sway = math.sin(self.t * 2.4) * 0.35 if self.state == "planted" else 0.0
-        return (bx, by, tx + sway, ty - self.z - math.cos(self.tilt) * FLAG_H, self.sg)
+        bx, by0 = ground_to_img(self.x, self.v)
+        by = by0 - self.z
+        ex, ey = ground_to_img(self.x + self.dx, self.v + self.dv)
+        eux, euy = unit(ex - bx, ey - by0, (1.0, 0.0))
+        sway = math.sin(self.t * 2.4) * 0.35 / FLAG_H if self.state == "planted" else 0.0
+        st, ct = math.sin(self.tilt), math.cos(self.tilt)
+        ux, uy = unit(st * eux + sway, st * euy - ct, (0.0, -1.0))
+        return (bx, by, bx + ux * FLAG_H, by + uy * FLAG_H, self.sg)
 
 
 class Player:
@@ -2229,6 +2247,7 @@ class Player:
         self.path = None
         self.sq = idx
         self.limp = False
+        self.injured = False
         self.walk = None
         self.wk_to = None
         self.gate = 0.0
@@ -2271,6 +2290,9 @@ class Ball:
         self.spin = 0.0
         self.age = 0.0
         self.shot_team = None
+        self.pen = False
+        self.pen_save = False
+        self.pen_team = None
         self.gy = 0.0
         self.px = 0.0
         self.own_t = 0.0
@@ -2288,6 +2310,368 @@ class Ref:
         self.card_t = 0.0
         self.sid = 121
         self.sx = self.sy = 0.0
+
+
+def _w2s_jac(wx, wv, h=0.5):
+    a, b = w2s(wx + h, wv), w2s(wx - h, wv)
+    c, d = w2s(wx, wv + h), w2s(wx, wv - h)
+    return ((a[0] - b[0]) / (2 * h), (c[0] - d[0]) / (2 * h)), ((a[1] - b[1]) / (2 * h), (c[1] - d[1]) / (2 * h))
+
+
+def screen_to_world_dir(wx, wv, ux, uy):
+    (a, b), (c, d) = _w2s_jac(wx, wv)
+    det = a * d - b * c
+    if abs(det) < 1e-9:
+        return unit(ux, uy)
+    return unit((d * ux - b * uy) / det, (-c * ux + a * uy) / det)
+
+
+def screen_x_of(wx, wv, dx, dv):
+    (a, b), _ = _w2s_jac(wx, wv)
+    return a * dx + b * dv
+
+
+JOY_EVENTS = tuple(getattr(pygame, n) for n in (
+    "JOYAXISMOTION", "JOYBUTTONDOWN", "JOYBUTTONUP", "JOYHATMOTION", "JOYDEVICEADDED", "JOYDEVICEREMOVED")
+    if hasattr(pygame, n))
+JOY_FILE = "mister-joy.json"
+JOY_IMG = "mister-joy.png"
+
+JOY_VERSION = 3
+JOY_ACTIONS = [
+    ("pass", pygame.K_z, "z", ""),
+    ("shot", pygame.K_x, "x", ""),
+    ("cele", pygame.K_c, "c", ""),
+    ("hints", pygame.K_F8, "", ""),
+    ("switch_player", pygame.K_TAB, "", ""),
+    ("pause", pygame.K_p, "p", ""),
+    ("replay", pygame.K_r, "r", ""),
+    ("help", pygame.K_h, "h", ""),
+    ("speed_up", pygame.K_PLUS, "+", ""),
+    ("speed_down", pygame.K_MINUS, "-", ""),
+    ("formation_prev", pygame.K_F5, "", ""),
+    ("formation_next", pygame.K_F6, "", ""),
+    ("toggle_scroll", pygame.K_F2, "", ""),
+    ("zoom_in", pygame.K_F4, "", ""),
+    ("zoom_out", pygame.K_F3, "", ""),
+    ("mute", pygame.K_m, "m", ""),
+    ("fullscreen", pygame.K_F11, "", ""),
+    ("spectator", pygame.K_q, "q", ""),
+    ("exit_match", pygame.K_ESCAPE, "", ""),
+    ("confirm", pygame.K_RETURN, "", ""),
+    ("back", pygame.K_ESCAPE, "", ""),
+]
+JOY_KEYS = {a: (k, u) for a, k, u, _l in JOY_ACTIONS}
+
+JOY_HOTSPOTS = {
+    "triangle": (742, 392), "circle": (793, 441), "cross": (741, 494), "square": (692, 441),
+    "dpad_up": (272, 395), "dpad_left": (232, 441), "dpad_right": (318, 441), "dpad_down": (272, 486),
+    "l1": (275, 305), "r1": (745, 305), "l2": (248, 272), "r2": (772, 272),
+    "select": (435, 443), "start": (580, 443), "lstick": (398, 548), "rstick": (628, 548),
+    "l3": (398, 548), "r3": (628, 548),
+}
+JOY_CTRL_LABELS = {
+    "triangle": "Triangolo", "circle": "Cerchio", "cross": "Croce", "square": "Quadrato",
+    "dpad_up": "Croce dir. su", "dpad_down": "Croce dir. giu'", "dpad_left": "Croce dir. sx", "dpad_right": "Croce dir. dx",
+    "l1": "L1", "l2": "L2", "r1": "R1", "r2": "R2", "select": "Select", "start": "Start", "l3": "L3 (stick sx)", "r3": "R3 (stick dx)",
+}
+
+JOY_DEFAULT = {
+    "_aiuto": [
+        "Mappatura del joypad di IL MISTER. Si modifica anche dalla schermata 'Joypad mapping' dell'intro.",
+        "Ogni azione ha una lista di comandi: 'button:N' (pulsante N), 'hat:up|down|left|right' (croce direzionale),",
+        "'axis:N+' o 'axis:N-' (asse usato come tasto, es. grilletti analogici). Lista vuota = non assegnata.",
+        "'button_names' associa il numero del pulsante al controllo PS2 (serve solo per il disegno del joypad):",
+        "triangle circle cross square l1 l2 r1 r2 select start l3 r3.",
+        "'axes': assi degli stick (move = stick sinistro per muoversi, aim = stick destro per la mira).",
+    ],
+    "version": JOY_VERSION,
+    "deadzone": 0.35,
+    "dpad_moves": True,
+    "axes": {"move_x": 0, "move_y": 1, "aim_x": 2, "aim_y": 3},
+    "button_names": {"0": "triangle", "1": "circle", "2": "cross", "3": "square", "4": "l2", "5": "r2",
+                     "6": "l1", "7": "r1", "8": "select", "9": "start", "10": "l3", "11": "r3"},
+    "buttons": {
+        "pass": ["ctrl:cross"], "shot": ["ctrl:circle"], "cele": ["ctrl:triangle"], "hints": [],
+        "switch_player": ["ctrl:l1"],
+        "pause": ["ctrl:start"], "replay": ["ctrl:select"], "help": ["ctrl:l3"],
+        "speed_up": [], "speed_down": [], "formation_prev": [], "formation_next": [],
+        "toggle_scroll": [], "zoom_in": [], "zoom_out": [], "mute": [], "fullscreen": [], "spectator": [],
+        "exit_match": ["ctrl:r3"], "confirm": ["ctrl:cross", "ctrl:start"], "back": ["ctrl:circle"],
+    },
+}
+
+
+
+class JoyPad:
+
+    def __init__(self, read_dirs, write_dir):
+        self.path = None
+        for d in read_dirs:
+            if d:
+                f = os.path.join(d, JOY_FILE)
+                if os.path.isfile(f):
+                    self.path = f
+                    break
+        self.write_path = os.path.join(write_dir, JOY_FILE) if write_dir else (self.path or JOY_FILE)
+        self.cfg = json.loads(json.dumps(JOY_DEFAULT))
+        self.error = ""
+        self.migrated = False
+        self.load()
+        self.pads = {}
+        self.held = set()
+        self.last_use = -999.0
+        try:
+            pygame.joystick.init()
+            for i in range(pygame.joystick.get_count()):
+                self.add_device(i)
+        except pygame.error:
+            pass
+        if self.migrated or not os.path.isfile(self.write_path):
+            self.save()
+
+    def load(self):
+        if not self.path:
+            return
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                user = json.load(f)
+        except (OSError, ValueError) as ex:
+            self.error = str(ex)
+            return
+        c = self.cfg
+        for k in ("deadzone", "dpad_moves"):
+            if k in user:
+                c[k] = user[k]
+        for k in ("axes", "button_names"):
+            if isinstance(user.get(k), dict):
+                c[k].update(user[k])
+        if user.get("version") != JOY_VERSION:
+            self.migrated = True
+        elif isinstance(user.get("buttons"), dict):
+            for a, v in user["buttons"].items():
+                if a in JOY_KEYS:
+                    c["buttons"][a] = [self.norm(t) for t in (v if isinstance(v, list) else [v]) if t is not None]
+        if isinstance(user.get("_aiuto"), list):
+            c["_aiuto"] = user["_aiuto"]
+        c["version"] = JOY_VERSION
+
+    def by_name(self, t):
+        if t.startswith("button:"):
+            n = self.cfg["button_names"].get(t[7:])
+            if n:
+                return "ctrl:" + n
+        return t
+
+    def canon(self, t):
+        if t.startswith("ctrl:"):
+            for i, n in self.cfg["button_names"].items():
+                if n == t[5:]:
+                    return "button:" + i
+            return t
+        return t
+
+    def swap_controls(self, a, b):
+        names = self.cfg["button_names"]
+        ia = next((i for i, n in names.items() if n == a), None)
+        ib = next((i for i, n in names.items() if n == b), None)
+        if ia is not None:
+            names[ia] = b
+        if ib is not None:
+            names[ib] = a
+        self.save()
+
+    @staticmethod
+    def norm(t):
+        return "button:%d" % t if isinstance(t, int) else str(t)
+
+    def save(self):
+        try:
+            os.makedirs(os.path.dirname(self.write_path) or ".", exist_ok=True)
+            with open(self.write_path, "w", encoding="utf-8") as f:
+                json.dump(self.cfg, f, indent=2, ensure_ascii=False)
+            self.error = ""
+        except OSError as ex:
+            self.error = str(ex)
+
+    def reset(self):
+        self.cfg = json.loads(json.dumps(JOY_DEFAULT))
+        self.save()
+
+    def add_device(self, index):
+        try:
+            j = pygame.joystick.Joystick(index)
+            if pygame.version.vernum < (2, 0, 0):
+                try:
+                    j.init()
+                except pygame.error:
+                    pass
+            iid = j.get_instance_id() if hasattr(j, "get_instance_id") else index
+            self.pads[iid] = j
+            self._autodetect_aim_axes(j)
+        except pygame.error:
+            pass
+
+    def _autodetect_aim_axes(self, joystick):
+        axes = self.cfg.get("axes", {})
+        ax, ay = axes.get("aim_x", 2), axes.get("aim_y", 3)
+        try:
+            pygame.event.pump()
+            n = joystick.get_numaxes()
+            if n < 5 or ax is None or ay is None or max(ax, ay) >= n:
+                return
+            values = [float(joystick.get_axis(i)) for i in range(n)]
+            current = math.hypot(values[ax], values[ay])
+            if current < 0.75:
+                return
+            candidates = []
+            for i in range(2, n - 1):
+                pair_mag = math.hypot(values[i], values[i + 1])
+                if (i, i + 1) != (ax, ay) and pair_mag < 0.45:
+                    candidates.append((pair_mag, i != 3, i, i + 1))
+            if candidates:
+                _mag, _prefer, new_x, new_y = min(candidates)
+                axes["aim_x"], axes["aim_y"] = new_x, new_y
+        except (pygame.error, IndexError, TypeError, ValueError):
+            return
+
+    def names(self):
+        out = []
+        for j in self.pads.values():
+            try:
+                out.append(j.get_name())
+            except pygame.error:
+                pass
+        return out
+
+    def recent(self, now):
+        return now - self.last_use < 12.0
+
+    def process(self, ev, now=0.0):
+        t = ev.type
+        if t == getattr(pygame, "JOYDEVICEADDED", -1):
+            self.add_device(ev.device_index)
+            return []
+        if t == getattr(pygame, "JOYDEVICEREMOVED", -1):
+            self.pads.pop(getattr(ev, "instance_id", -1), None)
+            self.held.clear()
+            return []
+        new = []
+        self.last_use = now
+        if t == pygame.JOYBUTTONDOWN:
+            tok = "button:%d" % ev.button
+            if tok not in self.held:
+                self.held.add(tok)
+                new.append(tok)
+        elif t == pygame.JOYBUTTONUP:
+            self.held.discard("button:%d" % ev.button)
+        elif t == pygame.JOYHATMOTION:
+            hx, hy = ev.value
+            now_tok = set()
+            if hx:
+                now_tok.add("hat:right" if hx > 0 else "hat:left")
+            if hy:
+                now_tok.add("hat:up" if hy > 0 else "hat:down")
+            for tok in ("hat:left", "hat:right", "hat:up", "hat:down"):
+                if tok in now_tok and tok not in self.held:
+                    self.held.add(tok)
+                    new.append(tok)
+                elif tok not in now_tok:
+                    self.held.discard(tok)
+        elif t == pygame.JOYAXISMOTION:
+            if ev.axis in self.stick_axes():
+                return []
+            for sign, ch in ((1, "+"), (-1, "-")):
+                tok = "axis:%d%s" % (ev.axis, ch)
+                if ev.value * sign > 0.6:
+                    if tok not in self.held:
+                        self.held.add(tok)
+                        new.append(tok)
+                elif ev.value * sign < 0.3:
+                    self.held.discard(tok)
+        return new
+
+    def stick_axes(self):
+        a = self.cfg["axes"]
+        return {a.get(k) for k in ("move_x", "move_y", "aim_x", "aim_y")}
+
+    def actions_for(self, tok):
+        return [a for a, toks in self.cfg["buttons"].items() if tok in [self.canon(t) for t in toks]]
+
+    def is_held(self, action):
+        return any(self.canon(t) in self.held for t in self.cfg["buttons"].get(action, ()))
+
+    def control_of(self, tok):
+        if tok.startswith("ctrl:"):
+            return tok[5:]
+        if tok.startswith("hat:"):
+            return "dpad_" + tok[4:]
+        if tok.startswith("button:"):
+            return self.cfg["button_names"].get(tok[7:])
+        return None
+
+    def token_label(self, tok):
+        c = self.control_of(tok)
+        if c:
+            return JOY_CTRL_LABELS.get(c, c)
+        if tok.startswith("button:"):
+            return "Pulsante " + tok[7:]
+        if tok.startswith("axis:"):
+            return "Asse " + tok[5:]
+        return tok
+
+    def assign(self, action, tok):
+        if tok is None:
+            self.cfg["buttons"][action] = []
+        else:
+            self.cfg["buttons"][action] = [self.by_name(tok)]
+        self.save()
+
+    def _axis(self, idx):
+        best = 0.0
+        for j in self.pads.values():
+            try:
+                if idx is not None and idx < j.get_numaxes():
+                    v = j.get_axis(idx)
+                    if abs(v) > abs(best):
+                        best = v
+            except pygame.error:
+                pass
+        return best
+
+    def _stick(self, kx, ky):
+        a = self.cfg["axes"]
+        x, y = self._axis(a.get(kx)), self._axis(a.get(ky))
+        dz = float(self.cfg.get("deadzone", 0.35))
+        if math.hypot(x, y) < dz:
+            return None
+        return unit(x, y)
+
+    def move_vec(self):
+        v = self._stick("move_x", "move_y")
+        if v:
+            return v
+        if self.cfg.get("dpad_moves", True):
+            hx = hy = 0
+            for j in self.pads.values():
+                try:
+                    for h in range(j.get_numhats()):
+                        a, b = j.get_hat(h)
+                        hx, hy = hx or a, hy or b
+                except pygame.error:
+                    pass
+            if hx or hy:
+                return unit(float(hx), float(-hy))
+        return None
+
+    def aim_vec(self):
+        return self._stick("aim_x", "aim_y")
+
+    def aim_mag(self):
+        a = self.cfg["axes"]
+        x, y = self._axis(a.get("aim_x")), self._axis(a.get("aim_y"))
+        return min(1.0, math.hypot(x, y))
+
 
 
 class Game:
@@ -2318,11 +2702,18 @@ class Game:
         self.vsurf = None
         self.su_surf = pygame.Surface((SU_W, SU_H))
         self.su_scroll, self.su_active, self.su_hits = [0, 0], 0, []
+        self.joy = JoyPad(getattr(args, "joy_dirs", []), getattr(args, "joy_write_dir", None))
+        self.joy_img_path = getattr(args, "joy_img", None)
+        self.joymap_open, self.jm_wait, self.jm_rows, self.jm_btns, self.jm_img = False, None, [], [], None
+        self.jm_drag, self.jm_spots = None, {}
+        self.jm_flash = {}
         self.zoom = args.zoom
         self.scroll = not getattr(args, "noscroll", False)
         self.speed_idx = SPEED_DEFAULT
         self.user_team = 0
         self.ctrl_choice = 0
+        self.slowmo_p = None
+        self.slowmo_on = not getattr(args, "no_slowmo", False)
         self._gk_press_owner = None
         self._gk_press_idx = None
         self.manual = False
@@ -2361,8 +2752,18 @@ class Game:
         self.pan_return_at = 0
         self.pan_drag = None
         self.drag = None
+        self.sel_hold_until = 0.0
+        self.box_t = {}
+        self.ov_set = set()
+        self.show_hints = True
+        self.flag_grace = 0.0
+        self.drag_act = "pass"
+        self.drag_btn = 1
+        self.charge = None
+        self._arrow = None
+        self.sprite_surf = pygame.Surface((FW, FH), pygame.SRCALPHA)
         self.paused_gesture = None
-        self.paused_traj_surface = None
+        self.paused_traj_data = None
         self.click_mark = None
         self.t_all = 0.0
         self.role_timer = 0.0
@@ -2402,7 +2803,9 @@ class Game:
         self.sub_q, self.subs_used, self.sub_out = [[], []], [0, 0], [set(), set()]
         self.injury, self.sub_menu, self.pathdrag = None, None, None
         self.paused = False
-        self.paused_gesture = self.paused_traj_surface = None
+        self.paused_gesture = self.paused_traj_data = None
+        self.charge = None
+        self._arrow = None
         for t_ in (0, 1):
             for p_, (_r, sq) in zip(self.team_p[t_], self.lineup_slots(t_)):
                 p_.sq = sq
@@ -2415,9 +2818,13 @@ class Game:
     def update_flags(self, dt):
         live = self.mode in ("play", "goal", "outball")
         b = self.ball
+        if self.mode == "restart" and self.restart and self.restart.get("kind") == "corner":
+            self.flag_grace = 1.6
+        elif self.flag_grace > 0.0:
+            self.flag_grace -= dt
         for f in self.flags:
             if live and f.state == "planted":
-                if b.owner is None:
+                if b.owner is None and self.flag_grace <= 0.0:
                     sp = math.hypot(b.vx, b.vv)
                     if abs(b.wx - f.x) < FLAG_R and abs(b.wv - f.v) < FLAG_R * 1.2 and b.z < FLAG_H + 1.5 and sp > 20.0:
                         if f.hit(b.vx, b.vv, sp):
@@ -2469,26 +2876,31 @@ class Game:
         return best[1] if best else None
 
     GESTURE_FULL = 0.55
+    PASS_LOW = 0.30
+    PASS_LONG = 0.70
+    PASS_NEAR = 70.0
+    CHARGE_FULL = 1.0
+    AIR_REACH = 18.0 
+    ARROW_FADE = 0.45
+    ARROW_MIN, ARROW_MAX = 14.0, 64.0
 
     def gesture_intensity(self, ln):
         return clamp(ln / max(160.0, self.view_w * self.GESTURE_FULL), 0.0, 1.0)
 
-    def gesture_plan(self, x0, y0, x1, y1):
+    def gesture_plan(self, x0, y0, x1, y1, act=None):
         p = self.cp
         dx, dy = x1 - x0, y1 - y0
         ln = math.hypot(dx, dy)
         if p is None or ln < 12:
             return None
         ux, uy = dx / ln, dy / ln
-        w1x, w1v = s2w(p.sx + ux * 40.0, p.sy + uy * 40.0)
-        w0x, w0v = s2w(p.sx, p.sy)
         f = self.gesture_intensity(ln)
-        return ("short" if f < 0.35 else "long"), unit(w1x - w0x, w1v - w0v), f
+        return (act or self.drag_act), screen_to_world_dir(p.wx, p.wv, ux, uy), f
 
     def kick_plan(self, p, dx, dv, f, lob, free):
         D = 14.0 + f * (L * 0.85 - 14.0)
         lx, lv = p.wx + dx * D, p.wv + dv * D
-        rad = 9.0 if free else max(14.0, 0.18 * D)
+        rad = 12.0 if free else max(14.0, 0.18 * D)
         best = None
         for q in self.team_p[p.team]:
             if q is p or q.state in ("out", "leaving", "down", "subout", "subin", "tunnel"):
@@ -2525,6 +2937,41 @@ class Game:
                 hi = mid
         return (lo + hi) / 2.0
 
+    def ground_plan(self, p, kind, dx, dv, f, free=False):
+        goalx = L if self.att[p.team] > 0 else 0.0
+        gx, gv = unit(goalx - p.wx, V_GC - p.wv)
+
+        def lofted():
+            kp = self.kick_plan(p, dx, dv, f, True, free)
+            if kp["target"] is None and kp["dx"] * gx + kp["dv"] * gv < 0.8:
+                kp["kind"] = "pass"
+            return kp
+        if kind == "shot":
+            sx, sv = dx, dv
+            if sx * gx + sv * gv > 0.94:
+                sx, sv = unit(sx * 0.5 + gx * 0.5, sv * 0.5 + gv * 0.5)
+            return dict(dx=sx, dv=sv, power=clamp(140.0 + 180.0 * f, 140.0, 320.0), lift=22.0 + 16.0 * f,
+                        kind="shot", target=None, D=0.0)
+        if free:
+            kp = self.kick_plan(p, dx, dv, f, f >= self.PASS_LOW, True)
+            if kp["target"] is None and kp["dx"] * gx + kp["dv"] * gv < 0.8:
+                kp["kind"] = "pass"
+            return kp
+        if f >= self.PASS_LONG:
+            return lofted()
+        bp = self.best_pass(p, aim=(dx, dv), cone=0.82)
+        if bp:
+            _s, q, qx, qv = bp
+            dist = math.hypot(qx - p.wx, qv - p.wv)
+            ddx, ddv = unit(qx - p.wx, qv - p.wv)
+            high = dist >= self.PASS_NEAR and f >= self.PASS_LOW
+            power = clamp(dist * 1.55 + 55.0, 95.0, 300.0)
+            lift = max(self.lob_lift(dist, power), 18.0) if high else 0.0
+            return dict(dx=ddx, dv=ddv, power=power, lift=lift, kind="pass", target=q, D=dist)
+        if f < self.PASS_LOW:
+            return dict(dx=dx, dv=dv, power=150.0, lift=0.0, kind="pass", target=None, D=0.0)
+        return lofted()
+
     def can_kick_now(self):
         p, b = self.cp, self.ball
         if p is None or p.state != "free":
@@ -2534,14 +2981,14 @@ class Game:
     def simulate_ball(self, key, kw):
         b = self.ball
         power, lift = kw.get("power", 150.0), kw.get("lift", 0.0)
-        if key == "header":
+        if key in ("header", "header_dive"):
             power, lift = power * 0.8, max(lift, 18.0)
         elif key == "bicycle":
             power, lift = max(power, 235.0), max(lift, 28.0)
         x, v, z = b.wx, b.wv, max(b.z, 0.5)
         if key == "throw" and self.restart:
             x, v = self.restart["pos"]
-            z = 12.0
+            z = THROW_RELEASE_Z
         ds = depth_slow(kw["dx"], kw["dv"])
         vx, vv, vz = kw["dx"] * power * ds, kw["dv"] * power * ds, lift
         pts, t, h, nxt = [(x, v, z, power)], 0.0, 1.0 / 240.0, 0.1
@@ -2568,17 +3015,26 @@ class Game:
                 break
         return pts
 
-    def draw_shot_preview(self, x0, y0, x1, y1, lob):
-        plan = self.gesture_plan(x0, y0, x1, y1)
+    def build_shot_preview(self, x0, y0, x1, y1, act=None):
+        plan = self.gesture_plan(x0, y0, x1, y1, act)
         if plan is None or not self.can_kick_now():
+            return None
+        kp = self.ground_plan(self.cp, plan[0], plan[1][0], plan[1][1], plan[2], True)
+        pts = self.simulate_ball("kick", dict(dx=kp["dx"], dv=kp["dv"],
+                                               power=kp["power"], lift=kp["lift"]))
+        target = None
+        if kp["target"] is not None:
+            target = (kp["target"].wx, kp["target"].wv)
+        return {"points": pts, "target": target}
+
+    def draw_shot_preview_data(self, data):
+        if not data or not data.get("points"):
             return
-        kp = self.kick_plan(self.cp, plan[1][0], plan[1][1], plan[2], lob, True)
-        pts = self.simulate_ball("kick", dict(dx=kp["dx"], dv=kp["dv"], power=kp["power"], lift=kp["lift"]))
         cx, cy = self.cam_int()
         z = self.zoom
         ov = pygame.Surface((self.view_w, self.view_h), pygame.SRCALPHA)
         scr = []
-        for (wx, wv, wz, sp) in pts:
+        for wx, wv, wz, _speed in data["points"]:
             ix, iy = ground_to_img(wx, wv)
             scr.append(((ix - cx) * z, (iy - cy) * z, (iy - wz - cy) * z))
         for i in range(1, len(scr)):
@@ -2598,10 +3054,17 @@ class Game:
             ov.blit(spr, (int(sx) - 2 * z, int(sy2) - 7 * z))
         ex, ey, _e2 = scr[-1]
         pygame.draw.circle(ov, (255, 200, 40, 220), (int(ex), int(ey)), max(3, int(z * 1.6)), 2)
-        if kp["target"] is not None:
-            tx, ty = ground_to_img(kp["target"].wx, kp["target"].wv)
-            pygame.draw.circle(ov, (90, 255, 130, 230), (int((tx - cx) * z), int((ty - cy) * z)), max(6, int(z * 3.2)), 3)
+        if data.get("target") is not None:
+            tx, ty = ground_to_img(*data["target"])
+            pygame.draw.circle(ov, (90, 255, 130, 230),
+                               (int((tx - cx) * z), int((ty - cy) * z)), max(6, int(z * 3.2)), 3)
         self.target.blit(ov, (0, 0))
+
+    def draw_shot_preview(self, x0, y0, x1, y1, act=None):
+        data = self.build_shot_preview(x0, y0, x1, y1, act)
+        if data is not None:
+            self.draw_shot_preview_data(data)
+        return data
 
 
     def natural_role(self, sq):
@@ -2621,7 +3084,7 @@ class Game:
         if p.role == "GK":
             return [i for i in bn if self.natural_role(i) == "GK"]
         c = [i for i in bn if self.natural_role(i) != "GK"]
-        return sorted(c, key=lambda i: 0 if self.natural_role(i) == p.role else 1)
+        return sorted(c, key=lambda i: 0 if self.natural_role(i) == self.natural_role(p.sq) else 1)
 
     def request_sub(self, p, inn=None, why="tattica"):
         t = p.team
@@ -2733,6 +3196,7 @@ class Game:
         self.subs_used[t] += 1
         p.num = 11 + self.subs_used[t]
         p.yellow, p.red, p.limp, p.path = 0, False, False, None
+        p.injured = False
         p.speed = PLAYER_SPEED * random.uniform(0.94, 1.07)
         p.skill, p.aggr = random.uniform(0.66, 0.95), random.uniform(0.2, 0.95)
         p.stride, p.hold_t, p.lift = 0.0, 0.0, 0.0
@@ -2828,7 +3292,7 @@ class Game:
         return
 
     def maybe_injury_from_tackle(self, p, kind):
-        if self.mode != "play" or p.role == "GK" or p.state in ("out", "leaving") or p.red:
+        if self.mode != "play" or p.role == "GK" or p.state in ("out", "leaving") or p.red or p.injured:
             return False
         sx, sy = w2s(p.wx, p.wv)
         cx, cy = self.cam_int()
@@ -2846,6 +3310,7 @@ class Game:
         b = self.ball
         b.owner, b.vx, b.vv, b.vz, b.z = None, 0.0, 0.0, 0.0, 0.0
         self.mode = "injury"
+        p.injured = True
         self.injury = dict(p=p, t=0.0, team=b.last_team if b.last_team is not None else 1 - p.team)
         p.state, p.act, p.tx, p.tv, p.path = "down", None, None, None, None
         p.vx = p.vv = 0.0
@@ -2863,14 +3328,9 @@ class Game:
         if inj["t"] < 4.5:
             return
         p = inj["p"]
-        t = p.team
-        ok = self.subs_used[t] + len(self.sub_q[t]) < 5 and self.sub_candidates(p)
         p.state = "free"
-        if ok:
-            self.request_sub(p, why="infortunio")
-        else:
-            p.speed *= 0.8
-            self.log_event(tr("ev.injury_stays", name=p.name), secs=3, team=p.team)
+        p.injured = True
+        self.log_event(tr("ev.injury_stays", name=p.name), secs=3, team=p.team)
         b = self.ball
         self.injury = None
         self.start_restart("free", inj["team"], (b.wx, b.wv))
@@ -2964,8 +3424,10 @@ class Game:
             return
         if self.ctrl_choice in (0, 1) and p.team != self.ctrl_choice:
             return
-        self.user_team = p.team
+        if self.ctrl_choice not in (0, 1):
+            self.user_team = p.team
         self.manual = True
+        self.sel_hold_until = time.time() + 2.0
         self.select_player(p)
 
     def minute_label(self):
@@ -3212,7 +3674,7 @@ class Game:
 
     def begin_ball_out(self, kind, team, pos):
         b = self.ball
-        self.outball = dict(kind=kind, team=team, pos=pos, t=0.0, phase="roll", roll=random.uniform(1.0, 3.0), src=None, fly=0.0)
+        self.outball = dict(kind=kind, team=team, pos=pos, t=0.0, phase="roll", roll=random.uniform(0.25, 0.6), src=None, fly=0.0)
         b.owner, b.intended, b.shot_team = None, None, None
         b.tactical_pass = False
         b.vz = max(b.vz, 0.0)
@@ -3240,7 +3702,8 @@ class Game:
             if o["t"] >= o["roll"]:
                 o["phase"] = "fly"
                 o["src"] = (b.wx, b.wv, b.z)
-                o["fly"] = clamp(math.hypot(o["pos"][0] - b.wx, o["pos"][1] - b.wv) / 85.0, 0.7, 1.7)
+                o["fly"] = clamp(math.hypot(o["pos"][0] - b.wx, o["pos"][1] - b.wv) / 230.0, 0.35, 0.8)
+                o["dist"] = math.hypot(o["pos"][0] - b.wx, o["pos"][1] - b.wv)
                 o["t"] = 0.0
                 b.vx = b.vv = b.vz = 0.0
                 tk = self.pick_taker(o["kind"], o["team"], self.visible_pos(o["pos"]))
@@ -3252,6 +3715,7 @@ class Game:
             tx, tv = self.visible_pos(o["pos"])
             b.wx, b.wv = sx + (tx - sx) * u, sv + (tv - sv) * u
             b.z = sz * (1.0 - u) + 4.0 * 13.0 * u * (1.0 - u)
+            b.spin += o.get("dist", 60.0) / o["fly"] * dt
             tk = o.get("taker")
             if tk is not None and tk.state not in ("out", "leaving") and not tk.busy():
                 self.goto(tk, *self.taker_stand(dict(kind=o["kind"], pos=self.visible_pos(o["pos"]), team=o["team"])))
@@ -3291,7 +3755,33 @@ class Game:
                 tk.tx, tk.tv = sx, sv
         at = math.hypot(tk.wx - sx, tk.wv - sv) < 3.5 or math.hypot(tk.wx - rs["pos"][0], tk.wv - rs["pos"][1]) < 5.0
         minw = dict(kickoff=1.3, throw=0.8, goalkick=1.3, corner=1.8, free=1.9, penalty=2.4)[rs["kind"]]
-        if not rs["ready"] and at and rs["t"] > minw and not tk.busy():
+        box_free = True
+        if rs["kind"] == "goalkick":
+            ad_ = self.att[rs["team"]]
+            ogx_ = 0.0 if ad_ > 0 else L
+            if "push" not in rs:
+                rs["push"] = {id(q) for q in self.team_p[1 - rs["team"]]
+                              if q.role != "GK" and q.state not in ("out", "leaving") and in_box_fn(q.wx, q.wv, ogx_)}
+                rs["box_t"] = {}
+            for q in self.team_p[1 - rs["team"]]:
+                if q.role == "GK" or q.state in ("out", "leaving"):
+                    continue
+                inside = in_box_fn(q.wx, q.wv, ogx_)
+                if not inside:
+                    rs["push"].discard(id(q))
+                    rs["box_t"].pop(id(q), None)
+                    continue
+                box_free = False
+                if id(q) in rs["push"]:
+                    if q.ctrl or q.busy() or q.tx is None:
+                        q.wx += ad_ * 70.0 * dt
+                elif q.ctrl:
+                    rs["box_t"][id(q)] = rs["box_t"].get(id(q), 0.0) + dt
+                    if rs["box_t"][id(q)] > 2.0:
+                        self.call_foul(q, tk, 0.15, 0.0, fall=False)
+                        self.log_event(tr("ev.gk_danger"), secs=3, team=q.team)
+                        return
+        if not rs["ready"] and at and rs["t"] > minw and not tk.busy() and (box_free or rs["t"] > 8.0):
             rs["ready"], rs["ready_t"] = True, rs["t"]
             if rs["kind"] in ("free", "penalty", "corner"):
                 self.audio.play("whistle")
@@ -3303,7 +3793,7 @@ class Game:
         elif rs["t"] > 14.0 and not tk.busy():
             self.ai_take_restart(tk, rs)
 
-    def call_foul(self, off, victim, yellow_p, red_p):
+    def call_foul(self, off, victim, yellow_p, red_p, fall=True):
         b = self.ball
         self.stoppage_target += 0.28
         spot = (clamp(victim.wx, 3.0, L - 3.0), clamp(victim.wv, V_TOP + 1.0, V_BOT - 1.0))
@@ -3320,7 +3810,8 @@ class Game:
         b.owner, b.vx, b.vv, b.vz = None, 0.0, 0.0, 0.0
         self.stats["fouls"][off.team] += 1
         self.log_event(tr("ev.foul", off=off.label(), victim=victim.label(), team=TEAM_NAMES[off.team]), team=off.team)
-        self.begin_action(victim, "fall", "E" if victim.dx >= 0 else "W")
+        if fall:
+            self.begin_action(victim, "fall", "E" if victim.dx >= 0 else "W")
         for p in self.players:
             if p is not victim and not p.busy():
                 p.tx = p.tv = None
@@ -3659,6 +4150,8 @@ class Game:
                 if off <= HALF_MOUTH and zc < GOAL_H:
                     self.score_goal(att_team, gx)
                     return
+            if zc >= GOAL_H + BAR_HI and off <= HALF_MOUTH + POST_T:
+                b.over_bar = True
             if zc < GOAL_H + BAR_HI:
                 if off <= HALF_MOUTH:
                     if GOAL_H <= zc <= GOAL_H + BAR_HI:
@@ -3770,18 +4263,30 @@ class Game:
 
     def ball_goal_collide(self, prev):
         b = self.ball
-        b.wx, b.wv, hit = self.goal_solid(b.wx, b.wv, prev[0], prev[1], True)
-        if hit == 1:
-            b.vx = -b.vx * 0.25
-        elif hit == 2:
-            b.vv = -b.vv * 0.3
-        if hit and b.owner is None and abs(b.vx) + abs(b.vv) > 25.0:
-            self.audio.play("net", 0.6)
-        v0, v1 = V_GC - HALF_MOUTH, V_GC + HALF_MOUTH
+        over = bool(getattr(b, "over_bar", False))
+        if not over and b.z <= GOAL_H + BAR_HI:
+            b.wx, b.wv, hit = self.goal_solid(b.wx, b.wv, prev[0], prev[1], True)
+            if hit == 1:
+                b.vx = -b.vx * 0.25
+            elif hit == 2:
+                b.vv = -b.vv * 0.3
+            if hit and b.owner is None and abs(b.vx) + abs(b.vv) > 25.0:
+                self.audio.play("net", 0.6)
+        v0, v1 = V_GC - HALF_MOUTH - POST_T, V_GC + HALF_MOUTH + POST_T
         for gx, out in ((0.0, -1.0), (L, 1.0)):
-            if 0.0 < out * (b.wx - gx) < GOAL_D and v0 < b.wv < v1 and b.z > GOAL_NET_H:
+            in_depth = 0.0 < out * (b.wx - gx) < GOAL_D and v0 < b.wv < v1
+            if in_depth and over:
+                if b.z < GOAL_NET_H:
+                    b.z = GOAL_NET_H
+                    if b.vz < 0.0:
+                        b.vz = -b.vz * 0.35
+                    b.vx *= 0.8
+                    b.vv *= 0.8
+            elif in_depth and GOAL_NET_H < b.z <= GOAL_H + BAR_HI:
                 b.z = GOAL_NET_H
                 b.vz = -abs(b.vz) * 0.3
+            elif abs(b.wx - gx) > GOAL_D + 2.0:
+                b.over_bar = False
 
     def dribble(self, h):
         b = self.ball
@@ -3791,18 +4296,20 @@ class Game:
             return
         sp = math.hypot(o.vx, o.vv)
         b.own_t += h
+        gk_dive = o.role == "GK" and o.state == "action" and o.act is not None and o.act.get("key") == "dive"
         if o.role == "GK":
-            off = 1.6
+            tx, tv = o.wx + self.att[o.team] * (1.6 if gk_dive else 1.2), o.wv
+            k = 1.0
         else:
             off = (DRIBBLE_OFF + 1.7 * math.sin(o.stride * 0.62)) if sp > 8 else 4.5
-        tx, tv = o.wx + o.dx * off, o.wv + o.dv * off * 0.8
-        k = min(1.0, 16.0 * h)
+            tx, tv = o.wx + o.dx * off, o.wv + o.dv * off * 0.8
+            k = min(1.0, 16.0 * h)
         b.wx += (tx - b.wx) * k
         b.wv += (tv - b.wv) * k
         b.vx, b.vv, b.vz = o.vx, o.vv, 0.0
         b.ds = 1.0
         if o.role == "GK":
-            b.z = 4.0
+            b.z = max(0.0, o.lift - 1.0) if gk_dive else 4.0
         elif b.own_t < 1.0:
             b.z = 2.2 * (1.0 - b.own_t) * abs(math.sin(b.own_t * 14.0))
         else:
@@ -3845,6 +4352,9 @@ class Game:
             self.log_event(tr("ev.targeted_pass", a=b.last.label(), b=p.label()), secs=2.5, team=b.last.team)
         b.tactical_pass = False
         b.owner = p
+        if self.user_team is not None and p.team == self.user_team and self.mode == "play" and p.state not in ("out", "leaving", "subin", "subout", "tunnel") and not p.red:
+            self.sel_hold_until = 0.0
+            self.select_player(p, quiet=True)
         b.last, b.last_team = p, p.team
         b.vx = b.vv = b.vz = 0.0
         b.z = 0.0
@@ -3868,7 +4378,11 @@ class Game:
                 continue
             d = math.hypot(p.wx - b.wx, p.wv - b.wv)
             gk = p.role == "GK"
-            if d > (10.5 if gk else 7.5) or b.z > (14.0 if gk else 7.5):
+            if gk and b.pen and not b.pen_save and b.last_team != p.team:
+                continue
+            if d > (KEEPER_CATCH_RADIUS if gk else PLAYER_CATCH_RADIUS):
+                continue
+            if b.z > (KEEPER_CATCH_HEIGHT if gk else PLAYER_CATCH_HEIGHT):
                 continue
             if sp > 215 and b.intended is not p and not gk and not p.ctrl:
                 continue
@@ -4007,9 +4521,11 @@ class Game:
         if p.state == "leaving":
             spd *= 0.5
         elif p.role == "GK":
-            spd *= 0.62
+            spd *= 0.95 if getattr(p, "alert", False) else 0.62
         if self.ball.owner is p:
-            spd *= 0.9
+            spd *= 0.84
+        if p.injured:
+            spd *= INJURED_SPEED_K
         if p.ctrl and p.kvec:
             return p.kvec[0] * spd * 1.05, p.kvec[1] * spd * 1.05
         if p.tx is None:
@@ -4103,10 +4619,15 @@ class Game:
             c = ACTIONS["cele"]["E"]
             seq = [_off(p.team) + c[1], _off(p.team) + c[2], _off(p.team) + c[1], _off(p.team) + c[0]]
         elif key == "throw":
-            c = ACTIONS["cele"]["E"]
-            seq = [_off(p.team) + c[0], _off(p.team) + c[0], _off(p.team) + c[1]]
+            seq = [_off(p.team) + 27, _off(p.team) + 2, _off(p.team) + 2]
         elif kw.get("cele"):
             seq = [_off(p.team) + k for k in CELE_SLIDE[side]]
+        elif key == "header_dive":
+            seq = action_sids(p.team, "fall", side)
+        elif key == "kick" and kw.get("kind", "pass") == "pass" and not kw.get("tackle") and not kw.get("special") \
+                and kw.get("power", 1.0) > 0.0:
+            cyc = run_cycle(p.team, "E" if side == "E" else "W")
+            seq = [cyc[0], cyc[1], cyc[0]]
         else:
             seq = action_sids(p.team, key, side)
         if kw.get("repeat"):
@@ -4125,6 +4646,13 @@ class Game:
                      dur=len(seq) * spec["fdur"] + hold)
         if key == "fall" and self.ball.owner is p:
             self.ball.owner = None
+        if kw.get("special") and getattr(self, "slowmo_on", True) and not kw.get("show") and self.strike_will_hit(p, key, kw):
+            c, fd = spec["contact"], spec["fdur"]
+            p.act["slow"] = (max(0, c - 1) * fd, (c + 1) * fd)
+            self.slowmo_p = p
+        if key in ("header", "header_dive") and "dx" in kw and not kw.get("show"):
+            imp = 95.0 if key == "header_dive" else 34.0
+            p.vx, p.vv = kw["dx"] * imp, kw["dv"] * imp
 
     def step_action(self, p, dt):
         a = p.act
@@ -4156,11 +4684,11 @@ class Game:
             f = math.exp(-6.0 * dt)
             p.vx *= f
             p.vv *= f
-            if kw.get("assist") and not a["fired"] and key in ("header", "bicycle") and self.ball.owner is None:
+            if kw.get("assist") and not a["fired"] and key in ("header", "bicycle", "header_dive") and self.ball.owner is None:
                 T = max(0.0, a["contact"] * a["fdur"] - a["t"])
                 tx, tv = self.ball_pred(T)
                 ux, uv = unit(tx - p.wx, tv - p.wv)
-                sp = min(65.0, math.hypot(tx - p.wx, tv - p.wv) / max(T, 0.05))
+                sp = min(85.0 if key == "header_dive" else 65.0, math.hypot(tx - p.wx, tv - p.wv) / max(T, 0.05))
                 p.vx += (ux * sp - p.vx) * 0.6
                 p.vv += (uv * sp - p.vv) * 0.6
         kk = depth_k(p.wv)
@@ -4169,14 +4697,21 @@ class Game:
         if key == "dive" and p.role == "GK":
             p.wv = clamp(p.wv, V_GC - HALF_MOUTH * 2.2, V_GC + HALF_MOUTH * 2.2)
         self.clamp_player(p)
+        if key in ("header", "header_dive") and not kw.get("show"):
+            ph = clamp(a["t"] / max(0.01, len(a["seq"]) * a["fdur"]), 0.0, 1.0)
+            p.lift = (7.0 if key == "header" else 4.0) * math.sin(math.pi * ph)
+        elif key == "dive" and p.role == "GK":
+            ph = clamp(a["t"] / (len(a["seq"]) * a["fdur"] + 0.3), 0.0, 1.0)
+            p.lift = 6.0 * math.sin(math.pi * ph) ** 0.7
         if a["t"] >= a["dur"]:
             p.state, p.act = "free", None
+            p.lift = 0.0
 
     def action_contact(self, p, a):
         key = a["key"]
         if a["kw"].get("show"):
             return
-        if key in ("kick", "header", "bicycle"):
+        if key in ("kick", "header", "bicycle", "header_dive"):
             self.try_strike(p, a)
         elif key == "throw":
             self.do_throw(p, a)
@@ -4188,7 +4723,7 @@ class Game:
         if kw.get("tackle"):
             return self.tackle_contact(p, kw)
         setp = self.mode == "restart" and self.restart is not None and self.restart["taker"] is p
-        reach, zlo, zhi = {"kick": (11.0, -1.0, 9.5), "header": (11.0, 6.0, 24.0), "bicycle": (13.0, 7.0, 28.0)}[key]
+        reach, zlo, zhi = STRIKE_REACH[key]
         if kw.get("assist"):
             reach, zlo, zhi = reach + 7.0, (-2.0 if key == "bicycle" else zlo - 3.0), zhi + 8.0
         owned = b.owner is p
@@ -4202,7 +4737,7 @@ class Game:
             ang = random.gauss(0.0, err)
             dx, dv = dx * math.cos(ang) - dv * math.sin(ang), dx * math.sin(ang) + dv * math.cos(ang)
         power, lift = kw["power"], kw["lift"]
-        if key == "header":
+        if key in ("header", "header_dive"):
             power, lift = power * 0.8, max(lift, 18.0)
         elif key == "bicycle":
             power, lift = max(power, 235.0), max(lift, 28.0)
@@ -4217,6 +4752,12 @@ class Game:
         kind = kw.get("kind", "pass")
         b.tactical_pass = bool(kw.get("tactical_pass", False) and kind == "pass" and kw.get("target") is not None)
         b.shot_team = p.team if kind == "shot" else None
+        b.pen = bool(setp and kind == "shot" and self.restart is not None and self.restart["kind"] == "penalty")
+        b.pen_team = p.team if b.pen else None
+        if b.pen:
+            gks = [q for q in self.team_p[1 - p.team] if q.role == "GK"]
+            gsk = gks[0].skill if gks else 0.5
+            b.pen_save = random.random() < 0.10 + 0.16 * gsk
         if kind == "shot":
             self.stats["shots"][p.team] += 1
             self.audio.react("shot")
@@ -4224,7 +4765,7 @@ class Game:
             if setp and self.restart is not None:
                 self.log_restart_taker(p, self.restart["kind"])
             self.mode, self.restart = "play", None
-        self.audio.play("head" if key == "header" else ("kick_hard" if power > 205 else "kick"), 0.5 + min(0.5, power / 400.0))
+        self.audio.play("head" if key in ("header", "header_dive") else ("kick_hard" if power > 205 else "kick"), 0.5 + min(0.5, power / 400.0))
         return True
 
     def do_throw(self, p, a):
@@ -4232,7 +4773,7 @@ class Game:
         if not (self.mode == "restart" and self.restart and self.restart["taker"] is p):
             return
         b.wx, b.wv = self.restart["pos"]
-        b.z = 12.0
+        b.z = THROW_RELEASE_Z
         b.ds = depth_slow(kw["dx"], kw["dv"])
         b.vx, b.vv, b.vz = kw["dx"] * kw["power"] * b.ds, kw["dv"] * kw["power"] * b.ds, kw.get("lift", 40.0)
         b.last, b.last_team, b.intended, b.age, b.owner = p, p.team, kw.get("target"), 0.0, None
@@ -4263,7 +4804,14 @@ class Game:
         b = self.ball
         o = b.owner
         if o is not None and o.team != p.team:
-            if math.hypot(o.wx - p.wx, o.wv - p.wv) < 14.0 and not o.fallen():
+            dist_o = math.hypot(o.wx - p.wx, o.wv - p.wv)
+            if dist_o < 14.0 and not o.fallen():
+                if o.role == "GK":
+                    ux, uv = unit(o.wx - p.wx, o.wv - p.wv)
+                    if dist_o < 11.0 and a["kw"]["dx"] * ux + a["kw"]["dv"] * uv > 0.6:
+                        a["resolved"] = True
+                        self.resolve_challenge(p, o, "slide")
+                    return
                 a["resolved"] = True
                 self.resolve_challenge(p, o, "slide")
             return
@@ -4281,17 +4829,16 @@ class Game:
 
     def resolve_challenge(self, t, o, kind):
         b = self.ball
-        if o.role == "GK" and b.owner is o and t.team != o.team and o.hold_t > 1.8:
+        if o.role == "GK" and b.owner is o and t.team != o.team:
+            if kind != "slide":
+                return
             ref_near = math.hypot(self.ref.wx - t.wx, self.ref.wv - t.wv) < 24.0
             if ref_near:
-                self.call_foul(t, o, 0.95, 0.0)
-                self.log_event(tr("ev.gk_danger"), secs=3, team=t.team)
-                return
-            b.owner = None
-            b.z = 0.0
-            b.vx, b.vv, b.vz = t.dx * 65.0, t.dv * 45.0, 0.0
-            b.last, b.last_team, b.intended = t, t.team, None
-            self.log_event(tr("ev.gk_loose"), secs=2.5, team=o.team)
+                self.call_foul(t, o, 0.50, 0.50)
+            else:
+                self.call_foul(t, o, 0.60, 0.0)
+            self.log_event(tr("ev.gk_danger"), secs=3, team=t.team)
+            return
         ux, uv = unit(o.wx - t.wx, o.wv - t.wv)
         away = o.dx * ux + o.dv * uv
         moving = math.hypot(o.vx, o.vv) > 10
@@ -4318,6 +4865,8 @@ class Game:
 
     def dive_check(self, p, a):
         b = self.ball
+        if b.pen and not b.pen_save:
+            return
         if b.owner is None and b.last_team != p.team and self.mode == "play":
             d = math.hypot(b.wx - p.wx, b.wv - p.wv)
             if d < 15.0 and b.z < GOAL_H + 5:
@@ -4331,18 +4880,23 @@ class Game:
                 else:
                     self.gk_parry(p, punch=random.random() < 0.5)
 
-    def start_kick(self, p, dx, dv, power, lift, kind="pass", target=None, err=0.0, tactical_pass=False):
+    def side_of(self, p, dx, dv):
+        return "E" if screen_x_of(p.wx, p.wv, dx, dv) >= 0 else "W"
+
+    def start_kick(self, p, dx, dv, power, lift, kind="pass", target=None, err=0.0, tactical_pass=False, special=False):
         if p.busy():
             return False
-        self.begin_action(p, "kick", "E" if dx >= 0 else "W", dx=dx, dv=dv, power=power, lift=lift, kind=kind, target=target, err=err,
-                          tactical_pass=bool(tactical_pass and kind == "pass" and target is not None))
+        self.begin_action(p, "kick", self.side_of(p, dx, dv), dx=dx, dv=dv, power=power, lift=lift, kind=kind, target=target, err=err,
+                          tactical_pass=bool(tactical_pass and kind == "pass" and target is not None), special=special)
         return True
 
     def start_aerial(self, p, key, dx, dv, power, lift, kind="pass", err=0.0, target=None, assist=False):
         if p.busy():
             return False
-        self.begin_action(p, key, "E" if dx >= 0 else "W", dx=dx, dv=dv, power=power, lift=lift, kind=kind, err=err, target=target,
-                          assist=assist)
+        if key in ("bicycle", "header_dive"):
+            self.log_move(key, p)
+        self.begin_action(p, key, self.side_of(p, dx, dv), dx=dx, dv=dv, power=power, lift=lift, kind=kind, err=err, target=target,
+                          assist=assist, special=(key in SLOWMO_KEYS))
         p.act_cd = 0.8
         return True
 
@@ -4350,9 +4904,9 @@ class Game:
         if p.busy():
             return False
         if kind == "slide":
-            self.begin_action(p, "slide", "E" if dx >= 0 else "W", dx=dx, dv=dv, speed=88.0)
+            self.begin_action(p, "slide", self.side_of(p, dx, dv), dx=dx, dv=dv, speed=88.0)
         else:
-            self.begin_action(p, "kick", "E" if dx >= 0 else "W", dx=dx, dv=dv, power=0.0, lift=0.0, tackle=True)
+            self.begin_action(p, "kick", self.side_of(p, dx, dv), dx=dx, dv=dv, power=0.0, lift=0.0, tackle=True)
         p.act_cd = 0.9
         return True
 
@@ -4360,17 +4914,18 @@ class Game:
         if p.busy():
             return False
         b = self.ball
+        self.log_move("dive", p)
 
 
         dist = clamp(abs(vtarget - p.wv), 2.0, HALF_MOUTH * 2.2)
 
-        self.begin_action(p, "dive", "E" if b.wx > p.wx else "W", dv=1.0 if vtarget > p.wv else -1.0, speed=dist / 0.437)
+        self.begin_action(p, "dive", "E" if b.wx > p.wx else "W", dv=1.0 if vtarget > p.wv else -1.0, speed=dist / 0.50)
         return True
 
     def start_throw(self, p, dx, dv, power, lift, target=None):
         if p.busy():
             return False
-        self.begin_action(p, "throw", "E" if dx >= 0 else "W", dx=dx, dv=dv, power=power, lift=lift, target=target)
+        self.begin_action(p, "throw", self.side_of(p, dx, dv), dx=dx, dv=dv, power=power, lift=lift, target=target)
         return True
 
     def lob_lift(self, dist, power, z_t=0.0):
@@ -4526,7 +5081,7 @@ class Game:
                     pool.remove(sc[0])
                 if len(sc) > 1:
                     d1 = math.hypot(sc[1].wx - px, sc[1].wv - pv)
-                    if own is None and d1 < 22:
+                    if own is None and d1 < 14:
                         sc[1].tag, sc[1].roam = "chase", roam
                         pool.remove(sc[1])
                     elif own is not None and self.team_uw(team, px, pv)[0] < 0.35:
@@ -4589,8 +5144,8 @@ class Game:
                 if p.dec <= 0 or p.tx is None:
                     p.dec = random.uniform(0.6, 1.2)
                     side = 1.0 if p.idx % 2 else -1.0
-                    sx = own.wx + d * random.uniform(32, 62)
-                    sv = own.wv + side * random.uniform(18, 36)
+                    sx = own.wx + d * random.uniform(40, 70)
+                    sv = own.wv + side * random.uniform(24, 44)
                     p.tx, p.tv = clamp(sx, 6.0, L - 6.0), clamp(sv, V_TOP + 3, V_BOT - 3)
             else:
                 p.tx, p.tv = self.home_pos(p, b.wx, b.wv, True)
@@ -4601,7 +5156,8 @@ class Game:
             dd = math.hypot(own.wx - p.wx, own.wv - p.wv)
             p.tx, p.tv = own.wx + own.dx * 3.0, own.wv + own.dv * 3.0
             p.dec -= dt
-            if dd < 13.0 and p.dec <= 0 and p.cool <= 0 and p.act_cd <= 0 and not own.fallen():
+            gk_hold = own.role == "GK"
+            if dd < 13.0 and p.dec <= 0 and p.cool <= 0 and p.act_cd <= 0 and not own.fallen() and (not gk_hold or random.random() < 0.03 * p.aggr):
                 p.dec = random.uniform(0.4, 0.9)
                 ux, uv = unit(own.wx - p.wx, own.wv - p.wv)
                 r = random.random()
@@ -4611,7 +5167,7 @@ class Game:
                     self.start_tackle(p, ux, uv, "slide")
         elif tag == "cover":
             ux, uv = unit(ogx - own.wx, V_GC - own.wv)
-            p.tx, p.tv = own.wx + ux * 17.0, own.wv + uv * 17.0
+            p.tx, p.tv = own.wx + ux * 26.0, own.wv + uv * 26.0
         elif tag == "mark" and p.mark is not None:
             p.tx, p.tv = self.mark_pos(p, p.mark)
         else:
@@ -4643,7 +5199,7 @@ class Game:
             if togoal < 90:
                 tv = V_GC + random.uniform(-0.7, 0.7) * HALF_MOUTH
                 dx, dv = unit(goalx - p.wx, tv - p.wv)
-                key = "bicycle" if (b.z > 12 and p.skill > 0.72 and random.random() < 0.35) else "header"
+                key = "bicycle" if (b.z > 10 and p.skill > 0.55 and random.random() < 0.5) else "header"
                 self.start_aerial(p, key, dx, dv, 205.0, 22.0, "shot", err=(1.05 - p.skill) * 0.12)
             else:
                 bp = self.best_pass(p)
@@ -4652,10 +5208,16 @@ class Game:
                     self.start_aerial(p, "header", dx, dv, 150.0, 25.0, "pass", err=(1 - p.skill) * 0.1, target=bp[1])
                 else:
                     self.start_aerial(p, "header", float(d), 0.0, 170.0, 28.0, "pass", err=0.1)
-        elif dist < 9.0 and 1.0 < b.z < 7.0 and sp > 80 and togoal < 85 and b.intended is p and random.random() < 0.5:
+        elif 10.0 <= dist < 16.0 and 6.0 <= b.z <= 14.0 and togoal < 100 and b.vz < 35 and p.skill > 0.45 \
+                and unit(b.wx - p.wx, b.wv - p.wv)[0] * d > 0.5 and random.random() < 0.04:
             tv = V_GC + random.uniform(-0.7, 0.7) * HALF_MOUTH
             dx, dv = unit(goalx - p.wx, tv - p.wv)
-            self.start_kick(p, dx, dv, 250.0, self.lob_lift(togoal, 250.0, 4.0), "shot", err=(1.05 - p.skill) * 0.12)
+            self.start_aerial(p, "header_dive", dx, dv, 205.0, 22.0, "shot", err=(1.05 - p.skill) * 0.12, assist=True)
+        elif dist < 10.0 and 1.0 < b.z < 8.0 and sp > 60 and togoal < 100 and b.intended is p and random.random() < 0.6:
+            tv = V_GC + random.uniform(-0.7, 0.7) * HALF_MOUTH
+            dx, dv = unit(goalx - p.wx, tv - p.wv)
+            self.log_move("volley", p)
+            self.start_kick(p, dx, dv, 250.0, self.lob_lift(togoal, 250.0, 4.0), "shot", err=(1.05 - p.skill) * 0.12, special=True)
 
     def best_pass(self, p, aim=None, cone=0.55):
         d = self.att[p.team]
@@ -4774,15 +5336,27 @@ class Game:
                 self.gk_distribute(p)
             return
         toward = -d * b.vx
-        if b.owner is None and b.last_team != p.team and toward > 70:
-            T = abs(own_x - b.wx) / max(1.0, toward)
-            vc = b.wv + b.vv * T
-            zc = b.z + b.vz * T - 0.5 * G * T * T
-            if T < 1.3 and abs(vc - V_GC) < HALF_MOUTH + 5 and zc < GOAL_H + 3:
-                p.tx, p.tv = own_x + d * 4.0, clamp(vc, V_GC - HALF_MOUTH - 3, V_GC + HALF_MOUTH + 3)
-                if T < 0.45 and abs(vc - p.wv) > 5 and not p.busy() and p.act_cd <= 0:
-                    p.act_cd = 0.9
-                    self.start_dive(p, vc)
+        p.alert = False
+        if b.owner is None and b.last_team != p.team and toward > 25 and (b.wx - own_x) * d > 0:
+            fc = self.ball_forecast(own_x)
+            if fc is not None and abs(fc["v"] - V_GC) < HALF_MOUTH + POST_T + 16.0 and fc["z"] < GOAL_H + 8.0:
+                kt = self.t_all - b.age
+                if abs(getattr(p, "gk_kt", -9.0) - kt) > 0.05:
+                    p.gk_kt = kt
+                    p.gk_err = random.gauss(0.0, 1.0) * (1.0 - p.skill) * 4.5
+                T = fc["t"]
+                tv = clamp(fc["v"] + p.gk_err, V_GC - HALF_MOUTH - 3.0, V_GC + HALF_MOUTH + 3.0)
+                if b.pen and not b.pen_save:
+                    side = 1.0 if fc["v"] >= V_GC else -1.0
+                    tv = V_GC - side * HALF_MOUTH * 0.55
+                p.alert = True
+                p.tx, p.tv = own_x + d * 3.0, tv
+                need = abs(tv - p.wv)
+                high = fc["z"] > KEEPER_CATCH_HEIGHT - 2.0
+                if not p.busy() and p.act_cd <= 0:
+                    if (need > 3.5 and T < 0.30 + min(0.14, need * 0.010)) or (high and T < 0.30) or T < 0.12:
+                        p.act_cd = 0.9
+                        self.start_dive(p, tv if need > 3.5 else p.wv + (1.0 if tv >= p.wv else -1.0) * 3.0)
                 return
         dist_b = math.hypot(b.wx - p.wx, b.wv - p.wv)
         in_box = abs(b.wx - own_x) < BOX_D * 0.85 and BOX_V0 <= b.wv <= BOX_V1
@@ -4796,6 +5370,33 @@ class Game:
         if (tx - own_x) * d < 3.0:
             tx = own_x + d * 3.0
         p.tx, p.tv = tx, clamp(tv, V_GC - HALF_MOUTH - 10, V_GC + HALF_MOUTH + 10)
+
+    def ball_forecast(self, x_line, tmax=3.2):
+        b = self.ball
+        x, v, z, vx, vv, vz = b.wx, b.wv, b.z, b.vx, b.vv, b.vz
+        h, t = 1.0 / 60.0, 0.0
+        while t < tmax:
+            px = x
+            kk = depth_k(v)
+            x += vx * h * kk
+            v += vv * h * kk
+            z += vz * h
+            vz -= G * h
+            if z <= 0.0:
+                z = 0.0
+                if vz < -35.0:
+                    vz, vx, vv = -vz * 0.55, vx * 0.88, vv * 0.88
+                else:
+                    vz = 0.0
+            f = math.exp(-(0.7 if z < 0.05 else 0.14) * h * b.ds)
+            vx *= f
+            vv *= f
+            t += h
+            if (px - x_line) * (x - x_line) <= 0.0 and px != x:
+                return dict(t=t, v=v, z=z)
+            if z < 0.05 and math.hypot(vx, vv) < 3.0:
+                return None
+        return None
 
     def gk_distribute(self, p):
         bp = self.best_pass(p)
@@ -4826,13 +5427,21 @@ class Game:
                 hx, hv = agx - ad * (5 + (p.idx % 4) * 6), V_GC + (((p.idx + 2) % 5) - 2) * HALF_MOUTH * 0.55
         elif kind == "penalty":
             hx, hv = agx - ad * (BOX_D + 16 + (p.idx % 3) * 6), V_GC + ((p.idx % 7) - 3) * 10
-        elif kind == "free" and not poss and near_goal and p.role != "GK":
-            ordered = sorted([q for q in self.team_p[p.team] if q.role != "GK" and q.state not in ("out", "leaving")],
-                             key=lambda q: math.hypot(q.wx - x, q.wv - v))[:3]
-            if p in ordered:
+        elif kind == "free" and not poss and p.role != "GK":
+            wall = rs.get("wall")
+            if wall is None:
+                nwall = 3 if near_goal else 2
+                cand = sorted([q for q in self.team_p[p.team] if q.role != "GK" and not q.ctrl and q.state not in ("out", "leaving")],
+                              key=lambda q: math.hypot(q.wx - x, q.wv - v))[:nwall]
+                wall = rs["wall"] = [id(q) for q in cand]
+            if id(p) in wall:
+                gd = math.hypot(agx - x, V_GC - v)
+                wd = clamp(gd * 0.5, 8.0, 22.0)
                 ux, uv = unit(agx - x, V_GC - v)
-                k = ordered.index(p) - 1
-                hx, hv = x + ux * 21.0 - uv * k * 5.0, v + uv * 21.0 + ux * k * 5.0
+                k = wall.index(id(p)) - (len(wall) - 1) / 2.0
+                hx, hv = x + ux * wd - uv * k * 5.0, v + uv * wd + ux * k * 5.0
+                p.tx, p.tv = clamp(hx, 6.0, L - 6.0), clamp(hv, V_MIN_P, V_MAX_P)
+                return
         elif kind == "free" and poss and near_goal and p.role in ("MID", "FWD"):
             hx, hv = agx - ad * (14 + (p.idx % 4) * 8), V_GC + ((p.idx % 5) - 2) * HALF_MOUTH * 0.6
         if poss and kind == "throw":
@@ -4851,11 +5460,16 @@ class Game:
         elif not poss and p.tag == "mark" and p.mark is not None:
             hx, hv = self.mark_pos(p, p.mark)
         if not poss:
-            R = 15.0 if kind == "throw" else 24.0
+            R = 18.0 if kind == "throw" else 28.0
             dd = math.hypot(hx - x, hv - v)
             if dd < R:
                 ux, uv = unit(hx - x, hv - v, (-ad, 0.0))
                 hx, hv = x + ux * R, v + uv * R
+        if kind == "goalkick" and not poss:
+            ogx = 0.0 if ad > 0 else L
+            edge = BOX_D + 8.0
+            if abs(hx - ogx) < edge and BOX_V0 - 6.0 <= hv <= BOX_V1 + 6.0:
+                hx = ogx + ad * edge
         p.tx, p.tv = clamp(hx, 6.0, L - 6.0), clamp(hv, V_MIN_P, V_MAX_P)
 
     def ai_take_restart(self, p, rs):
@@ -4867,7 +5481,8 @@ class Game:
         x, v = rs["pos"]
         p.tx = p.tv = None
         if kind == "penalty" or (kind == "free" and math.hypot(agx - x, V_GC - v) < 118):
-            tv = V_GC + random.choice((-1, 1)) * random.uniform(0.35, 0.85) * HALF_MOUTH
+            lo, hi = (0.55, 0.92) if kind == "penalty" else (0.35, 0.85)
+            tv = V_GC + random.choice((-1, 1)) * random.uniform(lo, hi) * HALF_MOUTH
             dx, dv = unit(agx - p.wx, tv - p.wv)
             dist = math.hypot(agx - p.wx, tv - p.wv)
             power = random.uniform(235, 275)
@@ -4918,6 +5533,9 @@ class Game:
         elif m == "restart" and self.restart:
             x, v = self.restart["pos"]
             tx, tv = x - 12, v + (14 if v < V_MID else -14)
+        elif m == "outball" and self.outball:
+            x, v = self.visible_pos(self.outball["pos"])
+            tx, tv = clamp(x, 20.0, L - 20.0) - 12, clamp(v + (14 if v < V_MID else -14), V_TOP + 6.0, V_BOT - 6.0)
         elif m == "injury" and self.injury:
             q = self.injury["p"]
             tx, tv = q.wx + 6, q.wv + (4 if q.wv < V_MID else -4)
@@ -4964,7 +5582,35 @@ class Game:
 
     @property
     def speed(self):
-        return SPEEDS[self.speed_idx] * SPEED_UNIT
+        base = SPEEDS[self.speed_idx] * SPEED_UNIT
+        sp = getattr(self, "slowmo_p", None)
+        if sp is not None:
+            a = sp.act
+            w = a.get("slow") if (sp.state == "action" and a is not None) else None
+            if w is not None and a["t"] < w[1]:
+                if a["t"] >= w[0]:
+                    return min(base, SPEEDS[0] * SPEED_UNIT)
+                return base
+            self.slowmo_p = None
+        return base
+
+    def strike_will_hit(self, p, key, kw):
+        b = self.ball
+        if b.owner is not None or self.mode != "play":
+            return False
+        spec = ACT_SPEC[key]
+        T = spec["contact"] * spec["fdur"]
+        tx, tv = self.ball_pred(T)
+        zt = max(0.0, b.z + b.vz * T - 0.5 * G * T * T)
+        reach, zlo, zhi = STRIKE_REACH[key]
+        travel = 0.0
+        if kw.get("assist"):
+            reach, zlo, zhi = reach + 7.0, (-2.0 if key == "bicycle" else zlo - 3.0), zhi + 8.0
+            travel = (85.0 if key == "header_dive" else 65.0) * T * 0.6
+        elif key in ("header", "header_dive"):
+            travel = (95.0 if key == "header_dive" else 34.0) * T * 0.5
+        d = math.hypot(tx - p.wx, tv - p.wv)
+        return d - travel <= reach and zlo <= zt <= zhi
 
     @property
     def speed_label(self):
@@ -5000,7 +5646,7 @@ class Game:
         self.zoom = self.fit_zoom(self.zoom)
         self.vsurf = None
         self.paused_gesture = None
-        self.paused_traj_surface = None
+        self.paused_traj_data = None
         self.set_view_dims()
         flags = pygame.FULLSCREEN if self.fullscreen else pygame.RESIZABLE
         try:
@@ -5043,7 +5689,7 @@ class Game:
         if self.cp is p:
             return
         self.paused_gesture = None
-        self.paused_traj_surface = None
+        self.paused_traj_data = None
         if self.cp:
             self.cp.ctrl = False
             self.cp.kvec = None
@@ -5053,7 +5699,7 @@ class Game:
             if not quiet:
                 if p.state not in ("subin", "subout"):
                     p.tx = p.tv = None
-                self.say(tr("msg.control", name=p.label(), role=p.role), (255, 255, 255), 2.5)
+                self.say(tr("msg.control", name=p.label(), role=self.natural_role(p.sq)), (255, 255, 255), 2.5)
 
     def select_nearest(self, team, exclude=None):
         b = self.ball
@@ -5061,25 +5707,42 @@ class Game:
         if c:
             self.select_player(min(c, key=lambda p: math.hypot(p.wx - b.wx, p.wv - b.wv)), quiet=True)
 
+    def sel_candidates(self, team):
+        b = self.ball
+        c = [p for p in self.team_p[team] if p.state not in ("out", "leaving", "subin", "subout", "tunnel")
+             and not p.red and (p.role != "GK" or b.owner is p)]
+        return sorted(c, key=lambda p: math.hypot(p.wx - b.wx, p.wv - b.wv))
+
     def auto_select(self):
         ut = self.user_team
         if ut is None or self.mode in ("intro", "half", "full"):
             return
         b = self.ball
-        o = b.owner
-        if o is not self._last_owner:
-            self._last_owner = o
-            if o is not None and o.state not in ("out", "leaving"):
-                if o.team == ut:
-                    if self._poss_prev != ut:
-                        self.manual = False
-                    if not self.manual and self.cp is not o:
-                        self.select_player(o, quiet=True)
-                elif self.cp is None:
-                    self.select_nearest(ut)
-                self._poss_prev = o.team
-        if self.cp is None and self.mode in ("play", "restart"):
+        if self.mode == "play" and b.owner is None and b.intended is not None and b.intended.team == ut \
+                and b.intended.state not in ("out", "leaving") and not b.intended.red:
+            if self.cp is not b.intended:
+                self.select_player(b.intended, quiet=True)
+            self.sel_hold_until = 0.0
+            return
+        if self.cp is None and self.mode in ("play", "restart", "outball"):
             self.select_nearest(ut)
+            return
+        if self.mode != "play" or time.time() < self.sel_hold_until:
+            return
+        cp = self.cp
+        if self.charge is not None or self.drag or (cp is not None and cp.state != "free"):
+            return
+        if cp is not None and b.owner is cp:
+            return
+        c = self.sel_candidates(ut)
+        if not c:
+            return
+        near = c[0]
+        if near is not cp:
+            dn = math.hypot(near.wx - b.wx, near.wv - b.wv)
+            dc = math.hypot(cp.wx - b.wx, cp.wv - b.wv) if cp is not None else 1e9
+            if dc > dn + 6.0:
+                self.select_player(near, quiet=True)
 
     def user_move_input(self):
         p = self.cp
@@ -5093,13 +5756,40 @@ class Game:
         k = pygame.key.get_pressed()
         x = (k[pygame.K_RIGHT] or k[pygame.K_d]) - (k[pygame.K_LEFT] or k[pygame.K_a])
         v = (k[pygame.K_DOWN] or k[pygame.K_s]) - (k[pygame.K_UP] or k[pygame.K_w])
+        jv = None if (x or v) else self.joy.move_vec()
         if x or v:
             p.kvec = unit(float(x), float(v))
+        elif jv:
+            p.kvec = jv
+        else:
+            p.kvec = None
+        if p.kvec:
             p.tx = p.tv = None
             p.path = None
             self.idle_t = 0.0
-        else:
-            p.kvec = None
+
+    def aim_dir(self, p):
+        if self.drag:
+            x0, y0, x1, y1 = self.drag
+            plan = self.gesture_plan(x0, y0, x1, y1)
+            if plan is not None:
+                return plan[1]
+        def scr(u):
+            return screen_to_world_dir(p.wx, p.wv, u[0], u[1])
+        a = self.joy.aim_vec()
+        if a:
+            return scr(a)
+        k = pygame.key.get_pressed()
+        x = (k[pygame.K_RIGHT] or k[pygame.K_d]) - (k[pygame.K_LEFT] or k[pygame.K_a])
+        v = (k[pygame.K_DOWN] or k[pygame.K_s]) - (k[pygame.K_UP] or k[pygame.K_w])
+        if x or v:
+            return scr(unit(float(x), float(v)))
+        m = self.joy.move_vec()
+        if m:
+            return scr(m)
+        if p.kvec:
+            return p.kvec
+        return (p.dx, p.dv)
 
     def screen_to_ground(self, mx, my):
         cx, cy = self.cam_int()
@@ -5113,18 +5803,18 @@ class Game:
             return
         self.idle_t = 0.0
         b = self.ball
-        dx, dv = unit(*(vec or p.kvec or (p.dx, p.dv)))
+        dx, dv = unit(*(vec or self.aim_dir(p)))
         d = math.hypot(b.wx - p.wx, b.wv - p.wv)
         have = b.owner is p
         rs = self.restart if self.mode == "restart" else None
         setp = rs is not None and rs["taker"] is p
         if setp and not rs["ready"] and rs["t"] < 1.0:
             return
-        if kind in ("moon", "dance", "fall") and not setp:
-            return self.user_show(p, kind, dx, dv)
-        acro = kind == "acro"
-        if acro:
-            kind = "long"
+        if kind == "cele":
+            if setp:
+                return
+            return self.user_celebrate(p, dx, dv)
+        f = clamp(inten if inten is not None else (0.25 if kind == "pass" else 0.75), 0.0, 1.0)
         if setp and rs["kind"] == "throw":
             bp = self.best_pass(p, aim=(dx, dv), cone=0.6)
             if bp:
@@ -5134,70 +5824,164 @@ class Game:
                 power = clamp(dist * 1.4 + 40, 80, 170)
                 self.start_throw(p, ddx, ddv, power, self.lob_lift(dist, power, -10.0), q)
             else:
-                self.start_throw(p, dx, dv, 110.0, 45.0)
+                self.start_throw(p, dx, dv, 80.0 + 90.0 * f, 45.0)
             return
-        ground = have or setp or (self.mode == "play" and b.owner is None and d < REACH_FIRST and b.z < 7.5)
-        if ground and inten is not None:
-            kp = self.kick_plan(p, dx, dv, inten, lob,
-                                self.paused or getattr(self, "_applying_paused_gesture", False))
-            tactical_pass = bool(getattr(self, "_applying_paused_gesture", False) and
-                                  kp["kind"] == "pass" and kp["target"] is not None)
+        ground = have or setp or (self.mode == "play" and b.owner is None and
+                                  d < REACH_FIRST and b.z <= AIR_MIN_Z)
+        if ground:
+            applying = bool(getattr(self, "_applying_paused_gesture", False))
+            kp = self.ground_plan(p, kind, dx, dv, f, self.paused or applying)
+            tactical_pass = bool(applying and kp["kind"] == "pass" and kp["target"] is not None)
             self.start_kick(p, kp["dx"], kp["dv"], kp["power"], kp["lift"], kp["kind"],
                             target=kp["target"], tactical_pass=tactical_pass)
             return
-        if ground:
-            if kind == "short":
-                bp = self.best_pass(p, aim=(dx, dv), cone=0.82)
-                if bp:
-                    _s, q, qx, qv = bp
-                    dist = math.hypot(qx - p.wx, qv - p.wv)
-                    ddx, ddv = unit(qx - p.wx, qv - p.wv)
-                    power = clamp(dist * 1.55 + 55, 95, 250)
-                    self.start_kick(p, ddx, ddv, power, self.lob_lift(dist, power) if lob else 0.0, "pass", target=q)
-                else:
-                    self.start_kick(p, dx, dv, 150.0, 90.0 if lob else 0.0, "pass")
-            else:
-                goalx = L if self.att[p.team] > 0 else 0.0
-                gx, gv = unit(goalx - p.wx, V_GC - p.wv)
-                if dx * gx + dv * gv > 0.94:
-                    dx, dv = unit(dx * 0.5 + gx * 0.5, dv * 0.5 + gv * 0.5)
-                self.start_kick(p, dx, dv, 270.0, 95.0 if lob else 36.0, "shot")
-            return
-        if p.role == "GK" and self.mode == "play" and b.owner is None and b.z >= 5 and d < 20 and not acro:
+        shot = kind == "shot"
+        if p.role == "GK" and self.mode == "play" and b.owner is None and b.z >= 5 and d < 20:
             self.begin_action(p, "punch", "E" if b.wx > p.wx else "W", assist=True)
             return
-        if self.mode == "play" and b.owner is None and b.z >= 5 and d < 24:
-            if b.z < 7.5 and d < 18 and not acro:
-                self.start_kick(p, dx, dv, 250.0 if kind == "long" else 160.0, 20.0, "shot" if kind == "long" else "pass")
-            elif (acro and b.z >= 5.5) or (kind == "long" and b.z >= 8.0):
+        air = self.air_action(p, shot, (dx, dv))
+        if air:
+            if air == "volley":
+                self.log_move("volley", p)
+                self.start_kick(p, dx, dv, (170.0 + 110.0 * f) if shot else (120.0 + 80.0 * f), 20.0,
+                                "shot" if shot else "pass", special=True)
+            elif air == "bicycle":
                 self.start_aerial(p, "bicycle", dx, dv, 255.0, 30.0, "shot", assist=True)
+            elif air == "header_dive":
+                self.start_aerial(p, "header_dive", dx, dv, 230.0 if shot else 150.0, 22.0,
+                                  "shot" if shot else "pass", assist=True)
             else:
-                self.start_aerial(p, "header", dx, dv, 230.0 if kind == "long" else 150.0, 22.0, "shot" if kind == "long" else "pass", assist=True)
+                self.start_aerial(p, "header", dx, dv, 230.0 if shot else 150.0, 22.0,
+                                  "shot" if shot else "pass", assist=True)
             return
-        if acro:
-            self.say(tr("msg.need_high_ball"), (255, 220, 140), 2.5)
-            return
-        if p.role == "GK" and self.mode == "play" and kind == "long":
+        if p.role == "GK" and self.mode == "play" and shot:
             self.start_dive(p, p.wv + dv * 20)
             return
         if b.owner is not None and b.owner.team != p.team and vec is None:
             dx, dv = unit(b.owner.wx - p.wx, b.owner.wv - p.wv)
-        self.start_tackle(p, dx, dv, "slide" if kind == "long" else "stand")
+        self.start_tackle(p, dx, dv, "slide" if shot else "stand")
 
     def user_show(self, p, kind, dx, dv):
-        if kind == "moon":
-            self.begin_action(p, "moonwalk", "E" if dx >= 0 else "W", dx=dx, dv=dv, vel=(dx * 22.0, dv * 22.0), repeat=5)
-        elif kind == "dance":
+        near = [q for q in self.opponents(p.team) if math.hypot(q.wx - p.wx, q.wv - p.wv) < 10 and not q.busy()]
+        if near and self.mode == "play" and random.random() < 0.5:
+            self.call_foul(near[0], p, 0.35, 0.02)
+        else:
+            self.begin_action(p, "fall", "E" if p.dx >= 0 else "W")
+            if self.mode == "play" and random.random() < 0.6:
+                self.log_event(tr("ev.dive_fake", p=p.label()), secs=2.5, team=p.team)
+                self.audio.react("foul")
+
+    def user_celebrate(self, p, dx, dv):
+        pool = ["moon", "moon_back", "dance", "pump"]
+        if self.mode == "play" and any(math.hypot(q.wx - p.wx, q.wv - p.wv) < 14 and not q.busy() for q in self.opponents(p.team)):
+            pool.append("fall")
+        pick = random.choice(pool)
+        if pick == "fall":
+            return self.user_show(p, "fall", dx, dv)
+        if pick == "moon":
+            self.begin_action(p, "moonwalk", self.side_of(p, dx, dv), dx=dx, dv=dv, vel=(dx * 22.0, dv * 22.0), repeat=5)
+        elif pick == "moon_back":
+            self.begin_action(p, "moonwalk", self.side_of(p, -dx, -dv), dx=-dx, dv=-dv, vel=(-dx * 22.0, -dv * 22.0), repeat=5)
+        elif pick == "dance":
             self.begin_action(p, "cele", "E", repeat=5)
         else:
-            near = [q for q in self.opponents(p.team) if math.hypot(q.wx - p.wx, q.wv - p.wv) < 10 and not q.busy()]
-            if near and self.mode == "play" and random.random() < 0.5:
-                self.call_foul(near[0], p, 0.35, 0.02)
-            else:
-                self.begin_action(p, "fall", "E" if p.dx >= 0 else "W")
-                if self.mode == "play" and random.random() < 0.6:
-                    self.log_event(tr("ev.dive_fake", p=p.label()), secs=2.5, team=p.team)
-                    self.audio.react("foul")
+            self.begin_action(p, "punch", self.side_of(p, dx, dv), show=True, repeat=3)
+
+    def press_celebrate(self):
+        if self.mode == "goal":
+            return self.goal_celebrate()
+        self.user_action("cele")
+
+    def goal_celebrate(self):
+        g = self.goal
+        if g is None or g["own"] or g.get("replayed") or self.user_team is None or g["team"] != self.user_team:
+            return
+        if not g["released"] and g["t"] > 0.5:
+            return
+        g["kind"] = random.choice([k for k, w in CELE_KINDS for _ in range(w)])
+        g.update(released=False, said=None, s={}, part=set(), pairs=None)
+        g["t"] = 0.5
+        for pl in self.players:
+            if pl.state in ("cele", "down"):
+                pl.state, pl.lift = "free", 0.0
+
+    def air_options(self, p, shot=True, aim=None):
+        b = self.ball
+        if self.mode != "play" or b.owner is not None or b.z < AIR_MIN_Z:
+            return []
+        d = math.hypot(b.wx - p.wx, b.wv - p.wv)
+        if d >= self.AIR_REACH:
+            return []
+        out = []
+        if b.z >= 5.0:
+            out.append("header")
+        if b.z < 9.0 and d < 12.0:
+            out.append("volley")
+        if shot and b.z >= 6.5 and d < 14.0:
+            out.append("bicycle")
+        if aim is not None and 5.0 <= b.z <= 14.0 and 10.0 <= d < self.AIR_REACH:
+            ux, uv = unit(b.wx - p.wx, b.wv - p.wv)
+            if ux * aim[0] + uv * aim[1] >= 0.6:
+                out.append("header_dive")
+        return out
+
+    def air_action(self, p, shot=True, aim=None):
+        opts = self.air_options(p, shot, aim)
+        if not opts:
+            return None
+        for k, pr in (("header_dive", 0.45), ("bicycle", 0.40), ("volley", 0.40)):
+            if k in opts and random.random() < pr:
+                return k
+        return "header" if "header" in opts else opts[0]
+
+    def log_move(self, kind, p):
+        txt = {"volley": lambda: tr("ev.volley"),
+               "bicycle": lambda: tr("ev.bicycle"),
+               "header_dive": lambda: tr("ev.header_dive"),
+               "dive": lambda: tr("ev.dive_of")}[kind]()
+        if kind == "header_dive" and (not txt or "ev.header_dive" in txt):
+            return
+        try:
+            txt = txt.format(p=p.label())
+        except (KeyError, IndexError, ValueError):
+            txt = "%s %s" % (txt, p.label())
+        self.log_event(txt, secs=2.5, team=p.team)
+
+    def press_action(self, act):
+        p = self.cp
+        if p is None or p.state != "free" or self.charge is not None:
+            return
+        rs = self.restart if self.mode == "restart" else None
+        setp = rs is not None and rs.get("taker") is p
+        if setp and not rs["ready"] and rs["t"] < 1.0:
+            return
+        if (self.can_kick_now() or setp) and not self.paused and not self.replay and self.mode in ("play", "restart"):
+            self.charge = dict(act=act, t0=time.time())
+            self.idle_t = 0.0
+            return
+        self.user_action(act)
+
+    def charge_level(self):
+        c = self.charge
+        return 0.0 if c is None else clamp((time.time() - c["t0"]) / self.CHARGE_FULL, 0.0, 1.0)
+
+    def update_charge(self):
+        c = self.charge
+        if c is None:
+            return
+        p = self.cp
+        if p is None or p.state != "free" or self.paused or self.replay or self.mode not in ("play", "restart"):
+            self.charge = None
+            return
+        act = c["act"]
+        key = JOY_KEYS.get(act)
+        held = self.joy.is_held(act) or bool(key and key[0] is not None and pygame.key.get_pressed()[key[0]])
+        if held:
+            self.idle_t = 0.0
+            return
+        f = self.charge_level()
+        self.charge = None
+        self.user_action(act, None, False, f)
 
     def set_font_mode(self, modern):
         FONTS.modern = modern
@@ -5213,7 +5997,9 @@ class Game:
         self.save_log("interrotta")
         self.replay = None
         self.paused = False
-        self.paused_gesture = self.paused_traj_surface = None
+        self.paused_gesture = self.paused_traj_data = None
+        self.charge = None
+        self._arrow = None
         self.sub_menu = None
         self.drag = self.pathdrag = None
         self.show_help = False
@@ -5262,6 +6048,18 @@ class Game:
     def handle_event(self, ev):
         if ev.type == pygame.QUIT:
             return "quit"
+        if ev.type in JOY_EVENTS:
+            return self.handle_joy(ev)
+        if self.joymap_open and self.mode == "intro" and ev.type in (pygame.MOUSEMOTION, pygame.MOUSEBUTTONUP):
+            self.jm_mouse(ev)
+            return None
+        if ev.type == pygame.KEYDOWN and self.joymap_open and self.mode == "intro":
+            if ev.key == pygame.K_ESCAPE:
+                if self.jm_wait:
+                    self.jm_wait = None
+                else:
+                    self.joymap_open = False
+            return None
         if ev.type == pygame.KEYDOWN:
             k, uni = ev.key, ev.unicode
             if self.confirm_exit:
@@ -5304,6 +6102,12 @@ class Game:
                 self.apply_view()
             elif k == pygame.K_m:
                 self.audio.toggle_mute()
+            elif k == pygame.K_l:
+                self.slowmo_on = not self.slowmo_on
+                if not self.slowmo_on:
+                    self.slowmo_p = None
+                if self.mode != "intro":
+                    self.say(tr("msg.slowmo_on" if self.slowmo_on else "msg.slowmo_off"), (150, 230, 160), 1.8)
             elif k == pygame.K_h:
                 self.help_toggle()
             elif self.mode != "intro" and (k in (pygame.K_F5, pygame.K_F6) or uni in ("[", "]")):
@@ -5329,10 +6133,15 @@ class Game:
             elif k in (pygame.K_p, pygame.K_SPACE):
                 was_paused = self.paused
                 self.paused = not self.paused
+                self.charge = None
+                self.pan_return_at = 0
+                if was_paused and not self.paused and self.cam_manual:
+                    self.cam_manual = False
+                    self.cam_glide = CAM_GLIDE_SECS
                 if was_paused and not self.paused and self.paused_gesture is not None:
                     kind, vec, lob, inten = self.paused_gesture
                     self.paused_gesture = None
-                    self.paused_traj_surface = None
+                    self.paused_traj_data = None
                     self._applying_paused_gesture = True
                     try:
                         self.user_action(kind, vec, lob, inten)
@@ -5344,21 +6153,16 @@ class Game:
                     self.switch_player()
                 elif k == pygame.K_q:
                     self.user_team = None
-                    self.ctrl_choice = None
                     self.select_player(None)
                     self.say(tr("msg.spectator"), (200, 200, 220), 3)
                 elif k == pygame.K_z:
-                    self.user_action("short", None, shift)
+                    self.press_action("pass")
                 elif k == pygame.K_x:
-                    self.user_action("long", None, shift)
-                elif k == pygame.K_b:
-                    self.user_action("acro", None, shift)
-                elif k == pygame.K_v:
-                    self.user_action("moon", None, shift)
+                    self.press_action("shot")
                 elif k == pygame.K_c:
-                    self.user_action("dance", None, shift)
-                elif k == pygame.K_f:
-                    self.user_action("fall", None, shift)
+                    self.press_celebrate()
+                elif k == pygame.K_F8:
+                    self.show_hints = not self.show_hints
         elif ev.type == pygame.MOUSEWHEEL and self.mode == "intro":
             self.su_wheel(ev.y)
         elif ev.type == pygame.MOUSEBUTTONDOWN:
@@ -5375,7 +6179,9 @@ class Game:
             if self.replay:
                 return None
             if self.mode == "intro":
-                if ev.button == 1:
+                if self.joymap_open:
+                    self.jm_click(ev.pos, ev.button)
+                elif ev.button == 1:
                     self.su_click(ev.pos)
                 return None
             x, y = ev.pos
@@ -5405,18 +6211,20 @@ class Game:
                     q = self.path_player_at(x, my) if self.paused else None
                     if q is not None and q.path:
                         q.path = None
-                    else:
-                        self.pick_at(x, my)
+                    elif self.drag is None:
+                        self.drag = [x, my, x, my]
+                        self.drag_act, self.drag_btn = "shot", 3
                 elif ev.button == 1:
                     ballmod = bool(pygame.key.get_mods() & (pygame.KMOD_CTRL | pygame.KMOD_SHIFT))
                     if self.paused and not ballmod and self.paused_gesture is not None:
                         self.paused_gesture = None
-                        self.paused_traj_surface = None
+                        self.paused_traj_data = None
                     q = self.path_player_at(x, my) if (self.paused and not ballmod) else None
                     if q is not None:
                         self.pathdrag = dict(p=q, pts=[(q.wx, q.wv)], px=(x, my))
-                    else:
+                    elif self.drag is None:
                         self.drag = [x, my, x, my]
+                        self.drag_act, self.drag_btn = "pass", 1
         elif ev.type == pygame.MOUSEMOTION and self.pan_drag:
             pd = self.pan_drag
             raw_dx = ev.pos[0] - pd["start"][0]
@@ -5441,7 +6249,7 @@ class Game:
                     if self.paused:
                         self.update_cam(0.0, True)
                 elif self.pan_drag["moved"] and self.cam_manual:
-                    self.pan_return_at = (pygame.time.get_ticks() + PAN_HYSTERESIS_MS)
+                    self.pan_return_at = (0 if self.paused else pygame.time.get_ticks() + PAN_HYSTERESIS_MS)
             self.pan_drag = None
         elif ev.type == pygame.MOUSEMOTION and self.pathdrag:
             pd = self.pathdrag
@@ -5461,12 +6269,113 @@ class Game:
                 self.say(tr("msg.path_assigned", name=q.name, n=len(q.path)), (255, 255, 255), 2.0)
         elif ev.type == pygame.MOUSEMOTION and self.drag:
             self.drag[2], self.drag[3] = ev.pos[0], ev.pos[1] - self.field_y
-        elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1 and self.drag:
+        elif ev.type == pygame.MOUSEBUTTONUP and ev.button in (1, 3) and self.drag and ev.button == self.drag_btn:
             x0, y0 = self.drag[0], self.drag[1]
             self.drag = None
             self.idle_t = 0.0
-            self.finish_gesture(x0, y0, ev.pos[0], ev.pos[1] - self.field_y, pygame.key.get_mods())
+            x1, y1 = ev.pos[0], ev.pos[1] - self.field_y
+            if ev.button == 3 and math.hypot(x1 - x0, y1 - y0) < 12:
+                self.pick_at(x0, y0)
+            else:
+                self.finish_gesture(x0, y0, x1, y1, pygame.key.get_mods(), "shot" if ev.button == 3 else "pass")
         return None
+
+    def handle_joy(self, ev):
+        j = self.joy
+        toks = j.process(ev, time.time())
+        if not toks:
+            return None
+        self.idle_t = 0.0
+        for tok in toks:
+            self.jm_flash[tok] = 0.35
+        if self.mode == "intro" and self.joymap_open:
+            if self.jm_wait:
+                act = self.jm_wait
+                self.jm_wait = None
+                j.assign(act, toks[0])
+            else:
+                if any(a == "back" for t in toks for a in j.actions_for(t)):
+                    self.joymap_open = False
+            return None
+        for tok in toks:
+            if self.mode == "intro" and tok.startswith("hat:"):
+                key = {"hat:up": pygame.K_UP, "hat:down": pygame.K_DOWN, "hat:left": pygame.K_LEFT, "hat:right": pygame.K_RIGHT}[tok]
+                self.su_key(key)
+                continue
+            for act in j.actions_for(tok):
+                if self.joy_fire(act) == "quit":
+                    return "quit"
+        return None
+
+    def joy_fire(self, act):
+        key = JOY_KEYS.get(act)
+        if key is None or key[0] is None:
+            return None
+        k, uni = key
+        if act == "confirm":
+            if self.confirm_exit or self.mode in ("intro", "full"):
+                pass
+            elif self.mode == "goal":
+                k = pygame.K_SPACE
+            else:
+                return None
+        elif act == "back":
+            if not self.confirm_exit:
+                return None
+        elif act == "exit_match":
+            if self.mode in ("intro", "full") or self.confirm_exit:
+                return None
+        elif self.confirm_exit or self.mode == "intro":
+            return None
+        mod = pygame.KMOD_SHIFT if self.joy.is_held("lob") else 0
+        return self.handle_event(pygame.event.Event(pygame.KEYDOWN, key=k, unicode=uni, mod=mod))
+
+    JM_SNAP = 34.0
+    JM_DRAGGABLE = ("triangle", "circle", "cross", "square", "l1", "l2", "r1", "r2", "select", "start", "l3", "r3")
+
+    def jm_near(self, vx, vy, skip=None, rad=16.0):
+        best = None
+        for name, (cx, cy) in self.jm_spots.items():
+            if name == skip or name not in self.JM_DRAGGABLE:
+                continue
+            d = math.hypot(cx - vx, cy - vy)
+            if d <= rad and (best is None or d < best[0]):
+                best = (d, name)
+        return best[1] if best else None
+
+    def jm_mouse(self, ev):
+        d = self.jm_drag
+        if d is None:
+            return
+        d["pos"] = self.su_to_virtual(ev.pos)
+        if ev.type == pygame.MOUSEBUTTONUP and ev.button == 1:
+            tgt = self.jm_near(d["pos"][0], d["pos"][1], skip=d["ctrl"], rad=self.JM_SNAP)
+            if tgt:
+                self.joy.swap_controls(d["ctrl"], tgt)
+            self.jm_drag = None
+
+    def jm_click(self, pos, button=1):
+        vx, vy = self.su_to_virtual(pos)
+        if self.jm_wait:
+            self.jm_wait = None
+            return
+        if button == 1:
+            c = self.jm_near(vx, vy)
+            if c:
+                self.jm_drag = {"ctrl": c, "pos": (vx, vy)}
+                return
+        for r, tag in self.su_hits:
+            if r.collidepoint(vx, vy):
+                if tag[0] == "close":
+                    self.joymap_open = False
+                elif tag[0] == "reset":
+                    self.joy.reset()
+                elif tag[0] == "act":
+                    if button == 3:
+                        self.joy.assign(tag[1], None)
+                    else:
+                        self.jm_wait = tag[1]
+                return
 
     def su_scale(self):
         sc = min(self.W / float(SU_W), self.H / float(SU_H))
@@ -5516,6 +6425,8 @@ class Game:
                     self.su_pick = None
                 elif tag[0] == "replay_auto":
                     self.replay_auto = not self.replay_auto
+                elif tag[0] == "slowmo":
+                    self.slowmo_on = not self.slowmo_on
                 elif tag[0] == "replay_secs":
                     self.replay_secs = tag[1]
                 elif tag[0] == "font":
@@ -5530,6 +6441,8 @@ class Game:
                     self.ctrl_choice = tag[1]
                 elif tag[0] == "start":
                     self.start_match()
+                elif tag[0] == "joymap":
+                    self.joymap_open, self.jm_wait = True, None
                 return
         self.su_pick = None
 
@@ -5553,14 +6466,22 @@ class Game:
             self.user_team = {0: 1, 1: None, None: 0}[self.user_team]
 
     def switch_player(self):
-        team = self.cp.team if self.cp else (self.user_team if self.user_team is not None else
-                                             (self.ball.last_team if self.ball.last_team in (0, 1) else 0))
+        if self.cp:
+            team = self.cp.team
+        elif self.ctrl_choice in (0, 1):
+            team = self.ctrl_choice
+        elif self.user_team is not None:
+            team = self.user_team
+        else:
+            team = self.ball.last_team if self.ball.last_team in (0, 1) else 0
         self.user_team = team
         self.manual = True
-        b = self.ball
-        c = [p for p in self.team_p[team] if p.state not in ("out", "leaving") and p is not self.cp and p.role != "GK"]
-        if c:
-            self.select_player(min(c, key=lambda p: math.hypot(p.wx - b.wx, p.wv - b.wv)))
+        c = self.sel_candidates(team)[:5]
+        if not c:
+            return
+        nxt = c[(c.index(self.cp) + 1) % len(c)] if self.cp in c else c[0]
+        self.sel_hold_until = time.time() + 2.0
+        self.select_player(nxt)
 
     def pick_at(self, mx, my):
         if mx < 0 or my < 0 or mx >= self.view_w or my >= self.view_h:
@@ -5576,7 +6497,7 @@ class Game:
         if best:
             self.pick_player(best[1])
 
-    def finish_gesture(self, x0, y0, x1, y1, mods):
+    def finish_gesture(self, x0, y0, x1, y1, mods, act="pass"):
         if x0 < 0 or y0 < 0 or x0 >= self.view_w or y0 >= self.view_h:
             return
         dx, dy = x1 - x0, y1 - y0
@@ -5590,20 +6511,14 @@ class Game:
             p.path = None
             self.click_mark = [fx, row, 2.0]
             return
-        plan = self.gesture_plan(x0, y0, x1, y1)
+        plan = self.gesture_plan(x0, y0, x1, y1, act)
         if plan is None:
             return
-        lob = bool(mods & pygame.KMOD_SHIFT) and not (mods & pygame.KMOD_CTRL)
-        if self.paused and (mods & (pygame.KMOD_SHIFT | pygame.KMOD_CTRL)):
-            self.paused_gesture = (plan[0], plan[1], lob, plan[2])
-            old_target = self.target
-            preview = pygame.Surface((self.view_w, self.view_h), pygame.SRCALPHA)
-            self.target = preview
-            self.draw_shot_preview(x0, y0, x1, y1, lob)
-            self.target = old_target
-            self.paused_traj_surface = preview
+        if self.paused and (act == "shot" or mods & (pygame.KMOD_SHIFT | pygame.KMOD_CTRL)):
+            self.paused_gesture = (plan[0], plan[1], False, plan[2])
+            self.paused_traj_data = self.build_shot_preview(x0, y0, x1, y1, act)
             return
-        self.user_action(plan[0], plan[1], lob, plan[2])
+        self.user_action(plan[0], plan[1], False, plan[2])
 
     def intensity(self):
         b = self.ball
@@ -5645,12 +6560,18 @@ class Game:
                 self.begin_subs()
         if self.mode == "play":
             self.update_injuries(dt)
+        if self.ball.pen and (self.mode != "play" or self.ball.owner is not None or self.ball.last_team != self.ball.pen_team):
+            self.ball.pen = False
+        self.check_gk_box_time(dt)
+        self.check_overlap_steal()
         self.update_flags(dt)
         self.auto_select()
         self.ai_update(dt)
         self.user_move_input()
+        self.update_charge()
         for p in self.players:
             self.step_player(p, dt)
+        self.throw_pose()
         if self.mode in ("play", "goal", "restart", "foul", "half", "full", "outball"):
             self.update_ball(dt)
         self.update_ref(dt)
@@ -5669,6 +6590,68 @@ class Game:
             self.click_mark[2] -= dt
             if self.click_mark[2] <= 0:
                 self.click_mark = None
+
+    def check_overlap_steal(self):
+        b = self.ball
+        o = b.owner
+        if self.mode != "play" or o is None or o.role == "GK" or o.state in ("out", "leaving") or o.fallen():
+            self.ov_set.clear()
+            return
+        near = set()
+        for q in self.team_p[1 - o.team]:
+            if q.role == "GK" or q.state != "free" or q.cool > 0 or q.red:
+                continue
+            d = math.hypot(q.wx - o.wx, q.wv - o.wv)
+            if d < 8.0:
+                near.add(id(q))
+            if d < 5.0 and id(q) not in self.ov_set:
+                self.ov_set.add(id(q))
+                if random.random() < 0.30:
+                    o.cool = 0.55
+                    self.give_ball(q)
+                    self.audio.play("tackle", 0.7)
+                    self.audio.react("tackle")
+                    return
+        self.ov_set &= near
+
+    def check_gk_box_time(self, dt):
+        b = self.ball
+        o = b.owner
+        if self.mode != "play" or o is None or o.role != "GK" or o.state in ("out", "leaving"):
+            self.box_t.clear()
+            return
+        own_gx = 0.0 if self.att[o.team] > 0 else L
+        seen = set()
+        for q in self.team_p[1 - o.team]:
+            if q.role == "GK" or q.state in ("out", "leaving") or q.red:
+                continue
+            if in_box_fn(q.wx, q.wv, own_gx):
+                k = id(q)
+                seen.add(k)
+                self.box_t[k] = self.box_t.get(k, 0.0) + dt
+                if self.box_t[k] > 2.0:
+                    self.box_t.clear()
+                    self.call_foul(q, o, 0.15, 0.0, fall=False)
+                    self.log_event(tr("ev.gk_danger"), secs=3, team=q.team)
+                    return
+        for k in list(self.box_t):
+            if k not in seen:
+                del self.box_t[k]
+
+    def throw_pose(self):
+        rs = self.restart if self.mode == "restart" else None
+        if rs is None or rs.get("kind") != "throw":
+            return
+        tk = rs.get("taker")
+        if tk is None or tk.state in ("out", "leaving"):
+            return
+        if tk.state == "free" and rs.get("ready"):
+            tk.sid = _off(tk.team) + 27
+        elif not (tk.state == "action" and tk.act is not None and tk.act["key"] == "throw" and not tk.act["fired"]):
+            return
+        b = self.ball
+        b.wx, b.wv, b.z = tk.wx, tk.wv, THROW_HOLD_Z
+        b.vx = b.vv = b.vz = 0.0
 
     def text(self, s, font, col, pos, center=False, shadow=True):
         img = font.render(s, True, col)
@@ -5752,10 +6735,13 @@ class Game:
                 (bpx, bgy, b.z, BALL_ROT[int(b.spin / 3.0) % len(BALL_ROT)]),
                 tuple(f.screen() for f in self.flags))
 
-    def draw_field(self, snap=None):
+    def draw_field(self, snap=None, split=False):
         s = self.field_surf
+        fg = self.sprite_surf if split else s
         s.blit(self.gfx.field, (0, 0))
         s.blit(self.gfx.crowd_frame(), (0, 0))
+        if split:
+            fg.fill((0, 0, 0, 0))
         snap = snap or self.snapshot()
         pl, rf, bl = snap[:3]
         flags = snap[3] if len(snap) > 3 else ()
@@ -5768,28 +6754,28 @@ class Game:
         items.sort(key=lambda t: (t[0], t[1]))
         for _k, _r, kind, p in items:
             if kind == "f":
-                self.draw_flag(s, p)
+                self.draw_flag(fg, p)
             elif kind == "p":
-                s.blit(self.gfx.sprite(p[2]), (int(round(p[0])) - 6, int(round(p[1])) + Y_OFFSET))
+                fg.blit(self.gfx.sprite(p[2]), (int(round(p[0])) - 6, int(round(p[1])) + Y_OFFSET))
             elif kind == "r":
-                s.blit(self.gfx.sprite(rf[2]), (int(round(rf[0])) - 6, int(round(rf[1])) + Y_OFFSET))
+                fg.blit(self.gfx.sprite(rf[2]), (int(round(rf[0])) - 6, int(round(rf[1])) + Y_OFFSET))
             elif kind == "s":
                 sy_ = max(int(round(bgy)) + 3 + Y_OFFSET, FIELD_ROW0 - 2 - self.gfx.shadow_top)
-                s.blit(self.gfx.sprite(145), (int(round(bpx)) - 2, sy_))
+                fg.blit(self.gfx.sprite(145), (int(round(bpx)) - 2, sy_))
             elif kind == "b":
-                s.blit(self.gfx.sprite(bsid), (int(round(bpx)) - 2, int(round(bgy + 3 - bz)) + Y_OFFSET))
+                fg.blit(self.gfx.sprite(bsid), (int(round(bpx)) - 2, int(round(bgy + 3 - bz)) + Y_OFFSET))
             else:
-                s.blit(p[0], p[1])
+                fg.blit(p[0], p[1])
         if rf[3]:
             cx, cy = int(round(rf[0])) + 4, int(round(rf[1])) + Y_OFFSET - 8
-            pygame.draw.rect(s, (0, 0, 0), (cx - 1, cy - 1, 6, 8))
-            pygame.draw.rect(s, (255, 220, 0) if rf[3] == "Y" else (230, 30, 30), (cx, cy, 4, 6))
+            pygame.draw.rect(fg, (0, 0, 0), (cx - 1, cy - 1, 6, 8))
+            pygame.draw.rect(fg, (255, 220, 0) if rf[3] == "Y" else (230, 30, 30), (cx, cy, 4, 6))
         if snap is None and self.click_mark:
             x, y = int(self.click_mark[0]), int(self.click_mark[1])
-            pygame.draw.line(s, (255, 255, 255), (x - 2, y), (x + 2, y))
-            pygame.draw.line(s, (255, 255, 255), (x, y - 2), (x, y + 2))
+            pygame.draw.line(fg, (255, 255, 255), (x - 2, y), (x + 2, y))
+            pygame.draw.line(fg, (255, 255, 255), (x, y - 2), (x, y + 2))
         if self.debug:
-            self.draw_debug(s)
+            self.draw_debug(fg)
 
     def draw_flag(self, s, fl):
         bx, by, tx, ty, sg = fl
@@ -5800,14 +6786,34 @@ class Game:
         pygame.draw.polygon(s, (230, 40, 40), [(int(round(x)), int(round(y))) for x, y in pts])
 
     def draw_debug(self, s):
-        def pl(pts, col):
-            pygame.draw.lines(s, col, False, [ground_to_img(*p) for p in pts], 1)
+        def gp(x, v, z=0.0):
+            ix, iy = ground_to_img(x, v)
+            return (ix, iy - z)
+
+        def pl(pts, col, closed=False):
+            pygame.draw.lines(s, col, closed, [gp(*p) for p in pts], 1)
+
+        def ring(x, v, r, col, n=20):
+            pl([(x + r * math.cos(2 * math.pi * i / n), v + r * math.sin(2 * math.pi * i / n)) for i in range(n)], col, True)
         pl(_wline((0, V_TOP), (L, V_TOP)) + _wline((L, V_TOP), (L, V_BOT)) + _wline((L, V_BOT), (0, V_BOT)) + _wline((0, V_BOT), (0, V_TOP)), (255, 255, 0))
         pl(_wline((L / 2, V_TOP), (L / 2, V_BOT)), (255, 255, 0))
+        v0, v1 = V_GC - HALF_MOUTH, V_GC + HALF_MOUTH
         for x0, sg in ((0, 1), (L, -1)):
-            pl([(x0, V_GC - HALF_MOUTH), (x0, V_GC + HALF_MOUTH)], (0, 255, 255))
+            pl([(x0, v0), (x0, v1)], (0, 255, 255))
             pl([(x0, BOX_V0), (x0 + sg * BOX_D, BOX_V0), (x0 + sg * BOX_D, BOX_V1), (x0, BOX_V1)], (255, 120, 0))
             pl([(x0, GA_V0), (x0 + sg * GA_D, GA_V0), (x0 + sg * GA_D, GA_V1), (x0, GA_V1)], (255, 60, 200))
+            xd = x0 - sg * GOAL_D
+            pl([(x0, v0, 0), (x0, v0, GOAL_H), (x0, v1, GOAL_H), (x0, v1, 0)], (0, 255, 255))
+            pl([(x0, v0, GOAL_H + BAR_HI), (x0, v1, GOAL_H + BAR_HI)], (255, 0, 0))
+            pl([(x0, v0 - POST_T, 0), (x0, v0 - POST_T, GOAL_H + BAR_HI), (x0, v1 + POST_T, GOAL_H + BAR_HI), (x0, v1 + POST_T, 0)], (255, 255, 255))
+            pl([(x0, v0, 0), (xd, v0, 0), (xd, v1, 0), (x0, v1, 0)], (0, 150, 255))
+            pl([(x0, v0, GOAL_NET_H), (xd, v0, GOAL_NET_H), (xd, v1, GOAL_NET_H), (x0, v1, GOAL_NET_H)], (0, 150, 255), True)
+        b = self.ball
+        pl([(b.wx - 2, b.wv), (b.wx + 2, b.wv)], (255, 255, 255))
+        pl([(b.wx, b.wv, 0), (b.wx, b.wv, b.z)], (255, 255, 255))
+        pl([(b.wx, b.wv, b.z), (b.wx + b.vx * 0.15, b.wv + b.vv * 0.15, b.z)], (255, 0, 255))
+        for f in self.flags:
+            ring(f.x, f.v, FLAG_R, (255, 160, 0), 12)
         cp = self.cp
         if cp and cp.state != "out":
             d = self.att[cp.team]
@@ -5815,9 +6821,44 @@ class Game:
             va, vb = V_TOP + cp.zw[0] * PITCH_W, V_TOP + cp.zw[1] * PITCH_W
             pl(_wline((xa, va), (xb, va), 12) + _wline((xb, va), (xb, vb), 12) + _wline((xb, vb), (xa, vb), 12) + _wline((xa, vb), (xa, va), 12),
                (120, 255, 120))
+            ring(cp.wx, cp.wv, REACH_FIRST, (120, 255, 120))
+            ring(cp.wx, cp.wv, PLAYER_CATCH_RADIUS, (255, 255, 255), 14)
+            ring(cp.wx, cp.wv, self.AIR_REACH, (0, 200, 255), 28)
         for p in self.players:
             if p.state != "out" and p.tx is not None:
-                pygame.draw.line(s, TEAM_COL[p.team], ground_to_img(p.wx, p.wv), ground_to_img(p.tx, p.tv), 1)
+                pygame.draw.line(s, TEAM_COL[p.team], gp(p.wx, p.wv), gp(p.tx, p.tv), 1)
+            if p.role == "GK" and p.state != "out":
+                ring(p.wx, p.wv, KEEPER_CATCH_RADIUS, (255, 140, 0))
+                pl([(p.wx, p.wv, 0), (p.wx, p.wv, KEEPER_CATCH_HEIGHT)], (255, 140, 0))
+                own_x = 0.0 if self.att[p.team] > 0 else L
+                if b.owner is None and (b.wx - own_x) * self.att[p.team] > 0:
+                    fc = self.ball_forecast(own_x)
+                    if fc is not None:
+                        pl([(own_x, fc["v"] - 2, fc["z"]), (own_x, fc["v"] + 2, fc["z"])], (255, 0, 255))
+                        pl([(own_x, fc["v"], fc["z"] - 2), (own_x, fc["v"], fc["z"] + 2)], (255, 0, 255))
+
+    def draw_debug_text(self):
+        b = self.ball
+        own = b.owner.label() if b.owner is not None else "-"
+        lines = [tr("dbg.title", mode=self.mode, speed=self.speed),
+                 tr("dbg.ball", x=b.wx, v=b.wv, z=b.z, vx=b.vx, vv=b.vv, vz=b.vz, ds=b.ds),
+                 tr("dbg.owner", owner=own, lt=b.last_team, st=b.shot_team, age=b.age),
+                 tr("dbg.goal", vgc=V_GC, hm=HALF_MOUTH, v0=V_GC - HALF_MOUTH, v1=V_GC + HALF_MOUTH, gh=GOAL_H,
+                    bh=BAR_HI, pt=POST_T, gd=GOAL_D, gn=GOAL_NET_H),
+                 tr("dbg.legend1"),
+                 tr("dbg.legend2", air=self.AIR_REACH, fr=FLAG_R)]
+        for p in self.players:
+            if p.role == "GK" and p.state != "out":
+                lines.append(tr("dbg.gk", team=p.team, name=p.label(), skill=p.skill,
+                                alert=getattr(p, "alert", False), state=p.state, cd=p.act_cd))
+        cp = self.cp
+        if cp is not None:
+            opts = self.air_options(cp, True)
+            lines.append(tr("dbg.cp", name=cp.label(), state=cp.state, opts=",".join(opts) or "-"))
+        y = 4
+        for ln in lines:
+            self.text(ln, self.font_t, (255, 255, 120), (6, y), shadow=True)
+            y += self.font_t.get_height() + 1
 
     def draw(self):
         if self.mode == "intro":
@@ -5829,36 +6870,40 @@ class Game:
             if p.sx == 0 and p.sy == 0:
                 self.post_move(p)
         rp = self.replay
-        self.draw_field(rp["frames"][min(rp["i"], len(rp["frames"]) - 1)][1] if rp else None)
+        ak = 0.0 if rp else self.update_arrow_state()
+        split = ak > 0.0
+        self.draw_field(rp["frames"][min(rp["i"], len(rp["frames"]) - 1)][1] if rp else None, split)
         cx, cy = self.cam_int()
         view = self.field_surf.subsurface(pygame.Rect(cx, cy, self.vw, self.vh))
         self.screen.fill((6, 6, 12))
         vs = self.vsurf
         pygame.transform.scale(view, (self.view_w, self.view_h), vs)
         self.target = vs
+        if split:
+            self.draw_ground_arrow_fx(vs, self._arrow, ak)
+            fg = pygame.transform.scale(self.sprite_surf.subsurface(pygame.Rect(cx, cy, self.vw, self.vh)),
+                                        (self.view_w, self.view_h))
+            vs.blit(fg, (0, 0))
         if not rp:
             self.draw_marker()
         if self.paused and not rp:
             self.draw_tactics()
         if self.drag and self.cp and not rp:
             x0, y0, x1, y1 = self.drag
-            ln = math.hypot(x1 - x0, y1 - y0)
-            if ln > 6:
-                f_ = self.gesture_intensity(ln)
-                col = (255, int(255 - 110 * f_), int(255 - 225 * f_))
-                pygame.draw.line(vs, col, (x0, y0), (x1, y1), 3)
-                pygame.draw.circle(vs, col, (x1, y1), 6, 2)
-                if self.paused:
-                    md = pygame.key.get_mods()
-                    self.draw_shot_preview(x0, y0, x1, y1, bool(md & pygame.KMOD_SHIFT) and not (md & pygame.KMOD_CTRL))
-        if self.paused and self.paused_traj_surface is not None and not self.drag and not rp:
-            vs.blit(self.paused_traj_surface, (0, 0))
+            if self.paused and math.hypot(x1 - x0, y1 - y0) > 6:
+                self.draw_shot_preview(x0, y0, x1, y1, self.drag_act)
+        if self.paused and self.paused_traj_data is not None and not self.drag and not rp:
+            self.draw_shot_preview_data(self.paused_traj_data)
+        if self.debug and not rp:
+            self.draw_debug_text()
         if self.big and not rp:
             self.text(self.big[0], self.font_l, (255, 255, 255), (self.view_w // 2, self.view_h // 3), True)
         if self.mode in ("half", "full") and not rp:
             self.draw_summary()
         if rp:
             self.draw_replay_badge()
+        if not rp:
+            self.draw_key_hints()
         if self.show_help:
             self.draw_help()
         self.target = self.screen
@@ -5871,6 +6916,150 @@ class Game:
             self.draw_sub_menu()
         if self.confirm_exit:
             self.draw_exit_dialog()
+
+    def arrow_source(self):
+        p = self.cp
+        if p is None or p.state != "free" or self.replay or self.mode not in ("play", "restart"):
+            return None
+        if self.drag:
+            x0, y0, x1, y1 = self.drag
+            ln = math.hypot(x1 - x0, y1 - y0)
+            if ln <= 6:
+                return None
+            (a, b), (c, d) = _w2s_jac(p.wx, p.wv)
+            det = a * d - b * c
+            if abs(det) < 1e-9:
+                return None
+            sx, sy = (x1 - x0) / float(max(1, self.zoom)), (y1 - y0) / float(max(1, self.zoom))
+            wdx, wdv = (d * sx - b * sy) / det, (-c * sx + a * sy) / det
+            ux, uv = unit(wdx, wdv)
+            return dict(dx=ux, dv=uv, length=clamp(math.hypot(wdx, wdv), 8.0, 110.0),
+                        f=self.gesture_intensity(ln), pid=id(p))
+        if self.paused:
+            return None
+        if self.charge is not None:
+            dx, dv = self.aim_dir(p)
+            f = self.charge_level()
+            return dict(dx=dx, dv=dv, length=self.ARROW_MIN + f * (self.ARROW_MAX - self.ARROW_MIN), f=f, pid=id(p))
+        a = self.joy.aim_vec()
+        if a:
+            dx, dv = screen_to_world_dir(p.wx, p.wv, a[0], a[1])
+            f = clamp(self.joy.aim_mag(), 0.25, 1.0)
+            return dict(dx=dx, dv=dv, length=self.ARROW_MIN + f * 0.6 * (self.ARROW_MAX - self.ARROW_MIN), f=f * 0.6,
+                        pid=id(p))
+        return None
+
+    def update_arrow_state(self):
+        now = time.time()
+        src = self.arrow_source()
+        if src:
+            src["t"] = now
+            self._arrow = src
+            return 1.0
+        a = self._arrow
+        if a is None:
+            return 0.0
+        if self.cp is None or id(self.cp) != a["pid"] or self.paused or self.mode not in ("play", "restart"):
+            self._arrow = None
+            return 0.0
+        k = 1.0 - (now - a["t"]) / self.ARROW_FADE
+        if k <= 0.0:
+            self._arrow = None
+            return 0.0
+        return k
+
+    def draw_ground_arrow_fx(self, surface, a, k):
+        p = self.cp
+        if p is None or a is None or k <= 0.0:
+            return
+        ux, uv = a["dx"], a["dv"]
+        Ln = max(a["length"], 9.0)
+        f = a["f"]
+        hl = clamp(Ln * 0.34, 4.5, 10.0)
+        sh = Ln - hl
+        w0, w1, hw = 1.0, 1.9, 4.6
+        nx, nv = -uv, ux
+        camx, camy = self.cam_int()
+        z = self.zoom
+
+        def scr(s, off):
+            ix, iy = ground_to_img(p.wx + ux * s + nx * off, p.wv + uv * s + nv * off)
+            return ((ix - camx) * z, (iy - camy) * z)
+        slices = []
+        n1, n2 = 10, 6
+        for i in range(n1):
+            sa, sb = sh * i / n1, sh * (i + 1) / n1
+            slices.append((sa, w0 + (w1 - w0) * sa / sh, sb, w0 + (w1 - w0) * sb / sh))
+        for i in range(n2):
+            sa, sb = sh + hl * i / n2, sh + hl * (i + 1) / n2
+            slices.append((sa, hw * (Ln - sa) / hl, sb, hw * (Ln - sb) / hl))
+        polys = []
+        xs, ys = [], []
+        for sa, wa, sb, wb in slices:
+            pts = [scr(sa, wa), scr(sb, wb), scr(sb, -wb), scr(sa, -wa)]
+            polys.append(((sa + sb) * 0.5 / Ln, pts))
+            for px, py in pts:
+                xs.append(px)
+                ys.append(py)
+        vw, vh = surface.get_size()
+        bx0, by0 = int(max(math.floor(min(xs)) - 3, -4)), int(max(math.floor(min(ys)) - 3, -4))
+        bx1, by1 = int(min(math.ceil(max(xs)) + 3, vw + 4)), int(min(math.ceil(max(ys)) + 3, vh + 4))
+        bw, bh = bx1 - bx0, by1 - by0
+        if bw < 2 or bh < 2:
+            return
+        ss = 3 if bw * bh < 360000 else 2
+        tmp = pygame.Surface((bw * ss, bh * ss), pygame.SRCALPHA)
+        amax = 80.0 + 70.0 * f
+        for t, pts in polys:
+            alpha = int(clamp(k * amax * (0.30 + 0.70 * t), 0, 255))
+            pygame.draw.polygon(tmp, (0, 0, 0, alpha), [((x - bx0) * ss, (y - by0) * ss) for x, y in pts])
+        surface.blit(pygame.transform.smoothscale(tmp, (bw, bh)), (bx0, by0))
+
+    def draw_key_hints(self):
+        p = self.cp
+        if not self.show_hints or p is None or self.user_team is None or self.mode not in ("play", "restart") \
+                or self.show_help or self.drag:
+            return
+        rs = self.restart if self.mode == "restart" else None
+        have = self.can_kick_now() or (rs is not None and rs.get("taker") is p)
+        pad = self.joy.recent(time.time())
+
+        def key(act, kb):
+            if not pad:
+                return kb
+            t = self.joy.cfg["buttons"].get(act)
+            return self.joy.token_label(t[0]) if t else None
+        if self.paused:
+            items = [(tr("hint.pause_path_k"), tr("hint.pause_path")),
+                     (tr("hint.pause_kick_k"), tr("hint.pause_kick")),
+                     (key("pause", "Spazio"), tr("hint.pause_resume")),
+                     ("F8", tr("hint.off"))]
+            text = "   ".join("[%s] %s" % (k, d) for k, d in items if k)
+            img = self.font_t.render(text, True, (255, 255, 255))
+            bar = pygame.Surface((min(self.view_w, img.get_width() + 16), img.get_height() + 6), pygame.SRCALPHA)
+            bar.fill((0, 0, 0, 120))
+            by = self.view_h - bar.get_height() - 4
+            self.target.blit(bar, (4, by))
+            self.target.blit(img, (12, by + 3))
+            return
+        if have:
+            items = [(key("pass", "Z"), tr("hint.pass2")),
+                     (key("shot", "X"), tr("hint.shot2"))]
+            if not pad:
+                items.append((tr("hint.mouse_k"), tr("hint.mouse_d")))
+        else:
+            items = [(key("pass", "Z"), tr("hint.pass3")),
+                     (key("shot", "X"), tr("hint.shot3"))]
+        items.append((key("cele", "C"), tr("hint.cele")))
+        items.append((key("switch_player", "Tab"), tr("hint.switch")))
+        items.append(("F8", tr("hint.off")))
+        text = "   ".join("[%s] %s" % (k, d) for k, d in items if k)
+        img = self.font_t.render(text, True, (255, 255, 255))
+        bar = pygame.Surface((min(self.view_w, img.get_width() + 16), img.get_height() + 6), pygame.SRCALPHA)
+        bar.fill((0, 0, 0, 120))
+        by = self.view_h - bar.get_height() - 4
+        self.target.blit(bar, (4, by))
+        self.target.blit(img, (12, by + 3))
 
     def draw_marker(self):
         cp = self.cp
@@ -5967,9 +7156,9 @@ class Game:
             self.text(line, self.font_t, (220, 220, 230), (x + 8, y + 21 + i * 13), False, False)
 
     def draw_action_log(self):
-        if not self.mlog or FONTS.flow is None:
+        if not self.mlog or (FONTS.flow is None and not FONTS.modern):
             return
-        font = ScaledFont(FONTS.flow, 2)
+        font = self.font_s if FONTS.modern else ScaledFont(FONTS.flow, 2)
         maxw = max(100, self.W - 100)
         y0 = self.hud_y + 8
         for i, (entry, col) in enumerate(self.mlog[-3:]):
@@ -6016,6 +7205,8 @@ class Game:
         bd.put(s, t, cx=r.centerx, cy=r.centery)
 
     def draw_intro(self):
+        if self.joymap_open:
+            return self.draw_joymap()
         s = self.su_surf
         s.fill((10, 12, 28))
         bd = self.board
@@ -6129,6 +7320,10 @@ class Game:
             r = pygame.Rect(330 + i * 54, 512, 46, 28)
             self.su_chip(s, r, str(m), abs(self.half_secs - m * 60.0) < 1, r.collidepoint(vx, vy))
             hits.append((r, ("half", m * 60.0)))
+        bd.put(s, bd.font(20).render(tr("intro.slowmo"), True, bd.LIT), left=650, cy=526)
+        r = pygame.Rect(790, 512, 70, 28)
+        self.su_chip(s, r, tr("intro.on") if self.slowmo_on else tr("intro.off"), self.slowmo_on, r.collidepoint(vx, vy), (90, 200, 120))
+        hits.append((r, ("slowmo",)))
         bd.put(s, bd.font(20).render(tr("intro.controls"), True, bd.LIT), left=30, cy=564)
         for i, (lab, val) in enumerate(((tr("intro.ctrl_home"), 0), (tr("intro.ctrl_away"), 1), (tr("intro.ctrl_spec"), None))):
             r = pygame.Rect(330 + i * 150, 550, 142, 28)
@@ -6154,11 +7349,118 @@ class Game:
         pygame.draw.rect(s, (200, 255, 210), sb, 2, border_radius=8)
         bd.put(s, bd.font(28).render(tr("intro.start"), True, (255, 255, 255)), cx=sb.centerx, cy=sb.centery)
         hits.append((sb, ("start",)))
+        jb = pygame.Rect(W // 2 + 200, 641, 220, 36)
+        self.su_chip(s, jb, tr("intro.joymap"), False, jb.collidepoint(vx, vy), (120, 170, 230), 20)
+        hits.append((jb, ("joymap",)))
         bd.put(s, bd.font(20).render(tr("intro.footer"), True, (110, 118, 160)), cx=W // 2, cy=708)
         self.draw_lang_dropdown(s, bd, hits, vx, vy)
         sc, ox, oy = self.su_scale()
         out = pygame.transform.smoothscale(s, (int(SU_W * sc), int(SU_H * sc)))
         self.screen.blit(out, (int(ox), int(oy)))
+
+    def draw_joymap(self):
+        s, bd, j = self.su_surf, self.board, self.joy
+        s.fill((10, 12, 28))
+        hits = self.su_hits = []
+        vx, vy = self.su_to_virtual(pygame.mouse.get_pos())
+        W = SU_W
+        bd.put(s, bd.font(46).render(tr("intro.joymap"), True, (232, 236, 255)), cx=W // 2, cy=26)
+        pads = j.names()
+        st = ", ".join(pads) if pads else tr("joy.none")
+        bd.put(s, bd.font(26).render(self.fit_text(st, 16, W - 40), True, (140, 220, 160) if pads else (255, 170, 110)), cx=W // 2, cy=58)
+        dt = 1.0 / 60.0
+        self.jm_flash = {k: v - dt for k, v in self.jm_flash.items() if v - dt > 0}
+        flash_ctrl = {j.control_of(t) for t in self.jm_flash}
+        focus = None
+        y = 80
+        for act, _k, _u, label in JOY_ACTIONS:
+            r = pygame.Rect(20, y, 410, 24)
+            toks = j.cfg["buttons"].get(act, [])
+            hov = r.collidepoint(vx, vy)
+            waiting = self.jm_wait == act
+            if waiting or (hov and not self.jm_wait):
+                focus = act
+            col = (96, 82, 20) if waiting else ((36, 44, 92) if hov else (22, 26, 56))
+            pygame.draw.rect(s, col, r, border_radius=4)
+            if j.is_held(act):
+                pygame.draw.rect(s, (90, 220, 120), r, 2, border_radius=4)
+            bd.put(s, bd.font(16).render(tr("joy.act." + act), True, (255, 236, 150) if waiting else bd.WHITE), left=r.left + 8, cy=r.centery)
+            txt = tr("joy.press") if waiting else (", ".join(j.token_label(t) for t in toks) or "-")
+            bd.put(s, bd.font(16).render(self.fit_text(txt, 16, 150), True, (255, 224, 90) if waiting else bd.LIT), cx=r.right - 80, cy=r.centery)
+            hits.append((r, ("act", act)))
+            y += 26
+        bx, by0, bw, bh = 48, 0, 945, 800
+        sc = min(560.0 / bw, 500.0 / bh)
+        ox, oy = 450, 92
+        if self.jm_img is None and self.joy_img_path:
+            try:
+                im = pygame.image.load(self.joy_img_path).convert_alpha()
+                self.jm_img = pygame.transform.smoothscale(im.subsurface(pygame.Rect(bx, by0, bw, bh)).copy(), (int(bw * sc), int(bh * sc)))
+            except (pygame.error, ValueError, OSError):
+                self.jm_img = False
+        if self.jm_img:
+            pygame.draw.rect(s, (22, 26, 56), (ox - 6, oy - 6, self.jm_img.get_width() + 12, self.jm_img.get_height() + 12), border_radius=8)
+            s.blit(self.jm_img, (ox, oy))
+        else:
+            bd.put(s, bd.font(18).render(tr("joy.img_missing", name=JOY_IMG), True, (255, 170, 110)), cx=ox + 280, cy=oy + 200)
+        sel_ctrl = {j.control_of(t) for t in j.cfg["buttons"].get(focus, [])} if focus else set()
+        bound = {j.control_of(t) for toks in j.cfg["buttons"].values() for t in toks}
+        self.jm_spots = {}
+        drag = self.jm_drag
+        tgt = self.jm_near(drag["pos"][0], drag["pos"][1], skip=drag["ctrl"], rad=self.JM_SNAP) if drag else None
+        chip = {"triangle": "Tri", "circle": "Cer", "cross": "Cro", "square": "Qua", "select": "Sel", "start": "Sta"}
+        for name, (hx, hy) in JOY_HOTSPOTS.items():
+            if name in ("lstick", "rstick"):
+                continue
+            cx, cy = int(ox + (hx - bx) * sc), int(oy + (hy - by0) * sc)
+            self.jm_spots[name] = (cx, cy)
+            if name in self.JM_DRAGGABLE:
+                lab = chip.get(name, name.upper())
+                moving = drag is not None and drag["ctrl"] == name
+                if name in flash_ctrl:
+                    pygame.draw.circle(s, (90, 255, 140), (cx, cy), 16, 0)
+                elif name == tgt:
+                    pygame.draw.circle(s, (255, 215, 0), (cx, cy), 19, 3)
+                elif name in sel_ctrl:
+                    pygame.draw.circle(s, (255, 215, 0), (cx, cy), 16, 3)
+                if not moving:
+                    pygame.draw.circle(s, (24, 34, 80), (cx, cy), 11, 0)
+                    pygame.draw.circle(s, (120, 150, 230), (cx, cy), 11, 1)
+                    bd.put(s, bd.font(11).render(lab, True, (230, 236, 255)), cx=cx, cy=cy)
+            else:
+                if name in flash_ctrl:
+                    pygame.draw.circle(s, (90, 255, 140), (cx, cy), 15, 0)
+                elif name in sel_ctrl:
+                    pygame.draw.circle(s, (255, 215, 0), (cx, cy), 15, 3)
+                elif name in bound:
+                    pygame.draw.circle(s, (80, 140, 255), (cx, cy), 4, 0)
+        if drag:
+            dxp, dyp = int(drag["pos"][0]), int(drag["pos"][1])
+            pygame.draw.circle(s, (255, 215, 0), (dxp, dyp), 14, 0)
+            bd.put(s, bd.font(12).render(chip.get(drag["ctrl"], drag["ctrl"].upper()), True, (20, 20, 20)), cx=dxp, cy=dyp)
+        for name, lab, dx_ in (("lstick", tr("joy.lstick"), 0), ("rstick", tr("joy.rstick"), 0)):
+            hx, hy = JOY_HOTSPOTS[name]
+            cx, cy = int(ox + (hx - bx) * sc), int(oy + (hy - by0) * sc)
+            bd.put(s, bd.font(14).render(lab, True, (80, 84, 120)), cx=cx, cy=int(oy + (712 - by0) * sc))
+        if self.jm_wait:
+            msg = tr("joy.wait") + tr("joy.act." + self.jm_wait) + tr("joy.cancel_hint")
+            colr = (255, 224, 90)
+        else:
+            msg = tr("joy.hint")
+            colr = bd.LIT
+        for i, line in enumerate(self._wrap(msg, bd.font(16), 560)):
+            bd.put(s, bd.font(16).render(line, True, colr), cx=ox + 280, cy=oy + int(bh * sc) + 28 + i * 20)
+        for rect, lab, tag in ((pygame.Rect(690, 660, 140, 34), tr("joy.reset"), ("reset",)),
+                               (pygame.Rect(850, 660, 140, 34), tr("joy.close"), ("close",))):
+            self.su_chip(s, rect, lab, False, rect.collidepoint(vx, vy), (120, 170, 230), 18)
+            hits.append((rect, tag))
+        info = "File: " + os.path.abspath(j.write_path)
+        if j.error:
+            info += "   !  " + j.error
+        bd.put(s, bd.font(13).render(self.fit_text(info, 13, 640), True, (255, 170, 110) if j.error else (110, 118, 160)), left=450, cy=700)
+        sc_, ox_, oy_ = self.su_scale()
+        out = pygame.transform.smoothscale(s, (int(SU_W * sc_), int(SU_H * sc_)))
+        self.screen.blit(out, (int(ox_), int(oy_)))
 
     def draw_lang_dropdown(self, s, bd, hits, vx, vy):
         if not self.langs:
@@ -6226,7 +7528,7 @@ class Game:
     HELP_LAYOUT = (
         (("mf", 7), ("mb", 3)),
         (("kg", 11), ("pt", 4)),
-        (("view", 6), ("other", 5)),
+        (("view", 6), ("other", 6)),
     )
 
     @classmethod
@@ -6433,6 +7735,9 @@ def main():
     notes = [team_note] + notes
     print(team_note.text())
     audio = Audio(not args.no_sound and not args.selftest, os.path.join(app_dir, ".tore_audio"))
+    args.joy_dirs = [os.path.join(exe_dir, "data"), os.path.join(app_dir, "data"), os.path.join(cwd, "data"), exe_dir, app_dir, cwd]
+    args.joy_write_dir = os.path.join(exe_dir, "data")
+    args.joy_img = find_asset(JOY_IMG, asset_dirs)
     game = Game(args, gfx, audio, screen, notes, teams)
     game.notes.extend(Note("note.lang_problem", True, detail=d) for d in T.take_problems())
     game.apply_view()
@@ -6453,6 +7758,7 @@ def main():
         now = pygame.time.get_ticks()
         if (
             game.cam_manual
+            and not game.paused
             and game.pan_return_at
             and now >= game.pan_return_at
         ):
@@ -6460,8 +7766,6 @@ def main():
             game.cam_glide = CAM_GLIDE_SECS
             game.pan_return_at = 0
             game.say(tr("msg.camera_ball"), (200, 220, 255), 1.5)
-            if game.paused:
-                game.update_cam(0.0, True)
         while acc >= DT:
             if game.confirm_exit:
                 pass
