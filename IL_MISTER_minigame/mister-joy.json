@@ -1,0 +1,72 @@
+{
+  "_help": [
+    "Joypad mapping. You can also change it from the 'Joypad mapping' screen in the intro.",
+    "Each action has a list of commands: 'button:N' (button N), 'hat:up|down|left|right' (directional pad),",
+    "'axis:N+' or 'axis:N-' (axis used as a button, e.g., analog triggers). Empty list = unassigned.",
+    "'button_names' associates the button number with the PS2 controller (used only for the joypad layout):",
+    "triangle circle cross square l1 l2 r1 r2 select start l3 r3.",
+    "'axes': stick axes (move = left stick for movement, aim = right stick for aiming)."
+  ],
+  "version": 3,
+  "deadzone": 0.35,
+  "dpad_moves": true,
+  "axes": {
+    "move_x": 0,
+    "move_y": 1,
+    "aim_x": 2,
+    "aim_y": 3
+  },
+  "button_names": {
+    "0": "cross",
+    "1": "circle",
+    "2": "square",
+    "3": "triangle",
+    "4": "l1",
+    "5": "r1",
+    "6": "select",
+    "7": "start",
+    "8": "l3",
+    "9": "r3",
+    "10": "l2",
+    "11": "r2"
+  },
+  "buttons": {
+    "pass": [
+      "ctrl:r1"
+    ],
+    "shot": [
+      "axis:5+"
+    ],
+    "cele": [
+      "ctrl:triangle"
+    ],
+    "hints": [],
+    "switch_player": [
+      "ctrl:cross"
+    ],
+    "pause": [
+      "ctrl:select"
+    ],
+    "replay": [
+      "ctrl:start"
+    ],
+    "help": [],
+    "speed_up": [],
+    "speed_down": [],
+    "formation_prev": [],
+    "formation_next": [],
+    "toggle_scroll": [
+      "ctrl:l1"
+    ],
+    "zoom_in": [],
+    "zoom_out": [
+      "axis:4+"
+    ],
+    "mute": [],
+    "fullscreen": [],
+    "spectator": [],
+    "exit_match": [],
+    "confirm": [],
+    "back": []
+  }
+}

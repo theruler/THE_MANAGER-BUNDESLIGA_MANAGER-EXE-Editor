@@ -1,0 +1,10 @@
+{
+  "lang": "it",
+  "half_min": 3.0,
+  "slowmo": true,
+  "replay_auto": true,
+  "replay_secs": 5,
+  "font_modern": false,
+  "hints": true,
+  "user_team": 0
+}
