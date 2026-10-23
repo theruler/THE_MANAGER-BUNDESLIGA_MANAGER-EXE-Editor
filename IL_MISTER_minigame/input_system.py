@@ -75,8 +75,11 @@ class InputMixin: # Keyboard, mouse, and joystick input handling.
         elif k == pygame.K_F2:
             self.set_scroll(not self.scroll)
         elif k in (pygame.K_F3, pygame.K_F4):
-            self.zoom += 1 if k == pygame.K_F4 else -1
+            want = self.zoom + (1 if k == pygame.K_F4 else -1)
+            self.zoom = want
             self.apply_view()
+            if self.zoom != want and self.mode != "intro": # The screen is too small for the requested zoom.
+                self.say(tr("msg.zoom_limit", zoom=self.zoom), (255, 200, 140), 2.0)
         elif k == pygame.K_m:
             self.audio.toggle_mute()
         elif k == pygame.K_l:

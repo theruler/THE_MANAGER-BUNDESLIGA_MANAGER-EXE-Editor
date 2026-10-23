@@ -30,16 +30,19 @@ class CameraMixin: # View sizing, zoom fitting, and camera tracking.
             dw, dh = 0, 0
         if dw <= 0 or dh <= 0:
             dw, dh = 1920, 1080
+        kw, kh = (1.0, 1.0) if self.fullscreen else (0.98, 0.92) # A window needs room for title bar and taskbar; fullscreen does not.
         zoom = int(clamp(zoom, 2, 8))
         while zoom > 2:
             d = compute_layout(zoom, self.scroll)
-            if d["W"] <= dw * 0.98 and d["H"] <= dh * 0.92:
+            if d["W"] <= dw * kw and d["H"] <= dh * kh:
                 break
             zoom -= 1
         return zoom
 
     def apply_view(self): # Apply the current view dimensions and refresh camera limits.
         self.zoom = self.fit_zoom(self.zoom)
+        self.zoom_mem = getattr(self, "zoom_mem", {})
+        self.zoom_mem[bool(self.scroll)] = self.zoom # Last zoom actually in use for this view mode.
         self.vsurf = None
         self.paused_gesture = None
         self.paused_traj_data = None

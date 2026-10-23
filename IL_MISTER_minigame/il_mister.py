@@ -1013,10 +1013,12 @@ class Game(IntroMixin, StatsMixin, AimMixin, RestartMixin, InputMixin, MatchLogM
         self.say(tr("msg.speed", speed=self.speed_label), (150, 230, 160), 1.8)
 
     def set_scroll(self, on): # Enable or disable field scrolling.
+        mem = getattr(self, "zoom_mem", {})
+        mem[bool(self.scroll)] = self.zoom
         self.scroll = on
         self.cam_manual = False
         self.pan_drag = None
-        self.zoom = 5 if on else 3
+        self.zoom = mem.get(bool(on), 5 if on else 3) # Each mode remembers its own zoom.
         self.apply_view()
 
 
