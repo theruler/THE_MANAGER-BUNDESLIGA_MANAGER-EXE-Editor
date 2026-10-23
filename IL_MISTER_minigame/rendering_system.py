@@ -12,6 +12,7 @@ from geometry import (
     HALF_MOUTH, L, PITCH_W, POST_T, V_BOT, V_GC, V_TOP, Y_OFFSET,
 )
 from graphics_system import CELL_H, GOAL_Y1
+from intro_system import ROLE_COL, stat_color
 from joystick import JOY_ACTIONS, JOY_HOTSPOTS, JOY_IMG
 from lang import ROLE_LETTER, ROLE_TAG, T, tr
 from layout import HUD_H, SU_H, SU_W
@@ -60,20 +61,54 @@ class RenderingMixin: # Rendering of the pitch, HUD, menus, debug overlays, and 
             self.draw_shot_preview_data(data)
         return data
 
-    def draw_sub_menu(self): # Draw the active substitution menu and its selectable entries.
+    def draw_sub_menu(self): # Draw the substitution table: title, outgoing player (highlighted), then the bench with Fitness / Skill / Form.
         m = self.sub_menu
         panel, items = self.sub_menu_layout()
+        f = self.font_s
+        rh, vw, nx = self.SUB_ROW_H, self.SUB_STAT_W, self.SUB_NAME_X
         pygame.draw.rect(self.screen, (10, 12, 26), panel)
         pygame.draw.rect(self.screen, (255, 215, 0), panel, 2)
-        t = m["p"].team
+        p = m["p"]
+        t = p.team
         used = self.subs_used[t] + len(self.sub_q[t])
-        self.text(tr("hud.sub_title", name=m["p"].name, used=used), self.font_s, (255, 215, 0), (panel.x + 8, panel.y + 6), shadow=False)
-        pl = self.team_data[t]["players"]
+        left = max(0, 5 - used)
+        stat_cx = lambda n: panel.right - 8 - vw * (3 - n) + vw // 2 # Centre of the n-th attribute column.
+
+        def put(txt, col, x, y, cx=None): # Text at (x, y), or horizontally centred on cx.
+            if cx is not None:
+                x = cx - f.size(txt)[0] // 2
+            self.text(txt, f, col, (x, y), shadow=False)
+
+        def fit(txt, w): # Shorten a name so that it fits the column.
+            while len(txt) > 1 and f.size(txt)[0] > w:
+                txt = txt[:-1]
+            return txt
+
+        def row(r, num, name, role, stats, name_col, num_col): # One table row: number, role, name, three attributes.
+            y = r.y + 3
+            put("%d" % num, num_col, 0, y, cx=panel.x + 18)
+            put(ROLE_TAG[role], ROLE_COL[role], panel.x + 40, y)
+            put(fit(name, panel.right - 8 - vw * 3 - 4 - (panel.x + nx)), name_col, panel.x + nx, y)
+            for n in range(3):
+                put(str(stats[n]), stat_color(stats[n]), 0, y, cx=stat_cx(n))
+
+        # Row 0: title + column labels.
+        put(tr("hud.sub_title", name=p.name, used=used, left=left), (255, 215, 0), panel.x + 8, panel.y + 6)
+        for n, key in enumerate(("intro.attr_fit_short", "intro.attr_skill_short", "intro.attr_form_short")):
+            put(tr(key), (150, 165, 200), 0, panel.y + 6, cx=stat_cx(n))
+        # Row 1: outgoing player.
+        out = pygame.Rect(panel.x + 4, panel.y + 4 + rh, panel.w - 8, rh)
+        pygame.draw.rect(self.screen, (92, 70, 18), out)
+        pygame.draw.rect(self.screen, (255, 215, 0), out, 1)
+        row(out, p.num, p.name, p.role, self.pstats(p), (255, 240, 190), (255, 215, 0))
+        # Rows 2..: bench.
+        td = self.team_data[t]
+        pl = td["players"]
         mp = pygame.mouse.get_pos()
-        for r, idx in items:
-            if r.collidepoint(mp):
-                pygame.draw.rect(self.screen, (60, 70, 130), r)
-            self.text("%2d  %s  [%s]" % (idx + 1, pl[idx], ROLE_TAG[self.natural_role(idx)]), self.font_s, (235, 235, 245), (r.x + 4, r.y + 3), shadow=False)
+        for rr, idx in items:
+            if rr.collidepoint(mp):
+                pygame.draw.rect(self.screen, (60, 70, 130), rr)
+            row(rr, idx + 1, pl[idx], self.natural_role(idx), td["stats"][idx], (235, 235, 245), (200, 205, 225))
 
     def draw_exit_dialog(self): # Draw the confirmation dialog used when exiting the match.
         s = self.screen

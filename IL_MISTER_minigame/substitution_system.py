@@ -67,13 +67,17 @@ class SubstitutionMixin: # Substitutions, sideline transitions, and injury handl
             return
         self.sub_menu = dict(p=p, rect=rect, cand=cand[:10])
 
-    def sub_menu_layout(self): # Calculate the substitution panel and item hitboxes.
+    SUB_W, SUB_ROW_H = 380, 22 # Substitution table: panel width and row height.
+    SUB_STAT_W = 34 # Width of each Fitness / Skill / Form column.
+    SUB_NAME_X = 78 # Left edge of the name column, relative to the panel.
+
+    def sub_menu_layout(self): # Calculate the substitution panel and item hitboxes (row 0 title, row 1 outgoing player, then the bench).
         m = self.sub_menu
-        w, rh = 270, 22
-        h = rh * (len(m["cand"]) + 1) + 8
+        w, rh = self.SUB_W, self.SUB_ROW_H
+        h = rh * (len(m["cand"]) + 2) + 8
         x = int(clamp(m["rect"].left, 0, self.W - w))
         y = int(clamp(m["rect"].bottom + 2, 0, self.H - h))
-        items = [(pygame.Rect(x + 4, y + 4 + rh * (i + 1), w - 8, rh), idx) for i, idx in enumerate(m["cand"])]
+        items = [(pygame.Rect(x + 4, y + 4 + rh * (i + 2), w - 8, rh), idx) for i, idx in enumerate(m["cand"])]
         return pygame.Rect(x, y, w, h), items
 
     def sub_menu_click(self, pos): # Handle a click on the substitution menu.
