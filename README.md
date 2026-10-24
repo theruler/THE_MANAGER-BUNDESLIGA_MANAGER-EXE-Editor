@@ -127,8 +127,8 @@ Your new scene is only one click away!
 
 ## "IL MISTER"
 
-I've started this project as proof of concept, but using the experience made with the editor the concept evolved in a proper Mini arcade/tactica soccer game!
-The game uses the graphics of the original game, MANA.DAT for Teams and players, and features two game mode: mouse click realtime game, and PAUSE tactical Manager game.
+I've started this project as proof of concept. Thanks to the experience made with the editor the concept evolved in a proper Mini arcade/tactical soccer game!
+The game uses the graphics of the original PIC folder, MANA.DAT for Teams and players, and features two game mode: mouse click realtime game, and PAUSE tactical Manager game.
 Use ingame HELP (H) for a full commands and features.
 
 
