@@ -2,7 +2,9 @@ import array
 import math
 import os
 import random
+import struct
 import threading
+import time
 import wave
 
 import pygame
@@ -49,8 +51,513 @@ def _harm_table(weights, n=512): # Build a harmonic lookup table from the suppli
     return _norm(tbl, 1.0)
 
 
+VOC_START, VOC_END = 0x5A3A, 0xCBD5 # Crowd chorus inside the plain DIGI.VOC archive (END is inclusive).
+ORIG_MIN, ORIG_MAX = 0.1, 1.0 # Crowd-loop level range, relative to the main volume.
+ORIG_UP, ORIG_DOWN = 1.8, 0.45 # Maximum level change per second when the crowd gets louder / quieter.
+ORIG_AMB_DUCK = 0.4 # The procedural crowd bed is lowered to this factor while the original crowd loop is playing.
+ORIG_MODE_LEVEL = {"goal": 1.0, "full": 0.7, "walkon": 0.6, "foul": 0.5, "restart": 0.35, "outball": 0.35, "subs": 0.2, "injury": 0.15, "half": 0.12} # Crowd level per match mode ("play" follows the action intensity).
+ORIG_BOOST = {"goal": (1.0, 6.0), "near": (0.85, 2.5), "save": (0.7, 2.0), "corner": (0.75, 3.0), "tension": (0.8, 3.0),
+              "foul": (0.6, 1.5), "card": (0.7, 2.0), "start": (0.9, 3.0), "whistle_end": (0.9, 4.0)} # Match events -> (minimum crowd level, seconds it is held).
+FADE_SECS = 0.6 # Fade-out time of the original sounds (option turned OFF, match start).
+MUSIC_VOL = 0.8 # Intro-music level, relative to the main volume.
+MUSIC_CHUNK = 1.0 # Seconds of PCM per chunk handed to the mixer.
+MUSIC_AHEAD = 4 # Chunks the synthesizer thread may render ahead of the playback position.
+MUSIC_MAX_SECS = 360 # Safety limit for the rendered song length.
+CMF_BEND_RANGE = 2.0 # Pitch-bend range in semitones.
+
+
+def _voc_conv(data, codec, bits): # Convert VOC sample bytes into floats in -1..1.
+    if bits == 16:
+        n = len(data) // 2
+        return [v / 32768.0 for v in struct.unpack("<%dh" % n, bytes(data[:2 * n]))]
+    if codec == 0:
+        return [(b - 128) / 128.0 for b in data]
+    raise ValueError("VOC codec %d not supported" % codec)
+
+
+def decode_voc(blob): # Decode a Creative Voice File (with or without header) into (sample rate, mono floats).
+    blob = bytes(blob)
+    pos = 0
+    if blob[:19] == b"Creative Voice File":
+        pos = int.from_bytes(blob[20:22], "little") or 26
+    rate, chans, bits, codec, pend, first = 0, 1, 8, 0, None, True
+    out = []
+
+    def mono(vals): # Mix an interleaved stereo block down to mono.
+        return [(vals[i] + vals[i + 1]) * 0.5 for i in range(0, len(vals) - 1, 2)] if chans == 2 else vals
+
+    while pos + 4 <= len(blob):
+        t = blob[pos]
+        if t == 0:
+            break
+        ln = int.from_bytes(blob[pos + 1:pos + 4], "little")
+        if first and (not 1 <= t <= 9 or ln > len(blob) - pos):
+            raise ValueError("not a VOC block stream")
+        first = False
+        body = blob[pos + 4:pos + 4 + ln]
+        pos += 4 + ln
+        if t == 1 and len(body) > 2:
+            codec, bits = body[1], 8
+            rate, chans = pend if pend else (1000000.0 / (256 - body[0]), 1)
+            pend = None
+            out += mono(_voc_conv(body[2:], codec, bits))
+        elif t == 2:
+            out += mono(_voc_conv(body, codec, bits))
+        elif t == 3 and len(body) >= 2:
+            out += [0.0] * (int.from_bytes(body[:2], "little") + 1)
+        elif t == 8 and len(body) >= 4:
+            ch = body[3] + 1
+            pend = (256000000.0 / (ch * (65536 - int.from_bytes(body[:2], "little"))), ch)
+        elif t == 9 and len(body) > 12:
+            rate, bits, chans = float(int.from_bytes(body[:4], "little")), body[4], body[5]
+            codec = int.from_bytes(body[6:8], "little")
+            out += mono(_voc_conv(body[12:], codec, bits))
+    if not out or not 4000 <= rate <= 96000:
+        raise ValueError("VOC without usable audio")
+    return rate, out
+
+
+def resample(smp, r_in, r_out): # Linear-interpolation resampler.
+    if abs(r_in - r_out) < 1.0:
+        return list(smp)
+    step, last = r_in / r_out, len(smp) - 1
+    out = []
+    for i in range(int(len(smp) * r_out / r_in)):
+        x = i * step
+        j = int(x)
+        a = smp[j]
+        out.append(a + ((smp[j + 1] if j < last else a) - a) * (x - j))
+    return out
+
+
+def loop_crossfade(smp, xf): # Make a buffer loop without a click: the tail is blended into the head.
+    n = len(smp)
+    xf = max(0, min(xf, n // 4))
+    if xf == 0:
+        return list(smp)
+    out = smp[:n - xf]
+    for i in range(xf):
+        w = i / xf
+        out[i] = out[i] * w + smp[n - xf + i] * (1.0 - w)
+    return out
+
+
+# ---------- OPL2 (YM3812) software synthesizer ----------
+OPL_RATE = 49716.0 # Native sample rate of the chip; it defines the F-number -> Hz relation.
+_N = 1024 # Waveform table length.
+_SINE = [math.sin(TAU * i / _N) for i in range(_N)]
+_WAVES = (_SINE, [max(0.0, v) for v in _SINE], [abs(v) for v in _SINE], [abs(_SINE[i]) if (i & 511) < 256 else 0.0 for i in range(_N)])
+_MULT = (0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 15, 15)
+_KSL_DB = tuple(v * 0.28125 for v in (0, 32, 40, 45, 48, 51, 53, 55, 56, 58, 59, 60, 61, 62, 63, 64))
+_KSL_K = (0.0, 1.0, 0.5, 2.0) # Key-scale-level register value -> 3 dB/oct multiplier.
+_FB_CYC = (0.0, 1 / 32., 1 / 16., 1 / 8., 1 / 4., 1 / 2., 1.0, 2.0) # Feedback depth, in cycles.
+MOD_DEPTH = 2.0 # Modulator output -> carrier phase offset, in cycles (4*pi radians).
+_ENV_FLOOR = 90.0 # Attenuation (dB) beyond which an operator counts as silent.
+
+
+def _op_rate(r, rof): # Effective OPL rate (0..63) from the 4-bit register rate and the key-scale offset.
+    return 0 if r == 0 else min(63, 4 * r + rof)
+
+
+class _Op: # One FM operator: phase, parameters and ADSR envelope (attenuation in dB).
+    __slots__ = ("ph", "inc", "mult", "wave", "tl", "ksl", "ksr", "am", "vib", "egt", "ar", "dr", "sl", "rr",
+                 "stage", "att", "amp", "extra", "r_a", "r_d", "r_r", "ksl_db")
+
+    def __init__(self):
+        self.ph = self.inc = self.tl = self.sl = self.amp = self.extra = self.ksl_db = self.r_a = self.r_d = self.r_r = 0.0
+        self.mult, self.wave, self.att = 1.0, _SINE, 96.0
+        self.ksl = self.ksr = self.am = self.vib = self.ar = self.dr = self.rr = self.stage = 0
+        self.egt = 1
+
+    def load(self, r20, r40, r60, r80, re0): # Program the operator from the OPL registers 0x20/0x40/0x60/0x80/0xE0.
+        self.am, self.vib, self.egt, self.ksr, self.mult = (r20 >> 7) & 1, (r20 >> 6) & 1, (r20 >> 5) & 1, (r20 >> 4) & 1, _MULT[r20 & 15]
+        self.ksl, self.tl = (r40 >> 6) & 3, (r40 & 63) * 0.75
+        self.ar, self.dr = r60 >> 4, r60 & 15
+        sl = r80 >> 4
+        self.sl, self.rr = 93.0 if sl == 15 else sl * 3.0, r80 & 15
+        self.wave = _WAVES[re0 & 3]
+
+    def retune(self, hz, fnum, block, fs): # Recompute increment, key scaling and the envelope rates for a new pitch.
+        self.inc = hz * self.mult / fs
+        a = _KSL_DB[fnum >> 6] - 3.0 * (7 - block)
+        self.ksl_db = max(0.0, a) * _KSL_K[self.ksl]
+        rof = ((block << 1) | (fnum >> 9)) >> (0 if self.ksr else 2)
+        ea = _op_rate(self.ar, rof)
+        self.r_a = 0.0 if ea == 0 else (-1.0 if ea >= 60 else math.log(96.0 / 0.3) / (2.82624 * 2.0 ** (-(ea - 4) / 4.0)))
+        ed, er = _op_rate(self.dr, rof), _op_rate(max(1, self.rr), rof)
+        self.r_d = 0.0 if ed == 0 else 96.0 / (39.28 * 2.0 ** (-(min(ed, 63) - 4) / 4.0))
+        self.r_r = 96.0 / (39.28 * 2.0 ** (-(min(er, 63) - 4) / 4.0))
+
+    def key_on(self): # Restart the operator: phase to zero, envelope into the attack stage.
+        self.ph = 0.0
+        self.stage = 1
+        if self.r_a < 0:
+            self.att, self.stage = 0.0, 2
+
+    def key_off(self): # Enter the release stage.
+        if self.stage:
+            self.stage = 4
+
+    def step(self, dt): # Advance the envelope by dt seconds and return the attenuation in dB.
+        st = self.stage
+        if st == 0:
+            return 96.0
+        if st == 1:
+            if self.r_a > 0:
+                self.att *= math.exp(-self.r_a * dt)
+                if self.att < 0.3:
+                    self.att, self.stage = 0.0, 2
+        elif st == 2:
+            self.att += self.r_d * dt
+            if self.att >= self.sl:
+                self.att, self.stage = self.sl, 3
+        elif st == 3:
+            if not self.egt:
+                self.att += self.r_r * dt
+        else:
+            self.att += self.r_r * dt
+        if self.att >= _ENV_FLOOR and self.stage >= 3:
+            self.att, self.stage = 96.0, 0
+        return self.att
+
+
+class _Voice: # One OPL channel: modulator + carrier with connection and feedback.
+    __slots__ = ("m", "c", "conn", "fbk", "y1", "y2", "hz", "fnum", "block", "midi", "note", "age", "gain")
+
+    def __init__(self):
+        self.m, self.c = _Op(), _Op()
+        self.conn, self.fbk, self.y1, self.y2 = 0, 0.0, 0.0, 0.0
+        self.hz, self.fnum, self.block, self.midi, self.note, self.age, self.gain = 0.0, 0, 0, -1, -1, 0, 1.0
+
+    def load_patch(self, p): # Load a 16-byte CMF/SBI instrument.
+        self.m.load(p[0], p[2], p[4], p[6], p[8])
+        self.c.load(p[1], p[3], p[5], p[7], p[9])
+        self.conn = p[10] & 1
+        self.fbk = _FB_CYC[(p[10] >> 1) & 7] * 0.5
+
+    def set_pitch(self, hz, fs): # Quantize hz to the chip's block / F-number pair and retune both operators.
+        hz = max(8.0, min(hz, 6200.0))
+        block = 0
+        while block < 7 and hz * (1 << (20 - block)) / OPL_RATE >= 1024:
+            block += 1
+        fnum = min(1023, int(round(hz * (1 << (20 - block)) / OPL_RATE)))
+        self.fnum, self.block = fnum, block
+        self.hz = fnum * OPL_RATE / (1 << (20 - block))
+        self.m.retune(self.hz, fnum, block, fs)
+        self.c.retune(self.hz, fnum, block, fs)
+
+    def key_on(self):
+        self.m.key_on()
+        self.c.key_on()
+        self.y1 = self.y2 = 0.0
+
+    def key_off(self):
+        self.m.key_off()
+        self.c.key_off()
+
+    def active(self): # True while the voice can still produce sound.
+        return self.c.stage != 0 or (self.conn and self.m.stage != 0)
+
+
+def _amp(db): # Attenuation in dB -> linear amplitude.
+    return 10.0 ** (-db * 0.05) if db < _ENV_FLOOR else 0.0
+
+
+class Opl2: # Nine melodic channels or six melodic + five rhythm instruments, rendered in short blocks.
+    def __init__(self, fs):
+        self.fs, self.v, self.rhythm, self.t = float(fs), [_Voice() for _ in range(9)], False, 0.0
+        self.tdepth, self.vcents = 1.0, 7.0 # Tremolo depth (dB) and vibrato depth (cents).
+
+    def idle(self): # True when every voice has died away.
+        for k, v in enumerate(self.v):
+            if (v.m.stage or v.c.stage) if (self.rhythm and k in (7, 8)) else v.active():
+                return False
+        return True
+
+    def render(self, n, blk): # Add n samples of the whole chip to blk (list of floats).
+        dt = n / self.fs
+        self.t += dt
+        fr = (self.t * 3.7) % 1.0
+        trem = self.tdepth * (2 * fr if fr < 0.5 else 2 * (1 - fr))
+        vf = 2.0 ** (math.sin(TAU * self.t * 6.1) * self.vcents / 1200.0)
+        top = 6 if self.rhythm else 9
+        for k in range(top):
+            v = self.v[k]
+            if v.active():
+                self._run_voice(v, n, blk, dt, trem, vf)
+        if self.rhythm:
+            v7, v8 = self.v[7], self.v[8]
+            if v7.m.stage or v7.c.stage or v8.m.stage or v8.c.stage:
+                self._run_rhythm(v7, v8, n, blk, dt, trem)
+            v6 = self.v[6]
+            if v6.active():
+                self._run_voice(v6, n, blk, dt, trem, vf)
+
+    def _run_voice(self, v, n, blk, dt, trem, vf): # Render one two-operator voice.
+        m, c = v.m, v.c
+        ma1 = _amp(m.step(dt) + m.tl + m.ksl_db + m.extra + (trem if m.am else 0.0)) * (v.gain if v.conn else 1.0)
+        ca1 = _amp(c.step(dt) + c.tl + c.ksl_db + c.extra + (trem if c.am else 0.0)) * v.gain
+        ma, ca = m.amp, c.amp
+        dm, dc = (ma1 - ma) / n, (ca1 - ca) / n
+        mp, cp = m.ph, c.ph
+        mi = m.inc * (vf if m.vib else 1.0)
+        ci = c.inc * (vf if c.vib else 1.0)
+        mw, cw, fbk, y1, y2 = m.wave, c.wave, v.fbk, v.y1, v.y2
+        if v.conn:
+            for i in range(n):
+                ma += dm
+                ca += dc
+                mp += mi
+                cp += ci
+                y = mw[int((mp + (y1 + y2) * fbk) * 1024) & 1023] * ma
+                y2, y1 = y1, y
+                blk[i] += y + cw[int(cp * 1024) & 1023] * ca
+        else:
+            for i in range(n):
+                ma += dm
+                ca += dc
+                mp += mi
+                cp += ci
+                y = mw[int((mp + (y1 + y2) * fbk) * 1024) & 1023] * ma
+                y2, y1 = y1, y
+                blk[i] += cw[int((cp + y * MOD_DEPTH) * 1024) & 1023] * ca
+        m.ph, c.ph, m.amp, c.amp, v.y1, v.y2 = mp % 1.0, cp % 1.0, ma1, ca1, y1, y2
+
+    def _run_rhythm(self, v7, v8, n, blk, dt, trem): # Hi-hat, snare, tom and top cymbal (phase / noise formulas of the YM3812 rhythm section).
+        hm, sc, tm, tc = v7.m, v7.c, v8.m, v8.c
+        ops = (hm, sc, tm, tc)
+        a1 = [_amp(o.step(dt) + o.tl + o.ksl_db + o.extra + (trem if o.am else 0.0)) for o in ops]
+        a0 = [o.amp for o in ops]
+        d = [(a1[k] - a0[k]) / n for k in range(4)]
+        ha, sa, ta, ca = a0
+        dh, ds, dt_, dca = d
+        hp, tp, cp = hm.ph, tm.ph, tc.ph
+        hi, ti, ci = hm.inc, tm.inc, tc.inc
+        hw, sw, tw, cw = hm.wave, sc.wave, tm.wave, tc.wave
+        rb = random.getrandbits
+        for i in range(n):
+            ha += dh
+            sa += ds
+            ta += dt_
+            ca += dca
+            hp += hi
+            tp += ti
+            cp += ci
+            p7, p8 = int(hp * 1024) & 1023, int(cp * 1024) & 1023
+            res1 = (((p7 >> 2) ^ (p7 >> 7)) | (p7 >> 3)) & 1
+            res2 = ((p8 >> 3) ^ (p8 >> 5)) & 1
+            noise = rb(1)
+            ph = 0x234 if res1 else 0xD0
+            if res2:
+                ph = 0x240
+            if ph & 0x200:
+                if noise:
+                    ph = 0x2D0
+            elif noise:
+                ph = 0x34
+            out = hw[ph] * ha
+            ph = 0x200 if (p7 >> 8) & 1 else 0x100
+            if noise:
+                ph ^= 0x100
+            out += sw[ph] * sa
+            out += tw[int(tp * 1024) & 1023] * ta
+            out += cw[0x300 if (res1 or res2) else 0x100] * ca
+            blk[i] += out * 1.5
+        hm.ph, tm.ph, tc.ph = hp % 1.0, tp % 1.0, cp % 1.0
+        for o, a in zip(ops, a1):
+            o.amp = a
+
+
+class CmfSynth: # Creative Music File player driving the OPL2 emulation (MIDI-like events, CMF controllers 0x67-0x69).
+    GAIN = 0.22 # Mix level of the whole chip.
+
+    def __init__(self, data, fs):
+        if data[:4] != b"CTMF":
+            raise ValueError("CTMF header missing")
+        u16 = lambda o: data[o] | (data[o + 1] << 8)
+        ver, ioff, moff, self.tps = u16(4), u16(6), u16(8), u16(12)
+        if self.tps < 8:
+            self.tps = 120
+        count = data[0x24] if ver < 0x0101 else u16(0x24)
+        if moff > ioff:
+            count = min(count, (moff - ioff) // 16)
+        self.patches = [bytes(data[ioff + 16 * i: ioff + 16 * i + 16]) for i in range(count)]
+        self.patches = [p for p in self.patches if len(p) == 16] or [bytes(16)]
+        self.data, self.pos, self.fs = bytes(data), moff, float(fs)
+        self.opl = Opl2(fs)
+        self.prog, self.vol, self.bend, self.fine = [0] * 16, [100] * 16, [8192] * 16, [0.0] * 16
+        self.status, self.acc, self.age = 0, 0.0, 0
+        self.finished = self.done = False
+        self.tail = 0
+        self.wait = self._vlq()
+
+    def _vlq(self): # Read a MIDI variable-length quantity.
+        v, d = 0, self.data
+        for _ in range(4):
+            if self.pos >= len(d):
+                self.finished = True
+                return 0
+            b = d[self.pos]
+            self.pos += 1
+            v = (v << 7) | (b & 0x7F)
+            if not b & 0x80:
+                break
+        return v
+
+    def _freq(self, ch, note): # MIDI note (+ CMF transpose and pitch bend) -> Hz.
+        semi = note - 69 + self.fine[ch] + (self.bend[ch] - 8192) / 8192.0 * CMF_BEND_RANGE
+        return 440.0 * 2.0 ** (semi / 12.0)
+
+    def _db(self, ch, vel): # Velocity and channel volume -> attenuation in dB.
+        return -20.0 * math.log10(max(0.01, (vel / 127.0) * (self.vol[ch] / 127.0)))
+
+    def _patch(self, ch):
+        p = self.prog[ch]
+        return self.patches[p if p < len(self.patches) else 0]
+
+    def _alloc(self): # Choose a voice for a new note: idle first, then the quietest releasing one, then the oldest.
+        top = 6 if self.opl.rhythm else 9
+        vs = self.opl.v[:top]
+        for v in vs:
+            if not v.active():
+                return v
+        rel = [v for v in vs if v.c.stage == 4]
+        return max(rel, key=lambda v: v.c.att) if rel else min(vs, key=lambda v: v.age)
+
+    def _note_on(self, ch, note, vel):
+        if vel == 0:
+            return self._note_off(ch, note)
+        fs, p = self.fs, self._patch(ch)
+        db = self._db(ch, vel)
+        if self.opl.rhythm and ch >= 11:
+            v = self.opl.v
+            if ch == 11: # bass drum: a normal two-operator voice on channel 6
+                t = v[6]
+                t.load_patch(p)
+                t.gain = 2.0
+                t.m.extra, t.c.extra = (db if t.conn else 0.0), db
+                t.set_pitch(self._freq(ch, note), fs)
+                t.key_on()
+                return
+            t, op = {12: (v[7], v[7].c), 13: (v[8], v[8].m), 14: (v[8], v[8].c), 15: (v[7], v[7].m)}[ch]
+            if op is t.c:
+                op.load(p[1], p[3], p[5], p[7], p[9])
+            else:
+                op.load(p[0], p[2], p[4], p[6], p[8])
+            op.extra = db
+            t.set_pitch(self._freq(ch, note), fs)
+            op.key_on()
+            return
+        v = self._alloc()
+        self.age += 1
+        v.load_patch(p)
+        v.gain, v.midi, v.note, v.age = 1.0, ch, note, self.age
+        v.m.extra, v.c.extra = (db if v.conn else 0.0), db
+        v.set_pitch(self._freq(ch, note), fs)
+        v.key_on()
+
+    def _note_off(self, ch, note):
+        v = self.opl.v
+        if self.opl.rhythm and ch >= 11:
+            {11: v[6], 12: v[7].c, 13: v[8].m, 14: v[8].c, 15: v[7].m}[ch].key_off()
+            return
+        for x in v[:6 if self.opl.rhythm else 9]:
+            if x.midi == ch and x.note == note and x.c.stage in (1, 2, 3):
+                x.key_off()
+                x.midi = -1
+                return
+
+    def _controller(self, ch, cc, val):
+        if cc == 7:
+            self.vol[ch] = val
+        elif cc == 0x67:
+            on = val != 0
+            if on != self.opl.rhythm:
+                for x in self.opl.v[6:9]:
+                    x.m.stage = x.c.stage = 0
+                    x.m.att = x.c.att = 96.0
+                self.opl.rhythm = on
+        elif cc in (0x68, 0x69):
+            self.fine[ch] = (val if cc == 0x68 else -val) / 128.0
+
+    def _repitch(self, ch): # Pitch bend / transpose changed: retune the sounding notes of the channel.
+        for x in self.opl.v:
+            if x.midi == ch and x.c.stage in (1, 2, 3):
+                x.set_pitch(self._freq(ch, x.note), self.fs)
+
+    def _event(self): # Parse and execute one event.
+        d = self.data
+        if self.pos >= len(d):
+            self.finished = True
+            return
+        b = d[self.pos]
+        if b & 0x80:
+            self.status = b
+            self.pos += 1
+        st = self.status
+        if st == 0xFF:
+            if self.pos + 1 >= len(d):
+                self.finished = True
+                return
+            typ = d[self.pos]
+            self.pos += 1
+            ln = self._vlq()
+            self.pos += ln
+            if typ == 0x2F:
+                self.finished = True
+            return
+        if st in (0xF0, 0xF7):
+            self.pos += self._vlq()
+            return
+        if st < 0x80 or st >= 0xF0:
+            self.pos += 1
+            return
+        ch, kind = st & 15, st >> 4
+        n = 1 if kind in (0xC, 0xD) else 2
+        a = d[self.pos] if self.pos < len(d) else 0
+        c = d[self.pos + 1] if n == 2 and self.pos + 1 < len(d) else 0
+        self.pos += n
+        if kind == 9:
+            self._note_on(ch, a & 127, c & 127)
+        elif kind == 8:
+            self._note_off(ch, a & 127)
+        elif kind == 0xB:
+            self._controller(ch, a & 127, c & 127)
+            if a in (0x68, 0x69):
+                self._repitch(ch)
+        elif kind == 0xC:
+            self.prog[ch] = a & 127
+        elif kind == 0xE:
+            self.bend[ch] = (a & 127) | ((c & 127) << 7)
+            self._repitch(ch)
+
+    def render(self, n=32): # Render n samples; returns the block or None once the song and its tail have ended.
+        if self.done:
+            return None
+        if not self.finished:
+            self.acc += n * self.tps / self.fs
+            while not self.finished and self.acc >= self.wait:
+                self.acc -= self.wait
+                self._event()
+                if self.finished:
+                    break
+                self.wait = self._vlq()
+            if self.finished:
+                for x in self.opl.v:
+                    x.key_off()
+                    x.m.key_off()
+                    x.c.key_off()
+        blk = [0.0] * n
+        self.opl.render(n, blk)
+        if self.finished:
+            self.tail += n
+            if self.tail > 2.5 * self.fs or self.opl.idle():
+                self.done = True
+        return blk
+
+
 class Audio: # Procedural match sounds, audio caching, mixing, and playback.
-    def __init__(self, enabled=True, cache_dir=None): # Initialize audio generation, cache storage, playback channels, and mute state.
+    def __init__(self, enabled=True, cache_dir=None, voc_path=None, cmf_path=None): # Initialize audio generation, cache storage, playback channels, and mute state.
         global SR
         self.ok = False
         self.ready = False
@@ -67,6 +574,14 @@ class Audio: # Procedural match sounds, audio caching, mixing, and playback.
         self.react_cd = 0.0
         self.pending = []
         self.last_chant = None
+        self.voc_path, self.cmf_path = voc_path, cmf_path # Original assets found at start-up (DIGI.VOC crowd, BM2TITLE.CMF intro music).
+        self.orig_on = bool(voc_path or cmf_path) # "Original audio" option: ON by default when something was found.
+        self.master_vol = 1.0 # Main volume the original-audio levels are relative to.
+        self.voc_snd, self.voc_failed, self.cmf_failed = None, False, False
+        self.orig_vol, self.boost_lvl, self.boost_t = 0.0, 0.0, 0.0
+        self.intro_active, self.mus_fade = False, 0.0
+        self._mus_chunks, self._mus_idx, self._mus_done, self._mus_playing = [], 0, False, False
+        self._mus_thread, self._mus_run = None, threading.Event()
         if not enabled:
             return
         try:
@@ -77,16 +592,187 @@ class Audio: # Procedural match sounds, audio caching, mixing, and playback.
             f, _fmt, ch = pygame.mixer.get_init()
             SR, self.chn = f, ch
             pygame.mixer.set_num_channels(28)
-            pygame.mixer.set_reserved(4)
+            pygame.mixer.set_reserved(6)
             self.amb_ch = pygame.mixer.Channel(0)
             self.chant_ch = pygame.mixer.Channel(1)
             self.acc_ch = pygame.mixer.Channel(2)
             self.amb2_ch = pygame.mixer.Channel(3)
+            self.voc_ch = pygame.mixer.Channel(4)
+            self.mus_ch = pygame.mixer.Channel(5)
             self.ok = True
         except Exception:
             self.ok = False
             return
         threading.Thread(target=self._build, daemon=True).start()
+        if self.voc_path:
+            threading.Thread(target=self._load_voc, daemon=True).start()
+
+    @property
+    def orig_available(self): # True when the mixer works and at least one original file was found at start-up.
+        return bool(self.ok and ((self.voc_path and not self.voc_failed) or (self.cmf_path and not self.cmf_failed)))
+
+    def set_original(self, on): # Switch the "Original audio" option; the original sounds fade out when it is turned off.
+        self.orig_on = bool(on) and self.orig_available
+        if self.ok and not self.orig_on:
+            if self.voc_ch.get_busy():
+                self.voc_ch.fadeout(int(FADE_SECS * 1000))
+            self._music_stop(fade=True)
+
+    def _stereo(self, pcm): # Duplicate a mono PCM buffer when the mixer is stereo.
+        if self.chn == 2:
+            st = array.array("h", [0]) * (2 * len(pcm))
+            st[0::2] = pcm
+            st[1::2] = pcm
+            return st
+        return pcm
+
+    def _load_voc(self): # Decode the crowd chorus of DIGI.VOC straight into RAM, resampled to the mixer rate and loop-ready.
+        try:
+            with open(self.voc_path, "rb") as f:
+                blob = f.read()[VOC_START:VOC_END + 1]
+            if len(blob) < 64:
+                raise ValueError("DIGI.VOC too short for the chorus range")
+            try:
+                rate, smp = decode_voc(blob)
+            except ValueError: # No VOC blocks at that offset: treat the range as raw unsigned 8-bit audio.
+                rate, smp = 11025.0, [(b - 128) / 128.0 for b in blob]
+                print("audio: DIGI.VOC: range is not a block stream, using raw 8-bit 11025 Hz")
+            smp = loop_crossfade(resample(smp, rate, SR), int(0.05 * SR))
+            self.voc_snd = pygame.mixer.Sound(buffer=self._stereo(self._pcm(smp)).tobytes())
+        except Exception as ex:
+            self.voc_failed = True
+            print("audio: DIGI.VOC:", ex)
+
+    # ---------- intro music (BM2TITLE.CMF through the OPL2 emulation) ----------
+    def _music_worker(self): # Thread: parse the CMF, render it with the OPL2 emulation and publish 1-second PCM chunks.
+        try:
+            with open(self.cmf_path, "rb") as f:
+                data = f.read()
+            i = data.find(b"CTMF")
+            if i < 0:
+                raise ValueError("no CTMF header in file")
+            fs = SR
+            synth = CmfSynth(data[i:], fs)
+            per_chunk, buf, total = int(MUSIC_CHUNK * fs), [], 0
+            while total < MUSIC_MAX_SECS * fs:
+                while not self._mus_run.is_set() or len(self._mus_chunks) - self._mus_idx > MUSIC_AHEAD:
+                    time.sleep(0.05)
+                fin = False
+                for _ in range(16):
+                    blk = synth.render(32)
+                    if blk is None:
+                        fin = True
+                        break
+                    buf += blk
+                    total += 32
+                if len(buf) >= per_chunk or fin:
+                    k = CmfSynth.GAIN * 32767
+                    pcm = array.array("h", [-32767 if v * k < -32767 else 32767 if v * k > 32767 else int(v * k) for v in buf])
+                    if pcm:
+                        self._mus_chunks.append(self._stereo(pcm).tobytes())
+                    buf = []
+                if fin:
+                    break
+                time.sleep(0.003) # Leave the GIL to the game loop.
+            self._mus_done = True
+        except Exception as ex:
+            self.cmf_failed = True
+            print("audio: BM2TITLE.CMF:", ex)
+
+    def _music_start(self): # Start (or resume) the synthesizer thread and the playback of the intro music.
+        if not (self.cmf_path and not self.cmf_failed):
+            return
+        self._mus_run.set()
+        if self._mus_thread is None:
+            self._mus_thread = threading.Thread(target=self._music_worker, daemon=True)
+            self._mus_thread.start()
+        if self.mus_fade > 0 and self._mus_playing: # Turned back ON while fading out: resume at full level.
+            self.mus_fade = 0.0
+            self.mus_ch.set_volume(clamp(MUSIC_VOL * self.master_vol, 0.0, 1.0))
+        if not self._mus_playing:
+            if len(self._mus_chunks) < 2 and not self._mus_done:
+                return # Wait for a small head start.
+            self._mus_playing, self._mus_idx = True, 0
+            self.mus_ch.set_volume(0.0)
+            self.mus_fade = 0.0
+        self._music_pump()
+
+    def _music_pump(self): # Keep one chunk queued behind the playing one; loop the finished song from the start.
+        if not self._mus_playing or self.mus_fade > 0 or self.mus_ch.get_queue() is not None:
+            return
+        n = len(self._mus_chunks)
+        if self._mus_idx >= n:
+            if not (self._mus_done and n):
+                return
+            self._mus_idx = 0
+        snd = pygame.mixer.Sound(buffer=self._mus_chunks[self._mus_idx])
+        self._mus_idx += 1
+        if self.mus_ch.get_busy():
+            self.mus_ch.queue(snd)
+        else:
+            self.mus_ch.play(snd)
+        self.mus_ch.set_volume(clamp(MUSIC_VOL * self.master_vol, 0.0, 1.0))
+
+    def _music_stop(self, fade=False): # Stop the intro music (optionally with a fade); the synthesizer thread pauses, the rendered part stays in RAM.
+        self._mus_run.clear()
+        if fade and self._mus_playing and self.ok and self.mus_ch.get_busy():
+            if self.mus_fade <= 0:
+                self.mus_fade = 1.0 # _music_fade_step() lowers the level and then stops the channel.
+            return
+        self._mus_playing, self.mus_fade = False, 0.0
+        if self.ok:
+            self.mus_ch.stop()
+            self.mus_ch.stop() # Some pygame versions start the queued chunk after the first stop().
+
+    def _music_fade_step(self, dt): # Advance a running music fade-out (called from the INTRO and the match update).
+        if self.mus_fade <= 0:
+            return
+        self.mus_fade -= dt / FADE_SECS
+        if self.mus_fade <= 0:
+            self._music_stop()
+        else:
+            self.mus_ch.set_volume(clamp(MUSIC_VOL * self.master_vol * self.mus_fade, 0.0, 1.0))
+
+    def intro_tick(self, dt): # Called every frame while the INTRO / OPTIONS pages are shown.
+        if not self.ok or self.muted:
+            return
+        self.intro_active = True
+        self._music_fade_step(dt)
+        if self.orig_on and self.cmf_path:
+            self._music_start()
+        elif self._mus_playing:
+            self._music_stop(fade=True)
+
+    def _leave_intro(self): # The match starts: fade the music out.
+        self.intro_active = False
+        self._music_stop(fade=True)
+
+    # ---------- original crowd loop (DIGI.VOC) ----------
+    def _boost(self, lvl, secs): # Hold the crowd loop at (at least) lvl for secs seconds.
+        self.boost_lvl = max(lvl, self.boost_lvl if self.boost_t > 0 else 0.0)
+        self.boost_t = max(self.boost_t, secs)
+
+    def _update_orig(self, dt, intensity, mode): # Raise / lower the looping crowd between ORIG_MIN and ORIG_MAX (x main volume).
+        if self.intro_active:
+            self._leave_intro()
+        self._music_fade_step(dt)
+        snd = self.voc_snd
+        if not (self.orig_on and snd):
+            return # A running fade-out (set_original) ends the channel by itself.
+        self.boost_t = max(0.0, self.boost_t - dt)
+        base = ORIG_MODE_LEVEL.get(mode)
+        if base is None:
+            base = 0.2 + 0.6 * intensity
+        target = base + self.mood * 0.4
+        if self.boost_t > 0:
+            target = max(target, self.boost_lvl)
+        target = clamp(target, ORIG_MIN, ORIG_MAX)
+        step = (ORIG_UP if target > self.orig_vol else ORIG_DOWN) * dt
+        self.orig_vol = clamp(max(self.orig_vol, ORIG_MIN) + clamp(target - max(self.orig_vol, ORIG_MIN), -step, step), ORIG_MIN, ORIG_MAX)
+        if not self.voc_ch.get_busy():
+            self.voc_ch.set_volume(self.orig_vol * self.master_vol)
+            self.voc_ch.play(snd, loops=-1)
+        self.voc_ch.set_volume(clamp(self.orig_vol * self.master_vol, 0.0, 1.0))
 
     @staticmethod
     def _pcm(samples, gain=1.0): # Convert floating-point samples into clipped 16-bit PCM audio.
@@ -565,6 +1251,9 @@ class Audio: # Procedural match sounds, audio caching, mixing, and playback.
             pygame.mixer.stop()
             self.amb_vol = self.amb2_vol = 0.0
             self.pending = []
+            self.orig_vol, self.boost_t, self.mus_fade = 0.0, 0.0, 0.0
+            self._mus_playing, self.intro_active = False, False
+            self._mus_run.clear()
 
     def play(self, name, vol=1.0, pan=None): # Play a named sound with the requested volume and stereo position.
         if not self.ok or self.muted:
@@ -586,6 +1275,8 @@ class Audio: # Procedural match sounds, audio caching, mixing, and playback.
         self.pending.append([delay, name, vol, self._pan_for(name)])
 
     def react(self, kind): # Choose a sound reaction for the supplied match event.
+        if kind in ORIG_BOOST and self.ok and not self.muted:
+            self._boost(*ORIG_BOOST[kind])
         if not (self.ok and self.ready) or self.muted:
             return
         if kind in ("tackle", "shot", "save") and self.react_cd > 0:
@@ -635,10 +1326,14 @@ class Audio: # Procedural match sounds, audio caching, mixing, and playback.
         if self.ok:
             if self.muted:
                 pygame.mixer.stop()
+                self._mus_playing = False
+                self.orig_vol = 0.0
             else:
                 self.amb_vol = self.amb2_vol = 0.0
 
-    def update(self, dt, intensity): # Advance pending sound events and update the current crowd response.
+    def update(self, dt, intensity, mode="play"): # Advance pending sound events and update the current crowd response.
+        if self.ok and not self.muted:
+            self._update_orig(dt, intensity, mode)
         if not (self.ok and self.ready) or self.muted:
             return
         self.react_cd = max(0.0, self.react_cd - dt)
@@ -663,8 +1358,9 @@ class Audio: # Procedural match sounds, audio caching, mixing, and playback.
         k = min(1.0, 2.5 * dt)
         self.amb_vol += (clamp(0.30 + 0.45 * intensity + self.mood, 0.1, 1.0) - self.amb_vol) * k
         self.amb2_vol += (clamp(0.55 * max(0.0, intensity - 0.2) + self.mood * 0.5, 0.0, 1.0) - self.amb2_vol) * k
-        self._set(self.amb_ch, self.amb_vol, 0.0)
-        self._set(self.amb2_ch, self.amb2_vol, 0.0)
+        duck = ORIG_AMB_DUCK if (self.orig_on and self.voc_snd and self.voc_ch.get_busy()) else 1.0 # The original crowd replaces most of the procedural bed.
+        self._set(self.amb_ch, self.amb_vol * duck, 0.0)
+        self._set(self.amb2_ch, self.amb2_vol * duck, 0.0)
         self.chant_t -= dt
         if self.chant_t <= 0 and not self.chant_ch.get_busy():
             choices = [c for c in CHANTS if c != self.last_chant and c in self.snd]

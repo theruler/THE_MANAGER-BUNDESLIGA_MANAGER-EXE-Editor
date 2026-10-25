@@ -2,7 +2,6 @@
 
 import os
 import sys
-
 import pygame
 
 from graphics_system import find_file
@@ -44,6 +43,23 @@ def find_asset(name, dirs): # Find a named asset across the configured resource 
             for fn in os.listdir(d):
                 if fn.lower() == name and os.path.isfile(os.path.join(d, fn)):
                     return os.path.join(d, fn)
+    return None
+
+
+def find_original_sound(filename, dirs): # Find a file of the original game (DIGI.VOC, BM2TITLE.CMF) in a SOUND / SOUNDS folder next to the program or the PIC folder.
+    bases = []
+    env = os.environ.get("TORE_SND")
+    for d in ([env] if env else []) + list(dirs):
+        if d and os.path.isdir(d):
+            for b in (d, os.path.dirname(os.path.abspath(d))):
+                if b not in bases:
+                    bases.append(b)
+    want = filename.lower()
+    for b in bases:
+        for sub in (find_subdir(b, "sound"), find_subdir(b, "sounds"), b):
+            p = find_asset(want, [sub]) if sub else None
+            if p:
+                return p
     return None
 
 

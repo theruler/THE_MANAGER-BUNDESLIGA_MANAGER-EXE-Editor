@@ -103,7 +103,7 @@ class IntroMixin: # INTRO and OPTIONS screens plus their mouse / keyboard handli
     def options_snapshot(self): # Current values of everything saved in options.json.
         return dict(lang=str(T.current_language()), half_min=round(self.half_secs / 60.0, 3), slowmo=bool(self.slowmo_on),
                     replay_auto=bool(self.replay_auto), replay_secs=int(self.replay_secs), font_modern=bool(FONTS.modern),
-                    hints=bool(self.show_hints), user_team=self.user_team)
+                    hints=bool(self.show_hints), user_team=self.user_team, orig_audio=bool(self.audio.orig_on))
 
     def save_options(self): # Write options.json; a failure is reported once as a note on the INTRO.
         path = getattr(self, "options_path", None)
@@ -163,11 +163,13 @@ class IntroMixin: # INTRO and OPTIONS screens plus their mouse / keyboard handli
             self.slowmo_on = hit[1]
         elif k == "hints_set":
             self.show_hints = hit[1]
+        elif k == "orig_set":
+            self.audio.set_original(hit[1])
         elif k == "replay_secs":
             self.replay_secs = hit[1]
         elif k == "half":
             self.half_secs = hit[1]
-        if k in ("ctrl", "lang", "font", "replay_set", "slowmo_set", "hints_set", "replay_secs", "half"):
+        if k in ("ctrl", "lang", "font", "replay_set", "slowmo_set", "hints_set", "orig_set", "replay_secs", "half"):
             self.save_options()
 
     def su_key(self, k): # Keyboard on INTRO / OPTIONS.
@@ -277,8 +279,8 @@ class IntroMixin: # INTRO and OPTIONS screens plus their mouse / keyboard handli
         # --- name, team averages, formations ---
         self._put(td["name"].upper(), 24, (232, 236, 255), top + 126, left=x0, w=228)
         for n, (key, v) in enumerate(zip(("intro.attr_fit", "intro.attr_skill", "intro.attr_form"), td["avg"])):
-            cx = x0 + 40 + n * 76
-            self._put(tr(key), 15, bd.LIT, top + 146, cx=cx, w=76)
+            cx = x0 + 40 + n * 80
+            self._put(tr(key), 15, bd.LIT, top + 146, cx=cx, w=84)
             self._put(str(v), 20, stat_color(v), top + 165, cx=cx)
         fy = top + 178
         for i, fname in enumerate(FORMATIONS):
@@ -310,9 +312,9 @@ class IntroMixin: # INTRO and OPTIONS screens plus their mouse / keyboard handli
             pygame.draw.rect(s, (80, 90, 150), (x0 + 226, ty, 5, th), border_radius=2)
         pygame.draw.rect(s, bd.FRAME, lr, 2)
         # --- full roster: role, shirt number, name, Fitness / Skill / Form ---
-        px0, rw = x0 + 248, 217
+        px0, rw = x0 + 238, 227
         vw = 24
-        self._put("#", 12, bd.DIM, top + 6, cx=px0 + 40)
+        self._put("#", 16, bd.DIM, top + 6, cx=px0 + 37)
         for n, lab in enumerate((tr("intro.attr_fit_short"), tr("intro.attr_skill_short"), tr("intro.attr_form_short"))):
             self._put(lab, 12, bd.DIM, top + 6, cx=px0 + rw - vw * (3 - n) + vw // 2)
         pl = td["players"]
@@ -326,28 +328,40 @@ class IntroMixin: # INTRO and OPTIONS screens plus their mouse / keyboard handli
                 pygame.draw.rect(s, (22, 28, 62), rr, border_radius=3)
             role = self.natural_pool(i)
             rc = ROLE_COL[role]
-            tag = pygame.Rect(px0, y, 30, rr.h)
+            tag = pygame.Rect(px0, y, 24, rr.h)
             pygame.draw.rect(s, tuple(int(v * 0.35) for v in rc), tag, border_radius=3)
             self._put(ROLE_TAG[role], 12, rc, tag.centery, cx=tag.centerx)
-            nb = pygame.Rect(px0 + 32, y, 24, rr.h)
+            nb = pygame.Rect(px0 + 26, y, 22, rr.h)
             pygame.draw.rect(s, tuple(int(v * 0.8) for v in col) if num else (26, 30, 58), nb, border_radius=3)
             if num:
                 self._put(str(num), 16, (255, 255, 255), nb.centery, cx=nb.centerx)
-            self._put(pl[i] if i < len(pl) else "-", 15, bd.WHITE if num else bd.DIM, rr.centery, left=px0 + 60, w=rw - 60 - vw * 3 - 4)
+            self._put(pl[i] if i < len(pl) else "-", 15, bd.WHITE if num else bd.DIM, rr.centery, left=px0 + 52, w=rw - 52 - vw * 3 - 1 )
             for n in range(3):
                 v = td["stats"][i][n]
                 self._put(str(v), 14, stat_color(v), rr.centery, cx=px0 + rw - vw * (3 - n) + vw // 2)
             hits.append((rr, ("num", c, i)))
 
-    def _yes_no(self, s, hits, vx, vy, x, y, value, tag): # Two separate YES / NO buttons: the selected one is only outlined (no fill).
+    @staticmethod
+    def _tr_or(key, default): # Translated text, or the English default when a language file lacks the key.
+        try:
+            t = tr(key)
+        except Exception:
+            return default
+        return default if (not t or t == key) else t
+
+    def _yes_no(self, s, hits, vx, vy, x, y, value, tag, enabled=True): # Two separate YES / NO buttons: the selected one is only outlined (no fill); disabled = greyed out, no click.
         for i, (lab, val) in enumerate(((tr("intro.on"), True), (tr("intro.off"), False))):
             r = pygame.Rect(x + i * 88, y, 80, 30)
             on = bool(value) == val
-            pygame.draw.rect(s, (30, 34, 66), r, border_radius=6)
-            edge = (255, 224, 90) if on else ((120, 130, 210) if r.collidepoint(vx, vy) else (70, 78, 130))
+            pygame.draw.rect(s, (30, 34, 66) if enabled else (24, 26, 40), r, border_radius=6)
+            if enabled:
+                edge = (255, 224, 90) if on else ((120, 130, 210) if r.collidepoint(vx, vy) else (70, 78, 130))
+            else:
+                edge = (74, 78, 96) if on else (44, 48, 62)
             pygame.draw.rect(s, edge, r, 3 if on else 1, border_radius=6)
-            self._put(lab, 18, (255, 255, 255) if on else (150, 156, 190), r.centery, cx=r.centerx)
-            hits.append((r, (tag, val)))
+            self._put(lab, 18, ((255, 255, 255) if on else (150, 156, 190)) if enabled else (84, 88, 104), r.centery, cx=r.centerx)
+            if enabled:
+                hits.append((r, (tag, val)))
 
     def _draw_options(self, s, bd, hits, vx, vy): # OPTIONS page: every setting that used to sit on the INTRO.
         W = SU_W
@@ -374,14 +388,21 @@ class IntroMixin: # INTRO and OPTIONS screens plus their mouse / keyboard handli
         label(tr("intro.replay_auto"), y)
         self._yes_no(s, hits, vx, vy, x_chip, y, self.replay_auto, "replay_set")
         y += 56
-        label(tr("intro.hints"), y)
-        self._yes_no(s, hits, vx, vy, x_chip, y, self.show_hints, "hints_set")
-        y += 56
-        label(tr("intro.replay_secs"), y)
+        grey = (84, 88, 104) # The replay length only matters while the automatic replay is ON: greyed out and not clickable otherwise.
+        self._put(tr("intro.replay_secs"), 22, bd.LIT if self.replay_auto else grey, y + 14, left=x_lab)
         for i, m in enumerate((3, 5, 8, 10, 15)):
             r = pygame.Rect(x_chip + i * 64, y, 56, 30)
-            self.su_chip(s, r, str(m), self.replay_secs == m, r.collidepoint(vx, vy))
-            hits.append((r, ("replay_secs", m)))
+            if self.replay_auto:
+                self.su_chip(s, r, str(m), self.replay_secs == m, r.collidepoint(vx, vy))
+                hits.append((r, ("replay_secs", m)))
+            else:
+                on = self.replay_secs == m
+                pygame.draw.rect(s, (24, 26, 40), r, border_radius=6)
+                pygame.draw.rect(s, (74, 78, 96) if on else (44, 48, 62), r, 3 if on else 1, border_radius=6)
+                self._put(str(m), 18, grey, r.centery, cx=r.centerx)
+        y += 56
+        label(tr("intro.hints"), y)
+        self._yes_no(s, hits, vx, vy, x_chip, y, self.show_hints, "hints_set")
         y += 56
         label(tr("intro.font"), y)
         for i, (lab, val) in enumerate(((tr("intro.font_modern"), True), (tr("intro.font_old"), False))):
@@ -394,6 +415,12 @@ class IntroMixin: # INTRO and OPTIONS screens plus their mouse / keyboard handli
             r = pygame.Rect(x_chip + i * 168, y, 160, 30)
             self.su_chip(s, r, lab, self.user_team == val, r.collidepoint(vx, vy), px=16)
             hits.append((r, ("ctrl", val)))
+        y += 56
+        ok_orig = bool(self.audio.orig_available) # Greyed out when neither DIGI.VOC nor BM2TITLE.CMF was found at start-up.
+        self._put(self._tr_or("intro.orig_audio", "Original audio:"), 22, bd.LIT if ok_orig else (84, 88, 104), y + 14, left=x_lab)
+        self._yes_no(s, hits, vx, vy, x_chip, y, self.audio.orig_on and ok_orig, "orig_set", ok_orig)
+        if not ok_orig:
+            self._put(self._tr_or("intro.orig_missing", "DIGI.VOC / BM2TITLE.CMF not found"), 15, (84, 88, 104), y + 14, left=x_chip + 190)
         y += 56
         label(tr("intro.joymap"), y)
         jb = pygame.Rect(x_chip, y, 240, 32)

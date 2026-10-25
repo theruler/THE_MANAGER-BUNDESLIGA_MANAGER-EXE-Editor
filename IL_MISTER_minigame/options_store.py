@@ -35,7 +35,7 @@ def load_options(path): # Saved options as a validated dict (unknown or invalid 
     v = _num(raw.get("replay_secs"), 1, 60)
     if v is not None:
         out["replay_secs"] = int(v)
-    for k in ("slowmo", "replay_auto", "font_modern", "hints"):
+    for k in ("slowmo", "replay_auto", "font_modern", "hints", "orig_audio"):
         if isinstance(raw.get(k), bool):
             out[k] = raw[k]
     if "user_team" in raw and (raw["user_team"] is None or raw["user_team"] in (0, 1) and not isinstance(raw["user_team"], bool)):

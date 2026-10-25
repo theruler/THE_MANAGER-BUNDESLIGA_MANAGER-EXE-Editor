@@ -5,7 +5,6 @@ import os
 import random
 import sys
 import time
-
 import pygame
 
 from aim_system import AimMixin
@@ -36,7 +35,7 @@ from path_system import PathMixin
 from physics_system import AIR_MIN_Z, PhysicsMixin, REACH_FIRST, STRIKE_REACH, THROW_HOLD_Z
 from rendering_system import RenderingMixin
 from replay_system import REPLAY_MAX_SECS, ReplayMixin, TORE_FPS
-from resources import ask_pic_dir, fatal, find_asset, load_teams, locate_pic
+from resources import ask_pic_dir, fatal, find_asset, find_original_sound, load_teams, locate_pic
 from restart_system import RestartMixin
 from sprite_data import load_data, REF_MOVE, REF_STAND, team_sprite_offset
 from stats_system import StatsMixin
@@ -1142,6 +1141,7 @@ class Game(IntroMixin, StatsMixin, AimMixin, RestartMixin, InputMixin, MatchLogM
     def update(self, dt): # Advance match state, input, physics, AI, camera, and timers for one frame.
         if self.mode == "intro":
             self.update_cam(dt, True)
+            self.audio.intro_tick(dt) # Original intro music (BM2TITLE.CMF) while INTRO / OPTIONS are shown.
             return
         self.t_all += dt
         self.idle_t += dt
@@ -1190,7 +1190,7 @@ class Game(IntroMixin, StatsMixin, AimMixin, RestartMixin, InputMixin, MatchLogM
         self.update_cam(dt)
         self.rec.append((self.tick, self.snapshot(), (self.cam[0], self.cam[1])))
         self.tick += 1
-        self.audio.update(dt, self.intensity())
+        self.audio.update(dt, self.intensity(), self.mode)
         for m in self.msgs:
             m[2] -= dt
         self.msgs = [m for m in self.msgs if m[2] > 0]
@@ -1536,7 +1536,11 @@ def main(): # Parse launch options, load resources, initialize the game, and run
         fatal([str(ex)], [])
     notes = [team_note] + notes
     print(team_note.text())
-    audio = Audio(not args.no_sound and not args.selftest, os.path.join(app_dir, ".tore_audio"))
+    voc_path = find_original_sound("digi.voc", asset_dirs) # .\SOUND\DIGI.VOC: crowd chorus loop.
+    cmf_path = find_original_sound("bm2title.cmf", asset_dirs) # .\SOUNDS\BM2TITLE.CMF: intro music.
+    audio = Audio(not args.no_sound and not args.selftest, os.path.join(app_dir, ".tore_audio"), voc_path, cmf_path)
+    if saved.get("orig_audio") is False:
+        audio.set_original(False)
     args.joy_dirs = [os.path.join(exe_dir, "data"), os.path.join(app_dir, "data"), os.path.join(cwd, "data"), exe_dir, app_dir, cwd]
     args.joy_write_dir = os.path.join(exe_dir, "data")
     args.joy_img = find_asset(JOY_IMG, asset_dirs)
