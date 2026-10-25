@@ -131,8 +131,11 @@ I've started this project as proof of concept. Thanks to the experience made wit
 The game uses the graphics of the original PIC folder, MANA.DAT for Teams and players, and features two game mode: mouse click realtime game, and PAUSE tactical Manager game.
 Use ingame HELP (H) for a full commands and features.
 
+Extract the content of the "Il_mister" archive into THE MANAGER game's original folder. 
 
-<img width="1014" height="805" alt="immagine" src="https://github.com/user-attachments/assets/259b2857-6ad1-4d4c-8918-e017a61e3d50" />
+<img width="1018" height="776" alt="immagine" src="https://github.com/user-attachments/assets/a10bde04-0351-4952-b049-e0d39484df88" />
+
+<img width="1014" height="776" alt="immagine" src="https://github.com/user-attachments/assets/c7955d8c-528f-4360-8714-9349829ac095" />
 
 <img width="1020" height="801" alt="immagine" src="https://github.com/user-attachments/assets/a4e98994-8c67-4734-b3db-5e05f5264439" />
 
