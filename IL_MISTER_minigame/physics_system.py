@@ -726,8 +726,11 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         fi = int(a["t"] / a["fdur"])
         p.sid = a["seq"][min(fi, n - 1)]
         key, kw = a["key"], a["kw"]
-        if not a["fired"] and kw.get("steer") and p.ctrl:
-            self.steer_action_aim(p, a, dt) # User may still redirect the ball until contact.
+        if not a["fired"] and kw.get("steer"):
+            if p.ctrl:
+                self.steer_action_aim(p, a, dt) # User may still redirect the ball until contact.
+            else:
+                self.ai_steer_aim(p, a, dt) # AI keeps tracking its target teammate until contact.
         if not a["fired"] and fi >= a["contact"]:
             a["fired"] = True
             self.action_contact(p, a)
@@ -803,6 +806,8 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         err = kw.get("err", 0.0)
         if kw.get("kind", "pass") == "shot":
             err = math.hypot(err, self.shot_err(p)) # Skill: shooting accuracy, for AI and user alike.
+        elif key in ("header", "header_dive", "bicycle"):
+            err = math.hypot(err, self.aerial_err(p)) # Skill: precision of headed passes / clearances.
         if err:
             ang = random.gauss(0.0, err)
             dx, dv = dx * math.cos(ang) - dv * math.sin(ang), dx * math.sin(ang) + dv * math.cos(ang)

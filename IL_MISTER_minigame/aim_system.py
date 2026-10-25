@@ -11,6 +11,8 @@ from geometry import screen_to_world_dir
 CURSOR_AIM_SECS = 1.5 # The mouse cursor counts as an aim source only if it moved within this many seconds.
 CURSOR_AIM_MIN_DIST = 3.0 # World units; a cursor closer than this to the player gives no usable direction.
 AIM_STEER_RATE = 14.0 # Responsiveness (1/s) of live aim steering while a spectacular action is winding up.
+AI_STEER_RATE = 8.0 # Same for AI players: they track the moving target (teammate) a bit more slowly than a user.
+AI_STEER_LEAD = 0.35 # Seconds of target movement the AI leads a header/volley pass by.
 
 
 class AimMixin: # Aim sources shared by user actions: drag gesture, stick, keys, mouse cursor.
@@ -51,11 +53,21 @@ class AimMixin: # Aim sources shared by user actions: drag gesture, stick, keys,
             return None
         return unit(wx - p.wx, wv - p.wv)
 
-    def steer_action_aim(self, p, a, dt): # Let the user keep steering a spectacular action until its contact frame.
-        live = self.aim_input(p)
-        if live is None:
-            return
+    def blend_action_aim(self, a, live, rate, dt): # Ease the pending action direction toward `live`.
         kw = a["kw"]
-        r = 1.0 - math.exp(-AIM_STEER_RATE * dt)
+        r = 1.0 - math.exp(-rate * dt)
         cur = (kw["dx"], kw["dv"])
         kw["dx"], kw["dv"] = unit(cur[0] + (live[0] - cur[0]) * r, cur[1] + (live[1] - cur[1]) * r, cur)
+
+    def steer_action_aim(self, p, a, dt): # Let the user keep steering a spectacular action until its contact frame.
+        live = self.aim_input(p)
+        if live is not None:
+            self.blend_action_aim(a, live, AIM_STEER_RATE, dt)
+
+    def ai_steer_aim(self, p, a, dt): # AI counterpart: keep the ball pointed at the (moving) target teammate until contact.
+        q = a["kw"].get("target")
+        if q is None or q.state in ("out", "leaving"):
+            return
+        cur = (a["kw"]["dx"], a["kw"]["dv"])
+        live = unit(q.wx + q.vx * AI_STEER_LEAD - p.wx, q.wv + q.vv * AI_STEER_LEAD - p.wv, cur)
+        self.blend_action_aim(a, live, AI_STEER_RATE, dt)

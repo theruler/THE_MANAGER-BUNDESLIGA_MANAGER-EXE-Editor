@@ -28,6 +28,8 @@ TURN_RATE_MIN = 3.0 # Direction change (rad/s) above which a dribbler can lose t
 TURN_RATE_FULL = 9.0 # ...and at which the risk is maximal.
 LOSE_BALL_RATE = 1.4 # Probability per second of a loose touch at maximum turn rate and Skill 10.
 INTERCEPT_RANGE = (0.80, 1.25) # Interception radius multiplier at Form 10 / 99.
+FLAIR_RANGE = (0.08, 0.60) # Weight of attempting spectacular moves (bicycle, volley, diving header) at Skill 10 / 99.
+AERIAL_ERR_RANGE = (0.22, 0.03) # Angular error (rad, std dev) of a header that is a pass / clearance at Skill 10 / 99.
 FATIGUE_MAX = 0.22 # Fraction of speed/power lost by the end of the second half at Form 10 (Form 99: none).
 
 
@@ -105,6 +107,12 @@ class StatsMixin: # Effects of Fitness / Skill / Form on the simulation.
 
     def long_k(self, p): # 0 (Skill 99) .. 1 (Skill 10): how much the AI is tempted by long shots and long passes.
         return 1.0 - norm(self.pstats(p)[1])
+
+    def flair_k(self, p): # 0.08 (Skill 10) .. 0.60 (Skill 99): how readily the player tries spectacular moves.
+        return lerp(FLAIR_RANGE, norm(self.pstats(p)[1]))
+
+    def aerial_err(self, p): # Angular error (rad) of a header that is not a shot: how precisely he redirects the ball.
+        return lerp(AERIAL_ERR_RANGE, norm(self.pstats(p)[1]))
 
     def intercept_k(self, p): # Interception radius multiplier.
         return lerp(INTERCEPT_RANGE, norm(self.pstats(p)[2]))

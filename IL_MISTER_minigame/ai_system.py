@@ -27,6 +27,12 @@ GK_DRIBBLE_CHALLENGE_RADIUS = 23.0 # Maximum goalkeeper-to-carrier distance for 
 GK_DRIBBLE_CHALLENGE_CHANCE = 0.84 # Base probability that a goalkeeper wins a dribble challenge.
 LONG_SHOT_FROM, LONG_SHOT_TO = 105.0, 170.0 # Distance band (to the goal) of long shots: only taken from beyond the normal shooting range.
 LONG_SHOT_PROB = 0.07 # Chance per AI decision of a long shot at Skill 10 (about 0.2 of that at Skill 99).
+BICYCLE_MIN_Z = 9.0 # Ball height from which a bicycle kick is an option (otherwise a plain header).
+DIVE_HEADER_MIN, DIVE_HEADER_MAX = 10.0, 22.0 # Distance band from which a player may throw himself at the ball for a diving header.
+DIVE_HEADER_REACH = 17.0 # The ball (0.2 s ahead) must pass within this distance of the diver.
+AERIAL_BACK_MAX = 0.35 # A headed pass may not point more than this (cosine) back toward where the ball came from.
+AERIAL_CLEAR_DIST = 70.0 # Distance of the fallback clearance target when no teammate is usable.
+AERIAL_EDGE = 25.0 # Distance from a touchline inside which a header is never aimed toward that touchline.
 LONG_PASS_FROM, LONG_PASS_FULL = 110.0, 170.0 # Passes beyond LONG_PASS_FROM are 'long', fully weighted at LONG_PASS_FULL.
 LONG_PASS_BIAS = 40.0 # Score bonus for a long pass at Skill 99; at Skill 10 the same pass is penalised by this much.
 FWD_RUN_BASE, FWD_RUN_SKILL = 0.35, 0.60 # Chance per decision that a forward makes an advanced run while his team has the ball: 0.35 at Skill 10, 0.95 at Skill 99.
@@ -555,6 +561,34 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
         return self.ai_clear(p)
 
 
+    def aerial_aim(self, p): # Where a header/bicycle pass should go: a teammate or open space upfield, never back where the ball came from or out over the touchline.
+        b, d = self.ball, self.att[p.team]
+        sp = math.hypot(b.vx, b.vv)
+        back = (-b.vx / sp, -b.vv / sp) if sp > 20.0 else (-float(d), 0.0) # Direction the ball came from.
+
+        def ok(ux, uv): # Reject directions that send the ball back toward its origin.
+            return ux * back[0] + uv * back[1] < AERIAL_BACK_MAX
+        bp = self.best_pass(p)
+        if bp and not ok(*unit(bp[2] - p.wx, bp[3] - p.wv)):
+            bp = None
+        if bp is None:
+            bp = self.best_pass(p, aim=unit(float(d), (V_GC - p.wv) * 0.02), cone=0.3)
+            if bp and not ok(*unit(bp[2] - p.wx, bp[3] - p.wv)):
+                bp = None
+        if bp:
+            dx, dv = unit(bp[2] - p.wx, bp[3] - p.wv)
+            tgt = bp[1]
+        else: # Nobody usable: clear upfield toward the middle of the pitch.
+            tx = clamp(p.wx + d * AERIAL_CLEAR_DIST, 6.0, L - 6.0)
+            dx, dv = unit(tx - p.wx, (p.wv + (V_GC - p.wv) * 0.5) - p.wv)
+            tgt = None
+            if not ok(dx, dv):
+                dx, dv = unit(float(d), (V_GC - p.wv) * 0.05)
+        edge = V_TOP + AERIAL_EDGE, V_BOT - AERIAL_EDGE # Near a touchline never head the ball toward it.
+        if (p.wv < edge[0] and dv < 0.0) or (p.wv > edge[1] and dv > 0.0):
+            dx, dv = unit(dx, -dv * 0.5, (float(d), 0.0))
+        return dx, dv, tgt
+
     def ai_aerial(self, p): # Choose an appropriate action for a player contesting an aerial ball.
         b = self.ball
         if p.busy() or p.act_cd > 0 or b.owner is not None:
@@ -564,29 +598,29 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
         goalx = L if d > 0 else 0.0
         togoal = math.hypot(goalx - p.wx, V_GC - p.wv)
         sp = math.hypot(b.vx, b.vv)
+        flair = self.flair_k(p) # Skill: how readily spectacular moves are tried.
         if dist < 9.5 and 8.0 <= b.z <= 20.0 and b.vz < 35:
+            key = "bicycle" if (b.z >= BICYCLE_MIN_Z and random.random() < flair) else "header"
             if togoal < 90:
                 tv = V_GC + random.uniform(-0.7, 0.7) * HALF_MOUTH
                 dx, dv = unit(goalx - p.wx, tv - p.wv)
-                key = "bicycle" if (b.z > 10 and p.skill > 0.55 and random.random() < 0.5) else "header"
-                self.start_aerial(p, key, dx, dv, 205.0, 22.0, "shot", err=(1.05 - p.skill) * 0.12)
+                self.start_aerial(p, key, dx, dv, 205.0, 22.0, "shot", err=(1.05 - p.skill) * 0.12, steer=True)
             else:
-                bp = self.best_pass(p)
-                if bp:
-                    dx, dv = unit(bp[2] - p.wx, bp[3] - p.wv)
-                    self.start_aerial(p, "header", dx, dv, 150.0, 25.0, "pass", err=(1 - p.skill) * 0.1, target=bp[1])
-                else:
-                    self.start_aerial(p, "header", float(d), 0.0, 170.0, 28.0, "pass", err=0.1)
-        elif 10.0 <= dist < 16.0 and 6.0 <= b.z <= 14.0 and togoal < 100 and b.vz < 35 and p.skill > 0.45 \
-                and unit(b.wx - p.wx, b.wv - p.wv)[0] * d > 0.5 and random.random() < 0.04:
-            tv = V_GC + random.uniform(-0.7, 0.7) * HALF_MOUTH
-            dx, dv = unit(goalx - p.wx, tv - p.wv)
-            self.start_aerial(p, "header_dive", dx, dv, 205.0, 22.0, "shot", err=(1.05 - p.skill) * 0.12, assist=True)
-        elif dist < 10.0 and 1.0 < b.z < 8.0 and sp > 60 and togoal < 100 and b.intended is p and random.random() < 0.6:
+                dx, dv, tgt = self.aerial_aim(p)
+                self.start_aerial(p, key, dx, dv, 150.0, 25.0, "pass", target=tgt, steer=True)
+        elif DIVE_HEADER_MIN <= dist < DIVE_HEADER_MAX and 4.0 <= b.z <= 14.0 and togoal < 130 and b.vz < 35 \
+                and unit(b.wx - p.wx, b.wv - p.wv)[0] * d > 0.2 and random.random() < 0.01 + 0.07 * flair:
+            bx, bv = self.ball_pred(0.2)
+            if math.hypot(bx - p.wx, bv - p.wv) < DIVE_HEADER_REACH: # Only dive for a ball that will really pass within reach.
+                tv = V_GC + random.uniform(-0.7, 0.7) * HALF_MOUTH
+                dx, dv = unit(goalx - p.wx, tv - p.wv)
+                self.start_aerial(p, "header_dive", dx, dv, 205.0, 22.0, "shot", err=(1.05 - p.skill) * 0.12, assist=True, steer=True)
+        elif dist < 12.0 and 1.0 < b.z < 8.0 and sp > 45 and togoal < 100 and b.intended is p \
+                and random.random() < 0.10 + 0.50 * flair:
             tv = V_GC + random.uniform(-0.7, 0.7) * HALF_MOUTH
             dx, dv = unit(goalx - p.wx, tv - p.wv)
             self.log_move("volley", p)
-            self.start_kick(p, dx, dv, 250.0, self.lob_lift(togoal, 250.0, 4.0), "shot", err=(1.05 - p.skill) * 0.12, special=True)
+            self.start_kick(p, dx, dv, 250.0, self.lob_lift(togoal, 250.0, 4.0), "shot", err=(1.05 - p.skill) * 0.12, special=True, steer=True)
 
     def best_pass(self, p, aim=None, cone=0.55): # Rank available passing options using their targets and nearby opponents.
         d = self.att[p.team]
