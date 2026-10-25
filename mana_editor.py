@@ -39,6 +39,14 @@ N_EUROPE = 136
 
 LEAGUE_BOUNDS = [(0, 18, 18), (18, 20, 20), (38, 20, 20), (58, 6, 6)]
 
+def set_league1_size(n: int):
+    n = 20 if n == 20 else 18
+    LEAGUE_BOUNDS[:] = [(0, n, n), (n, 20, 20), (n + 20, 20, 20), (n + 40, 24 - n, 24 - n)]
+
+def guess_league1_size(parsed: dict) -> int:
+    t = parsed["teams"]
+    return 20 if (t[18]["rank"], t[19]["rank"]) == (19, 20) else 18
+
 PLAYER_ROLES = ["P"]*2 + ["D"]*5 + ["C"]*8 + ["A"]*5
 ROLE_COLOR = {"P": "#2980b9", "D": "#27ae60", "C": "#e67e22", "A": "#c0392b"}
 
@@ -300,6 +308,8 @@ class _LeagueTab(ttk.Frame):
         self._logo_cvs: dict[int, tk.Canvas] = {}
         self._cur_team: int | None = None
         self._points_rule = tk.IntVar(value=3)
+        self._l1_size = tk.IntVar(value=guess_league1_size(parsed))
+        set_league1_size(self._l1_size.get())
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
         left_wrap = ttk.Frame(self)
@@ -338,7 +348,7 @@ class _LeagueTab(ttk.Frame):
         self._tools_frame = tools_f
         rule_f = ttk.Frame(tools_f)
         rule_f.pack(fill="x", pady=(0, 6))
-        ttk.Label(rule_f, text="points rule", font=("Segoe UI", 8, "bold"), foreground=FG).pack(side="left", padx=(0, 6))
+        ttk.Label(rule_f, text="Points rule", font=("Segoe UI", 8, "bold"), foreground=FG).pack(side="left", padx=(0, 6))
         style = ttk.Style()
         bg_color = style.lookup("TFrame", "background")
         style.configure("Tool.TRadiobutton", background=bg_color)
@@ -346,6 +356,11 @@ class _LeagueTab(ttk.Frame):
         for val in (2, 3):
             rb = ttk.Radiobutton(rule_f, text=str(val), variable=self._points_rule, value=val,style="Tool.TRadiobutton",command=self._on_points_rule_changed)
             rb.pack(side="left", padx=(0, 4))
+        l1_f = ttk.Frame(tools_f)
+        l1_f.pack(fill="x", pady=(0, 6))
+        ttk.Label(l1_f, text="1st League", font=("Segoe UI", 8, "bold"), foreground=FG).pack(side="left", padx=(0, 6))
+        for val in (18, 20):
+            ttk.Radiobutton(l1_f, text=str(val), variable=self._l1_size, value=val, style="Tool.TRadiobutton", command=self._on_l1_size_changed).pack(side="left", padx=(0, 4))
         zero_btn = tk.Button(tools_f, text="RESET STATS", bg="#D35400", fg="white",activebackground="#E67E22", activeforeground="white",font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,cursor="hand2", command=self._zero_all_stats)
         zero_btn.pack(fill="x", pady=(0, 2))
         pos_btn = tk.Button(tools_f, text="SHUFFLE TEAMS", bg="#D35400", fg="white",activebackground="#E67E22", activeforeground="white",font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,cursor="hand2", command=self._random_positions)
@@ -368,8 +383,9 @@ class _LeagueTab(ttk.Frame):
             self._grid_frame.after(100, self._place_tools_frame)
             return
         ref_x = ref_btn.winfo_x()
-        fe1 = self._rank_entries.get(58)
-        fe2 = self._rank_entries.get(59)
+        l4_first, l4_count, _ = LEAGUE_BOUNDS[3]
+        fe1 = self._rank_entries.get(l4_first)
+        fe2 = self._rank_entries.get(l4_first + 1)
         if fe1 is None or not fe1.winfo_exists() or fe1.winfo_y() == 0:
             self._grid_frame.after(100, self._place_tools_frame)
             return
@@ -377,7 +393,7 @@ class _LeagueTab(ttk.Frame):
         row_h = (fe2.winfo_y() - ref_y_row1) if (fe2 and fe2.winfo_exists()) else 24
         if row_h <= 0:
             row_h = 24
-        target_y = ref_y_row1 + row_h * 10  
+        target_y = ref_y_row1 + row_h * (l4_count + 4)  
         self._tools_frame.place(x=ref_x, y=target_y)
 
     def _build_column(self, li: int, first: int, count: int, rank_max: int, col_offset: int):
@@ -744,6 +760,13 @@ class _LeagueTab(ttk.Frame):
             self._show_team(self._cur_team)
         if self._on_dirty:
             self._on_dirty()
+
+    def _on_l1_size_changed(self):
+        set_league1_size(self._l1_size.get())
+        self._sel.clear()
+        self._cur_team = None
+        self._build_grid()
+        self._show_placeholder()
 
     def _on_points_rule_changed(self):
         if self._cur_team is not None:

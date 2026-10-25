@@ -721,6 +721,18 @@ class _MatchFlagMixin:
 
 
 
+def _parse_masked_hex(hex_str):
+    """'AABB??CC' -> [0xAA, 0xBB, None, 0xCC]; None = byte jolly."""
+    s = "".join(hex_str.split()).upper()
+    if len(s) % 2:
+        raise ValueError("lunghezza esadecimale dispari")
+    return [None if s[i:i + 2] == "??" else int(s[i:i + 2], 16) for i in range(0, len(s), 2)]
+
+
+def _masked_equal(data, offset, pattern):
+    return all(p is None or data[offset + i] == p for i, p in enumerate(pattern))
+
+
 class _20TeamsMixin:
 
     def _teams_config(self):
@@ -740,7 +752,7 @@ class _20TeamsMixin:
         if offset is None or teams_dict is None:
             return None
         sample_hex = next(iter(teams_dict.values()), "")
-        byte_len = len(bytes.fromhex(sample_hex)) if sample_hex else 16
+        byte_len = len(_parse_masked_hex(sample_hex)) if sample_hex else 16
         if offset < 0 or offset + byte_len > len(self.exe_data):
             return None
         return offset
@@ -767,14 +779,10 @@ class _20TeamsMixin:
             self._last_valid_teams = None
             self.teams_var.set("")
         else:
-            sample_hex = next(iter(teams_dict.values()), "")
-            byte_len = len(bytes.fromhex(sample_hex)) if sample_hex else 16
-            current_bytes = bytes(self.exe_data[offset:offset + byte_len])
-            current_hex = current_bytes.hex().upper()
-
             matched_key = None
             for key, hex_str in teams_dict.items():
-                if hex_str.upper() == current_hex:
+                pattern = _parse_masked_hex(hex_str)
+                if offset + len(pattern) <= len(self.exe_data) and _masked_equal(self.exe_data, offset, pattern):
                     matched_key = key
                     break
 
@@ -790,12 +798,15 @@ class _20TeamsMixin:
         if key not in teams_dict:
             self._revert_teams()
             return
-        hex_str = teams_dict[key]
-        payload = bytes.fromhex(hex_str)
-        if bytes(self.exe_data[offset:offset + len(payload)]) == payload:
+        pattern = _parse_masked_hex(teams_dict[key])
+        if offset + len(pattern) > len(self.exe_data):
+            return
+        if _masked_equal(self.exe_data, offset, pattern):
             self._last_valid_teams = key
             return
-        self.exe_data[offset:offset + len(payload)] = payload
+        for i, p in enumerate(pattern):
+            if p is not None:
+                self.exe_data[offset + i] = p
         self.teams_var.set(key)
         self._last_valid_teams = key
         self._invalidate_diff_preview("teams-change")
