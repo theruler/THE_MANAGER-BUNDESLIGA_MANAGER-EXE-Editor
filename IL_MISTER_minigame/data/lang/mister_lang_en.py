@@ -86,6 +86,8 @@ TEXTS_EN = {
     'intro.attr_form': 'FORM',
     'note.options_save': 'Unable to save options: {reason}',
     'intro.hints': 'Hints (F8 in game):',
+    'intro.orig_audio': 'Original Audio:',
+    'intro.orig_missing': 'DIGI.VOC / BM2TITLE.CMF missing',
     'intro.attr_fit_short': 'FIT',
     'intro.attr_skill_short': 'SKI',
     'intro.attr_form_short': 'FOR',

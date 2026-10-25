@@ -86,6 +86,8 @@ TEXTS_DE = {
     'intro.attr_form': 'FORM',
     'note.options_save': 'Optionen konnten nicht gespeichert werden: {reason}',
     'intro.hints': 'Hinweise (F8 im Spiel):',
+    'intro.orig_audio': 'Originaltonaufnahme:',
+    'intro.orig_missing': 'DIGI.VOC / BM2TITLE.CMF fehlen',
     'intro.attr_fit_short': 'KON',
     'intro.attr_skill_short': 'TEC',
     'intro.attr_form_short': 'FOR',

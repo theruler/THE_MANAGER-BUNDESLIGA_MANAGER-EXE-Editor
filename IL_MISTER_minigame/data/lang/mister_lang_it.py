@@ -86,6 +86,8 @@ TEXTS_IT = {
     'intro.attr_form': 'FORMA',
     'note.options_save': 'Impossibile salvare le opzioni: {reason}',
     'intro.hints': 'Suggerimenti (F8 in partita):',
+    'intro.orig_audio': 'Audio originale:',
+    'intro.orig_missing': 'DIGI.VOC / BM2TITLE.CMF non trovati',
     'intro.attr_fit_short': 'CON',
     'intro.attr_skill_short': 'TEC',
     'intro.attr_form_short': 'FOR',
