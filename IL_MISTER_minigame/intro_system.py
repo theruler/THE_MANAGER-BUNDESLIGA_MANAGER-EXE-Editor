@@ -198,7 +198,6 @@ class IntroMixin: # INTRO and OPTIONS screens plus their mouse / keyboard handli
             self.user_team = {0: 1, 1: None, None: 0}[self.user_team]
             self.save_options()
 
-    # ---------- drawing (same buttons, colours and fonts as the original INTRO) ----------
     def _put(self, txt, px, col, cy, left=None, cx=None, w=None): # Text with the scoreboard font, optionally cut to w pixels.
         bd = self.board
         if w is not None:
@@ -259,7 +258,7 @@ class IntroMixin: # INTRO and OPTIONS screens plus their mouse / keyboard handli
         self._put(names_ctl[c], 21, (255, 255, 255), hb.centery, cx=hb.centerx)
         top = TOP
         # --- logo and stylised pitch with the formation ---
-        lg = pygame.Rect(x0, top, 110, 110)
+        lg = pygame.Rect(x0+5, top, 110, 110)
         pygame.draw.rect(s, (8, 10, 24), lg)
         img = self.gfx.logo(td["logo"])
         if img is not None:
@@ -267,24 +266,23 @@ class IntroMixin: # INTRO and OPTIONS screens plus their mouse / keyboard handli
             im = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * k)), max(1, int(img.get_height() * k))))
             s.blit(im, im.get_rect(center=lg.center))
         pygame.draw.rect(s, bd.FRAME, lg, 3)
-        mp = pygame.Rect(x0 + 118, top, 98, 110)
+        mp = pygame.Rect(x0 + 128, top, 98, 110)
         pygame.draw.rect(s, (40, 104, 48), mp)
         pygame.draw.rect(s, (220, 226, 220), mp, 1)
-        pygame.draw.line(s, (220, 226, 220), (mp.left, mp.top + 2), (mp.right, mp.top + 2), 1)
         pygame.draw.arc(s, (220, 226, 220), (mp.left + 28, mp.top - 20, 42, 40), math.pi, 2 * math.pi, 1)
         for sl in formation_slots(self.form_names[c]):
             pt = (int(mp.left + 6 + sl["w"] * (mp.w - 12)), int(mp.bottom - 8 - sl["u"] / 0.5 * (mp.h - 16)))
             pygame.draw.circle(s, col, pt, 5)
             pygame.draw.circle(s, (250, 250, 250), pt, 5, 1)
         # --- name, team averages, formations ---
-        self._put(td["name"].upper(), 24, (232, 236, 255), top + 126, left=x0, w=228)
+        self._put(td["name"].upper(), 24, (232, 236, 255), top + 126, cx=x0 + 114, w=228)
         for n, (key, v) in enumerate(zip(("intro.attr_fit", "intro.attr_skill", "intro.attr_form"), td["avg"])):
             cx = x0 + 40 + n * 80
             self._put(tr(key), 15, bd.LIT, top + 146, cx=cx, w=84)
             self._put(str(v), 20, stat_color(v), top + 165, cx=cx)
         fy = top + 178
         for i, fname in enumerate(FORMATIONS):
-            r = pygame.Rect(x0 + (i % 3) * 72, fy + (i // 3) * 33, 66, 28)
+            r = pygame.Rect(x0 +1 + (i % 3) * 78, fy + (i // 3) * 33, 74, 28)
             self.su_chip(s, r, fname, self.form_names[c] == fname, r.collidepoint(vx, vy), col)
             hits.append((r, ("form", c, fname)))
         # --- team list: alphabetical, fills the column down to the bottom bar ---
