@@ -133,7 +133,7 @@ Use ingame HELP (H) for a full commands and features.
 
 Extract the content of the "Il_mister" archive into THE MANAGER game's original folder. 
 
-<img width="1018" height="776" alt="immagine" src="https://github.com/user-attachments/assets/a10bde04-0351-4952-b049-e0d39484df88" />
+<img width="1014" height="772" alt="immagine" src="https://github.com/user-attachments/assets/ea2463a9-31f9-4372-98d3-2e8fe4e1fe34" />
 
 <img width="1014" height="776" alt="immagine" src="https://github.com/user-attachments/assets/c7955d8c-528f-4360-8714-9349829ac095" />
 
