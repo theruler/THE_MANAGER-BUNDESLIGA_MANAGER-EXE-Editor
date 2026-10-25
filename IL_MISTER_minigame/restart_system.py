@@ -10,7 +10,7 @@ import random
 from ball_model import STANDING_BALL_OFFSET
 from game_utils import clamp, unit
 from geometry import (
-    BOX_D, BOX_V0, BOX_V1, FW, HALF_MOUTH, in_box_fn, L, s2w, seg_dist, V_GC, V_MAX_P, V_MID, V_MIN_P, V_SPOT,
+    BOX_D, BOX_V0, BOX_V1, FW, HALF_MOUTH, in_box_fn, L, PITCH_W, s2w, seg_dist, V_GC, V_MAX_P, V_MID, V_MIN_P, V_SPOT,
     V_TOP, w2s,
 )
 from lang import tr
@@ -20,6 +20,11 @@ from match_config import TEAM_NAMES
 # ---- Restart alignment: the only three knobs that place a taker next to the ball ----
 BALL_AHEAD = STANDING_BALL_OFFSET # World units behind the ball along the facing axis (same offset dribble() uses, so taking the ball causes no jump).
 FOOT_PX = {"E": (0.0, -2.0), "W": (0.0, -2.0)} # Screen-pixel offset (dx, dy) from the stand point to the ball's ground point, per kick-pose facing. Calibrate here with the F1 debug overlay.
+GK_ADVANCE_U = {"MID": (0.45, 0.70), "FWD": (0.62, 0.90)} # Goal kick, kicking team: normalized depth (from own goal) midfielders / forwards run up to.
+GK_DEF_LINE_U = 0.24 # Goal kick: depth of the line defenders hold when they have nobody to mark.
+GK_THREAT_U = 0.50 # Goal kick: opponents closer than this (normalized, from the kicking team's goal) to the goal being kicked from are marked.
+GK_MARK_GOALSIDE = 6.0 # Goal kick: distance a marker keeps from his man, on the side of his own goal.
+GK_TARGET_DIST = 140.0 # Goal kick: preferred distance to the receiver of the AI's kick.
 THROW_PX = {"N": 0.0, "S": 4.0} # Vertical pixel offset of a throw-in taker outside the north/south touchline.
 
 
@@ -381,6 +386,8 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
                 return
         elif kind == "free" and poss and near_goal and p.role in ("MID", "FWD"):
             hx, hv = agx - ad * (14 + (p.idx % 4) * 8), V_GC + ((p.idx % 5) - 2) * HALF_MOUTH * 0.6
+        if kind == "goalkick" and poss:
+            hx, hv = self.goalkick_shape(p, rs, hx, hv)
         if poss and kind == "throw":
             ub, _wb = self.team_uw(team, x, v)
             inward = 1.0 if v < V_MID else -1.0
@@ -409,6 +416,62 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
                 hx = ogx + ad * edge
         p.tx, p.tv = clamp(hx, 6.0, L - 6.0), clamp(hv, V_MIN_P, V_MAX_P)
 
+    def goalkick_marks(self, rs): # Assign defenders (not the taker) to opponents who stayed in the kicking team's half; computed once per restart.
+        if "gk_marks" in rs:
+            return rs["gk_marks"]
+        team = rs["team"]
+        defs = [q for q in self.team_p[team] if q.role == "DEF" and q is not rs["taker"] and not q.ctrl and q.state not in ("out", "leaving")]
+        threats = [o for o in self.opponents(team) if o.role != "GK" and o.state not in ("out", "leaving")
+                   and self.team_uw(team, o.wx, o.wv)[0] < GK_THREAT_U]
+        threats.sort(key=lambda o: self.team_uw(team, o.wx, o.wv)[0]) # Deepest intruder (closest to our goal) first.
+        marks, free = {}, list(defs)
+        for o in threats[:max(1, len(defs) - 1)]: # Always keep one defender on the line.
+            if not free:
+                break
+            q = min(free, key=lambda d: math.hypot(d.wx - o.wx, d.wv - o.wv))
+            free.remove(q)
+            marks[id(q)] = o
+        rs["gk_marks"] = marks
+        return marks
+
+    def goalkick_shape(self, p, rs, hx, hv): # Kicking team at a goal kick: no formation; MID/FWD run upfield to receive, DEF stay back and mark intruders.
+        team = rs["team"]
+        ad = self.att[team]
+        ogx = 0.0 if ad > 0 else L
+        if p.role == "DEF":
+            o = self.goalkick_marks(rs).get(id(p))
+            if o is not None and o.state not in ("out", "leaving"):
+                ux, uv = unit(ogx - o.wx, V_GC - o.wv, (ad * -1.0, 0.0))
+                return o.wx + ux * GK_MARK_GOALSIDE, o.wv + uv * GK_MARK_GOALSIDE
+            u, w = GK_DEF_LINE_U, p.base_w
+        elif p.role in GK_ADVANCE_U:
+            lo, hi = GK_ADVANCE_U[p.role]
+            u, w = lo + (hi - lo) * (((p.idx * 7) % 5) / 4.0), p.base_w # Spread the runners over the depth band.
+            u = max(u, p.base_u)
+        else:
+            return hx, hv
+        w = clamp(w, p.zw[0], p.zw[1])
+        return (u * L if ad > 0 else (1.0 - u) * L), V_TOP + w * PITCH_W
+
+    def goalkick_target(self, p, rs): # Best receiver among the midfielders/forwards that moved up, or None.
+        team = rs["team"]
+        ad = self.att[team]
+        cands = [q for q in self.team_p[team] if q is not p and q.role in ("MID", "FWD") and q.state not in ("out", "leaving")]
+        if not cands:
+            return None
+        opp = self.opponents(team)
+
+        def spot(q): # Where the receiver is heading (he is still running upfield when the kick is taken).
+            return (q.tx, q.tv) if q.tx is not None else (q.wx, q.wv)
+
+        def score(q):
+            qx, qv = spot(q)
+            free = min([math.hypot(o.wx - qx, o.wv - qv) for o in opp] or [60.0])
+            dist = math.hypot(qx - p.wx, qv - p.wv)
+            return min(free, 35.0) + (qx - p.wx) * ad * 0.04 - abs(dist - GK_TARGET_DIST) * 0.12 + random.uniform(0.0, 6.0)
+        q = max(cands, key=score)
+        return q, spot(q)
+
     def ai_take_restart(self, p, rs): # Execute the selected AI-controlled restart.
         if p.busy():
             return
@@ -433,7 +496,14 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
             self.start_kick(p, dx, dv, 165.0, self.lob_lift(dist, 165.0, 9.0), "pass", err=0.05)
             return
         if kind == "goalkick":
-            return self.ai_clear(p)
+            tg = self.goalkick_target(p, rs)
+            if tg is None:
+                return self.ai_clear(p)
+            q, (qx, qv) = tg
+            dist = math.hypot(qx - p.wx, qv - p.wv)
+            dx, dv = unit(qx - p.wx, qv - p.wv)
+            power = clamp(dist * 1.55 + 55, 95, 250)
+            return self.start_kick(p, dx, dv, power, self.lob_lift(dist, power), "pass", target=q, err=(1 - p.skill) * 0.07)
         mates = [q for q in self.team_p[team] if q is not p and q.state not in ("out", "leaving") and q.role != "GK"]
         if kind == "throw":
             opp = self.opponents(team)
