@@ -96,11 +96,13 @@ Usable as standalone or a built-in main editor TAB
 
 LEGAUE TAB
 - Teams can be swapped by dragging the buttons to new position
+- Points rule is used to calculate Fitness-skill-form
+- 1st League detects if the championship has been edited to reflect 18 or 20 teams for the first league
 - RESET puts every stat to zero
 - SHUFFLE shuffles the teams within each league
 - RANDOMIZE randomizes all the stats based on current team position in each league, according to an algorithm that takes into account actual statistic distributions of POINTS a GOALS made in a real championship, adapted to the limits and features of the in-game mechanics.
 
-<img width="1227" height="718" alt="immagine" src="https://github.com/user-attachments/assets/99347fe5-57aa-4dcf-b5f9-ac15a2f15016" />
+<img width="1230" height="717" alt="immagine" src="https://github.com/user-attachments/assets/952e24cc-3225-432a-bb78-b72fb30374b9" />
 
 
 UEFA TAB
