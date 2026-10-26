@@ -76,7 +76,7 @@ def calc_ctf(teams: list, l1: int = 18, rng=random) -> list:
         g = _ctf_group(i, l1)
         p0, p1 = t["pts"]; gs, gc = t["gls"]; rank = t["rank"]
         if rank and g != 2:
-            x = _tdiv(-100*p0, avg[g][0]) + 100 if (p0 and p1) else 0
+            x = _tdiv(-100*p0, avg[g][0]) + 100 if p0 else 0
             y = (size[g] - rank) - _tdiv(x, 20)
             gcv = _tdiv(-100*gc, avg[g][2]) + 100 if (gs and gc) else 0
             gsv = _tdiv(-100*gs, avg[g][1]) + 100 if (gs and gc) else 0
@@ -105,6 +105,19 @@ def guess_league1_size(parsed: dict) -> int:
     if max(score.values()) >= 5 and score[18] != score[20]:
         return 18 if score[18] > score[20] else 20
     return 20 if (teams[18]["rank"], teams[19]["rank"]) == (19, 20) else 18
+
+
+UEFA_MIN_MEAN = 79
+
+
+def uefa_mean(europe: list) -> float:
+    vals = [v for e in europe for v in e["ctf"]]
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+def uefa_mean_ok(europe: list) -> bool:
+    vals = [v for e in europe for v in e["ctf"]]
+    return bool(vals) and sum(vals) // len(vals) >= UEFA_MIN_MEAN
 
 
 PLAYER_ROLES = ["P"]*2 + ["D"]*5 + ["C"]*8 + ["A"]*5
@@ -371,6 +384,9 @@ class _LeagueTab(ttk.Frame):
         self._auto_ctf_var = tk.BooleanVar(value=True)
         self._l1_size = tk.IntVar(value=guess_league1_size(parsed))
         set_league1_size(self._l1_size.get())
+        for _t, (_c, _rnd) in zip(parsed["teams"], calc_ctf(parsed["teams"], self._l1_size.get())):
+            if not _rnd and list(_t["ctf"]) != _c and any(_t["ctf"]):
+                _t["_manual"] = True
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
         left_wrap = ttk.Frame(self)
@@ -398,8 +414,12 @@ class _LeagueTab(ttk.Frame):
         self._build_tools_frame()
         self._show_placeholder()
 
-    def _pts_max_for_rule(self) -> int:
-        return 76 if self._points_rule.get() == 2 else 114
+    def _pts_max_for_rule(self, ti: int | None = None) -> int:
+        rule = 2 if self._points_rule.get() == 2 else 3
+        games = 38
+        if ti is not None and self._league_of(ti) == 0:
+            games = 2 * (self._l1_size.get() - 1)
+        return games * rule
 
     def _build_tools_frame(self):
         if hasattr(self, '_tools_frame') and self._tools_frame.winfo_exists():
@@ -959,19 +979,11 @@ class _LeagueTab(ttk.Frame):
             return
 
         pts_rule    = self._points_rule.get()
-        pts_max_ui  = self._pts_max_for_rule()   # 114 (3pt) or 76 (2pt)
-        CTF_BOUNDS = [
-            (70, 95),   # League 1
-            (40, 75),   # League 2
-            (25, 45),   # League 3
-            (20, 30),   # League 4
-        ]
         teams = self._parsed["teams"]
         for li, (first, count, rank_max) in enumerate(LEAGUE_BOUNDS):
-            ctf_lo, ctf_hi = CTF_BOUNDS[li]
             if not any(id(t) in self._sel for t in teams[first:first + count]):
                 continue
-            n_sim = 20
+            n_sim = count if li == 0 else 20      # league 1: real size (18/20); others: 20-team scale
             games        = 2 * (n_sim - 1)
             pts_max_team = games * pts_rule
             top_pts = round(pts_max_team * random.uniform(0.68, 0.78))
@@ -1014,18 +1026,10 @@ class _LeagueTab(ttk.Frame):
             if cur:
                 gls_conceded = [max(1, round(c * total_scored / cur)) for c in gls_conceded]
             gls_conceded = _balance_list(gls_conceded, total_scored, n_sim)
-            ctf_list = []
-            for i in range(n_sim):
-                frac     = i / (n_sim - 1) if n_sim > 1 else 0.0
-                ctf_base = round(ctf_hi - (ctf_hi - ctf_lo) * frac)
-                trio = [max(ctf_lo, min(ctf_hi, ctf_base + random.randint(-2, 2)))
-                        for _ in range(3)]
-                ctf_list.append(trio)
             if n_sim > count:
                 pts_list     = pts_list[:count]
                 gls_scored   = gls_scored[:count]
                 gls_conceded = gls_conceded[:count]
-                ctf_list     = ctf_list[:count]
                 total_scored = sum(gls_scored)
                 cur = sum(gls_conceded)
                 if cur:
@@ -1035,11 +1039,13 @@ class _LeagueTab(ttk.Frame):
             for i, t in enumerate(group):
                 if id(t) not in self._sel:
                     continue
-                t["pts"]  = [pts_list[i], max(0, pts_max_ui - pts_list[i])]
+                t["pts"]  = [pts_list[i], max(0, pts_max_team - pts_list[i])]
                 t["gls"]  = [gls_scored[i], gls_conceded[i]]
                 t["rank"] = i + 1
-                t["ctf"]  = list(ctf_list[i])
                 t.pop("_manual", None)
+        for ti, (c, _) in enumerate(calc_ctf(teams, self._l1_size.get())):
+            if id(teams[ti]) in self._sel:
+                teams[ti]["ctf"] = list(c)
         self._auto_ctf()
         for ti, fe in self._rank_entries.items():
             fe.set_int(teams[ti]["rank"])
@@ -1364,18 +1370,19 @@ class _LeagueTab(ttk.Frame):
         ttk.Label(rows_f, text="POINTS", width=LABEL_W, anchor="e", foreground=MUTED, font=("Segoe UI", 9, "bold")).grid(row=1, column=0, sticky="e", padx=(0, 4), pady=3)
         w["pts"] = []
         def _pts_conc_from_scored(scored: int) -> int:
-            total = self._pts_max_for_rule()
+            total = self._pts_max_for_rule(ti)
             return 0 if scored == 0 else max(0, total - scored)
         def _update_pts_conc(*_, _ti=ti):
             scored = w["pts"][0].get_int() if w.get("pts") else 0
             w["pts_conc_var"].set(str(_pts_conc_from_scored(scored)))
             self._writeback(_ti)
-        pts_max_fe = _FixedEntry(rows_f, 0, self._pts_max_for_rule(), width=4, on_change=lambda: _update_pts_conc())
+        _keep_p0 = t["pts"][0] 
+        pts_max_fe = _FixedEntry(rows_f, 0, lambda: max(self._pts_max_for_rule(ti), _keep_p0), width=4, on_change=lambda: _update_pts_conc())
         pts_max_fe.set_int(t["pts"][0])
         ttk.Label(rows_f, text="scored", foreground=MUTED, font=("Segoe UI", 7)).grid(row=1, column=1, sticky="e", padx=(0, 2), pady=3)
         pts_max_fe.grid(row=1, column=2, sticky="w", pady=3)
         w["pts"].append(pts_max_fe)
-        pts_conc_var = tk.StringVar(value=str(_pts_conc_from_scored(t["pts"][0])))
+        pts_conc_var = tk.StringVar(value=str(t["pts"][1]))
         w["pts_conc_var"] = pts_conc_var
         ttk.Label(rows_f, text="conc.", foreground=MUTED, font=("Segoe UI", 7)).grid(row=1, column=3, sticky="e", padx=(4, 2), pady=3)
         pts_conc_lbl = ttk.Label(rows_f, textvariable=pts_conc_var, width=4, font=("Consolas", 9), foreground="#4a5568", anchor="center", relief="flat", background="#e8ecf0")
@@ -1434,8 +1441,7 @@ class _LeagueTab(ttk.Frame):
         t["rank"] = w["rank"].get_int()
         t["ctf"] = [fe.get_int() for fe in w["ctf"]]
         p0 = w["pts"][0].get_int()
-        total = self._pts_max_for_rule()
-        p1 = 0 if p0 == 0 else max(0, total - p0)
+        p1 = w["pts"][1].get_int()
         t["pts"] = [p0, p1]
         g0, g1 = w["gls"][0].get_int(), w["gls"][1].get_int()
         t["gls"] = [g0, g1]
@@ -1540,18 +1546,42 @@ class _UefaTab(ttk.Frame):
         self._building = False
         for idx in range(N_EUROPE):
             self._wb(idx)
+    def _refresh_mean(self):
+        mean = uefa_mean(self._parsed["europe"])
+        ok = uefa_mean_ok(self._parsed["europe"])
+        self._mean_lbl.config(
+            text=f"UEFA mean: {mean:.1f}  (min {UEFA_MIN_MEAN})  " + ("OK" if ok else "TOO LOW"),
+            foreground="#1e8449" if ok else RED)
+
     def _randomize_all(self):
         lo = self._rnd_min.get_int()
         hi = self._rnd_max.get_int()
         if lo > hi:
             lo, hi = hi, lo
+        need = UEFA_MIN_MEAN * N_EUROPE * 3
+        if hi * N_EUROPE * 3 < need:
+            messagebox.showwarning("UEFA", f"With a maximum of {hi} the mean of the European teams cannot reach {UEFA_MIN_MEAN}\n(the original editor refuses it: UEFA-CUP SONST ZU LEICHT).\n\nRaise the maximum of the range.", parent=self)
+            return
+        vals = [[random.randint(lo, hi) for _ in range(3)] for _ in range(N_EUROPE)]
+        deficit = need - sum(sum(v) for v in vals)
+        if deficit > 0:
+            cells = [(i, j) for i in range(N_EUROPE) for j in range(3) if vals[i][j] < hi]
+            while deficit > 0 and cells:
+                k = random.randrange(len(cells))
+                i, j = cells[k]
+                vals[i][j] += 1
+                deficit -= 1
+                if vals[i][j] >= hi:
+                    cells[k] = cells[-1]
+                    cells.pop()
         self._building = True
-        for _, ctf_fes in self._entries:
-            for fe in ctf_fes:
-                fe.set_int(random.randint(lo, hi))
+        for (_, ctf_fes), v in zip(self._entries, vals):
+            for fe, x in zip(ctf_fes, v):
+                fe.set_int(x)
         self._building = False
         for idx in range(N_EUROPE):
             self._wb(idx)
+        self._refresh_mean()
     def _wb(self, idx: int):
         if self._building:
             return
@@ -1559,6 +1589,8 @@ class _UefaTab(ttk.Frame):
         e = self._parsed["europe"][idx]
         e["name"] = name_var.get()[:20].upper()
         e["ctf"] = [fe.get_int() for fe in ctf_fes]
+        if hasattr(self, "_mean_lbl"):
+            self._refresh_mean()
         if self._on_dirty:
             self._on_dirty()
 
@@ -1586,6 +1618,8 @@ class _UefaTab(ttk.Frame):
         self._rnd_min.set_int(40)
         self._rnd_min.pack(side="left", padx=(0, 6))
         ttk.Button(tb, text="RANDOMIZE", command=self._randomize_all).pack(side="left")
+        self._mean_lbl = ttk.Label(tb, text="", font=("Segoe UI", 9, "bold"))
+        self._mean_lbl.pack(side="left", padx=(16, 0))
         sep_canvas = tk.Canvas(self, height=3, bg="#aab4be", highlightthickness=0)
         sep_canvas.pack(fill="x")
         outer = ttk.Frame(self, padding=(4, 4))
@@ -1628,6 +1662,7 @@ class _UefaTab(ttk.Frame):
                 fe.grid(row=row, column=bc+2+j, padx=1, pady=0)
                 ctf_fes.append(fe)
             self._entries.append((name_var, ctf_fes))
+        self._refresh_mean()
 
 def _apply_ttk_style(widget):
     s = ttk.Style(widget)
