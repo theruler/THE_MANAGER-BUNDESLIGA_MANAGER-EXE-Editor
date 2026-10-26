@@ -43,9 +43,69 @@ def set_league1_size(n: int):
     n = 20 if n == 20 else 18
     LEAGUE_BOUNDS[:] = [(0, n, n), (n, 20, 20), (n + 20, 20, 20), (n + 40, 24 - n, 24 - n)]
 
+CTF_BASE = (70, 34, 20)          # league 1, league 2, leagues 3+4
+
+
+def _tdiv(a: int, b: int) -> int:
+    q = abs(a) // abs(b)
+    return q if (a >= 0) == (b >= 0) else -q
+
+
+def _ctf_group(i: int, l1: int) -> int:
+    return 0 if i < l1 else (1 if i < l1 + 20 else 2)
+
+
+def calc_ctf(teams: list, l1: int = 18, rng=random) -> list:
+    sp = [0]*3; sgs = [0]*3; sgc = [0]*3; cnt = [0]*3
+    for i, t in enumerate(teams):
+        g = _ctf_group(i, l1)
+        sp[g] += t["pts"][0]; sgs[g] += t["gls"][0]; sgc[g] += t["gls"][1]
+        if t["rank"]:
+            cnt[g] += 1
+    avg = []
+    for g in range(3):
+        a = []
+        for v in (sp[g], sgs[g], sgc[g]):
+            if cnt[g]:
+                v //= cnt[g]
+            a.append(v if v else 1)
+        avg.append(a)
+    size = (l1, 20)
+    out = []
+    for i, t in enumerate(teams):
+        g = _ctf_group(i, l1)
+        p0, p1 = t["pts"]; gs, gc = t["gls"]; rank = t["rank"]
+        if rank and g != 2:
+            x = _tdiv(-100*p0, avg[g][0]) + 100 if (p0 and p1) else 0
+            y = (size[g] - rank) - _tdiv(x, 20)
+            gcv = _tdiv(-100*gc, avg[g][2]) + 100 if (gs and gc) else 0
+            gsv = _tdiv(-100*gs, avg[g][1]) + 100 if (gs and gc) else 0
+            b0 = CTF_BASE[g] + _tdiv(gcv, 20) + y;  b0 += _tdiv(b0, 20)
+            b1 = CTF_BASE[g] + y;                   b1 += _tdiv(b1, 20)
+            b2 = CTF_BASE[g] - _tdiv(gsv, 20) + y;  b2 += _tdiv(b2, 20)
+            rnd = False
+        else:
+            r = rng.randint(0, 25)
+            b0, b1, b2 = (rng.randint(0, 5) + CTF_BASE[g] - rng.randint(0, 5) + r for _ in range(3))
+            rnd = True
+        bs = [b0, b1, b2]
+        if g == 1:
+            bs = [max(38, min(74, _tdiv(125*b, 100))) for b in bs]
+        bs = [max(20, min(95, b)) for b in bs]
+        out.append((bs, rnd))
+    return out
+
+
 def guess_league1_size(parsed: dict) -> int:
-    t = parsed["teams"]
-    return 20 if (t[18]["rank"], t[19]["rank"]) == (19, 20) else 18
+    teams = parsed["teams"]
+    score = {}
+    for l1 in (18, 20):
+        res = calc_ctf(teams, l1)
+        score[l1] = sum(1 for t, (c, rnd) in zip(teams, res) if not rnd and list(t["ctf"]) == c)
+    if max(score.values()) >= 5 and score[18] != score[20]:
+        return 18 if score[18] > score[20] else 20
+    return 20 if (teams[18]["rank"], teams[19]["rank"]) == (19, 20) else 18
+
 
 PLAYER_ROLES = ["P"]*2 + ["D"]*5 + ["C"]*8 + ["A"]*5
 ROLE_COLOR = {"P": "#2980b9", "D": "#27ae60", "C": "#e67e22", "A": "#c0392b"}
@@ -308,6 +368,7 @@ class _LeagueTab(ttk.Frame):
         self._logo_cvs: dict[int, tk.Canvas] = {}
         self._cur_team: int | None = None
         self._points_rule = tk.IntVar(value=3)
+        self._auto_ctf_var = tk.BooleanVar(value=True)
         self._l1_size = tk.IntVar(value=guess_league1_size(parsed))
         set_league1_size(self._l1_size.get())
         self.columnconfigure(1, weight=1)
@@ -358,9 +419,12 @@ class _LeagueTab(ttk.Frame):
             rb.pack(side="left", padx=(0, 4))
         l1_f = ttk.Frame(tools_f)
         l1_f.pack(fill="x", pady=(0, 6))
-        ttk.Label(l1_f, text="1st League", font=("Segoe UI", 8, "bold"), foreground=FG).pack(side="left", padx=(0, 6))
+        ttk.Label(l1_f, text="1st league", font=("Segoe UI", 8, "bold"), foreground=FG).pack(side="left", padx=(0, 6))
         for val in (18, 20):
             ttk.Radiobutton(l1_f, text=str(val), variable=self._l1_size, value=val, style="Tool.TRadiobutton", command=self._on_l1_size_changed).pack(side="left", padx=(0, 4))
+        ttk.Checkbutton(tools_f, text="Auto stats", variable=self._auto_ctf_var, command=self._on_auto_ctf_toggled).pack(fill="x", pady=(0, 4))
+        calc_btn = tk.Button(tools_f, text="CALC STATS", bg="#27ae60", fg="white", activebackground="#2ecc71", activeforeground="white", font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4, cursor="hand2", command=self._recalc_all_ctf)
+        calc_btn.pack(fill="x", pady=(0, 6))
         zero_btn = tk.Button(tools_f, text="RESET STATS", bg="#D35400", fg="white",activebackground="#E67E22", activeforeground="white",font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,cursor="hand2", command=self._zero_all_stats)
         zero_btn.pack(fill="x", pady=(0, 2))
         pos_btn = tk.Button(tools_f, text="SHUFFLE TEAMS", bg="#D35400", fg="white",activebackground="#E67E22", activeforeground="white",font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=4,cursor="hand2", command=self._random_positions)
@@ -393,8 +457,8 @@ class _LeagueTab(ttk.Frame):
         row_h = (fe2.winfo_y() - ref_y_row1) if (fe2 and fe2.winfo_exists()) else 24
         if row_h <= 0:
             row_h = 24
-        target_y = ref_y_row1 + row_h * (l4_count + 4)  
-        self._tools_frame.place(x=ref_x, y=target_y)
+        target_y = ref_y_row1 + row_h * (l4_count + 2)  
+        self._tools_frame.place(x=ref_x-15, y=target_y)
 
     def _build_column(self, li: int, first: int, count: int, rank_max: int, col_offset: int):
         color = LEAGUE_BTN_COLORS[li]
@@ -711,6 +775,7 @@ class _LeagueTab(ttk.Frame):
             t = teams[ti]
             t["logo"] = _clamp(rec["logo"], 0, 255)
             t["ctf"] = [_clamp(v, 0, 99) for v in rec["ctf"]]
+            t["_manual"] = True
             t["pts"] = [_clamp(v, 0, 254) for v in rec["pts"]]
             t["gls"] = [_clamp(v, 0, 254) for v in rec["gls"]]
             t["rank"] = _clamp(rec["rank"], 0, rank_max)
@@ -719,6 +784,7 @@ class _LeagueTab(ttk.Frame):
             if rec["players"] is not None:
                 t["players"] = [v[:13] for v in rec["players"]]
             self._refresh_btn_label(ti)
+        self._auto_ctf()
         if self._cur_team is not None:
             self._show_team(self._cur_team)
         if self._on_dirty:
@@ -734,6 +800,7 @@ class _LeagueTab(ttk.Frame):
         w = self._widgets.get(ti)
         if w and "rank" in w and not self._building:
             w["rank"].set_int(self._parsed["teams"][ti]["rank"])
+        self._auto_ctf()
         if self._on_dirty:
             self._on_dirty()
 
@@ -761,6 +828,69 @@ class _LeagueTab(ttk.Frame):
         if self._on_dirty:
             self._on_dirty()
 
+    def _refresh_ctf_widgets(self):
+        ti = self._cur_team
+        w = self._widgets.get(ti) if ti is not None else None
+        if not w or "ctf" not in w:
+            return
+        t = self._parsed["teams"][ti]
+        prev = self._building
+        self._building = True
+        try:
+            for j, fe in enumerate(w["ctf"]):
+                fe.set_int(t["ctf"][j])
+        finally:
+            self._building = prev
+        self._refresh_ctf_status(ti)
+
+    def _refresh_ctf_status(self, ti: int):
+        w = self._widgets.get(ti)
+        if not w or "ctf_status" not in w:
+            return
+        t = self._parsed["teams"][ti]
+        w["ctf_status"].set("manual" if t.get("_manual") else ("auto" if self._auto_ctf_var.get() else ""))
+
+    def _auto_ctf(self):
+        if not self._auto_ctf_var.get() or self._building:
+            return
+        teams = self._parsed["teams"]
+        res = calc_ctf(teams, self._l1_size.get())
+        for t, (c, rnd) in zip(teams, res):
+            if not rnd and not t.get("_manual"):
+                t["ctf"] = list(c)
+        self._refresh_ctf_widgets()
+
+    def _on_auto_ctf_toggled(self):
+        self._auto_ctf()
+        if self._cur_team is not None:
+            self._refresh_ctf_status(self._cur_team)
+
+    def _ctf_edited(self, ti: int):
+        if self._building:
+            return
+        self._parsed["teams"][ti]["_manual"] = True
+        self._writeback(ti)
+        self._refresh_ctf_status(ti)
+
+    def _calc_team_ctf(self, ti: int):
+        teams = self._parsed["teams"]
+        teams[ti].pop("_manual", None)
+        teams[ti]["ctf"] = list(calc_ctf(teams, self._l1_size.get())[ti][0])
+        self._refresh_ctf_widgets()
+        if self._on_dirty:
+            self._on_dirty()
+
+    def _recalc_all_ctf(self):
+        if not messagebox.askyesno("CALC CTF", "Recalculate CTF for ALL teams?\n\nManual edits are overwritten, and teams without rank (or in leagues 3-4) get new random values.", parent=self):
+            return
+        teams = self._parsed["teams"]
+        for t, (c, _) in zip(teams, calc_ctf(teams, self._l1_size.get())):
+            t.pop("_manual", None)
+            t["ctf"] = list(c)
+        self._refresh_ctf_widgets()
+        if self._on_dirty:
+            self._on_dirty()
+
     def _on_l1_size_changed(self):
         set_league1_size(self._l1_size.get())
         self._sel.clear()
@@ -782,12 +912,14 @@ class _LeagueTab(ttk.Frame):
         for ti in sel:
             t = teams[ti]
             t["ctf"] = [0, 0, 0]
+            t.pop("_manual", None)
             t["pts"] = [0, 0]
             t["gls"] = [0, 0]
             t["rank"] = 0
             fe = self._rank_entries.get(ti)
             if fe:
                 fe.set_int(0)
+        self._auto_ctf()
         if self._cur_team is not None:
             self._show_team(self._cur_team)
         if self._on_dirty:
@@ -907,6 +1039,8 @@ class _LeagueTab(ttk.Frame):
                 t["gls"]  = [gls_scored[i], gls_conceded[i]]
                 t["rank"] = i + 1
                 t["ctf"]  = list(ctf_list[i])
+                t.pop("_manual", None)
+        self._auto_ctf()
         for ti, fe in self._rank_entries.items():
             fe.set_int(teams[ti]["rank"])
         if self._cur_team is not None:
@@ -1115,6 +1249,7 @@ class _LeagueTab(ttk.Frame):
             self._cur_team = b
         elif self._cur_team == b:
             self._cur_team = a
+        self._auto_ctf()
         if self._cur_team in (a, b):
             self._show_team(self._cur_team)
         if self._on_dirty:
@@ -1203,13 +1338,17 @@ class _LeagueTab(ttk.Frame):
             ttk.Label(stat, text=lbl, anchor="center", font=("Segoe UI", 7, "bold"), foreground=ACCENT).grid(row=0, column=j, sticky="ew", padx=3, pady=(0, 2))
         w["ctf"] = []
         for j in range(3):
-            fe = _FixedEntry(stat, 0, 99, width=3, on_change=lambda: self._writeback(ti))
+            fe = _FixedEntry(stat, 0, 99, width=3, on_change=lambda: self._ctf_edited(ti))
             fe.set_int(t["ctf"][j])
             fe.grid(row=1, column=j, padx=3, pady=(0, 4))
             w["ctf"].append(fe)
-        ttk.Separator(stat, orient="horizontal").grid(row=2, column=0, columnspan=3, sticky="ew", pady=(2, 8))
+        w["ctf_status"] = tk.StringVar()
+        ttk.Label(stat, textvariable=w["ctf_status"], font=("Segoe UI", 7, "bold"), foreground=MUTED).grid(row=0, column=3, padx=(6, 0))
+        tk.Button(stat, text="↻ calc", font=("Segoe UI", 7, "bold"), bg="#27ae60", fg="white", activebackground="#2ecc71", activeforeground="white", relief="flat", padx=4, cursor="hand2", command=lambda: self._calc_team_ctf(ti)).grid(row=1, column=3, padx=(6, 0), pady=(0, 4))
+        self._refresh_ctf_status(ti)
+        ttk.Separator(stat, orient="horizontal").grid(row=2, column=0, columnspan=4, sticky="ew", pady=(2, 8))
         rows_f = ttk.Frame(stat)
-        rows_f.grid(row=3, column=0, columnspan=3, sticky="ew")
+        rows_f.grid(row=3, column=0, columnspan=4, sticky="ew")
         rows_f.columnconfigure(0, weight=0, minsize=60)
         rows_f.columnconfigure(1, weight=0)
         rows_f.columnconfigure(2, weight=0)
@@ -1299,10 +1438,11 @@ class _LeagueTab(ttk.Frame):
         p1 = 0 if p0 == 0 else max(0, total - p0)
         t["pts"] = [p0, p1]
         g0, g1 = w["gls"][0].get_int(), w["gls"][1].get_int()
-        t["gls"] = [max(g0, g1), min(g0, g1)]
+        t["gls"] = [g0, g1]
         t["logo"] = w["logo"].get_int()
         t["players"] = [v.get()[:13] for v in w["players"]]
         self._refresh_btn_label(ti)
+        self._auto_ctf()
         if self._on_dirty:
             self._on_dirty()
 
