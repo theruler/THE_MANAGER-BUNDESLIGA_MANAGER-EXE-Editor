@@ -46,7 +46,7 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.9.4"
+APP_VERSION = "2.9.5"
 APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -325,8 +325,6 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 self.tree.heading(name, text=self.tr(key))
             except tk.TclError:
                 pass
-        self.filter_toggle_button.config(
-            text=self.tr("filter.toggle_open" if self.filter_frame.winfo_manager() else "filter.toggle_closed"))
         shown, total = self._counter_state
         self._set_counter(shown, total)
         self._set_filter_status(self.filter_status_key, **self.filter_status_args)
@@ -354,14 +352,6 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             self.notebook.select(tab)
         except tk.TclError:
             pass
-
-    def _toggle_filters(self):
-        if self.filter_frame.winfo_manager():
-            self.filter_frame.pack_forget()
-            self.filter_toggle_button.config(text=self.tr("filter.toggle_closed"))
-        else:
-            self.filter_frame.pack(fill=tk.X, after=self.search_frame)
-            self.filter_toggle_button.config(text=self.tr("filter.toggle_open"))
 
     def _build_gui(self):
         self.supported_controls = []
@@ -397,38 +387,35 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._reg_tab(self.tab_strings, "tab.strings")
         self.search_frame = ttk.Frame(self.tab_strings, padding=(15, 10, 15, 4))
         self.search_frame.pack(fill=tk.X)
-        self._reg(ttk.Label(self.search_frame, font=("Segoe UI", 10, "bold")),"filter.search").pack(side=tk.LEFT, padx=(0, 5))
+        self._reg(ttk.Label(self.search_frame, font=("Segoe UI", 10, "bold")), "filter.search").pack(side=tk.LEFT, padx=(0, 5))
         self.search_var = tk.StringVar()
-        self.search_entry = ttk.Entry(self.search_frame, textvariable=self.search_var, font=("Segoe UI", 10))
-        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self.search_entry = ttk.Entry(self.search_frame, textvariable=self.search_var, font=("Segoe UI", 10), width=12)
+        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 12))
         self.search_entry.bind("<Escape>", self._and_break(self.clear_filters))
-        self.showing_label = ttk.Label(self.search_frame,text=self.tr("status.counter", shown=0, total=0),font=("Segoe UI", 9, "bold"),foreground="#2980B9",)
-        self.showing_label.pack(side=tk.RIGHT, padx=(10, 0))
-        self.filter_toggle_button = ttk.Button(self.search_frame, text=self.tr("filter.toggle_closed"), width=12,command=self._toggle_filters)
-        self.filter_toggle_button.pack(side=tk.RIGHT)
-        self.filter_frame = ttk.Frame(self.tab_strings, padding=(15, 0, 15, 4))
         self.kind_filter_var = tk.StringVar(value="All")
         self.font_filter_var = tk.StringVar(value="All")
         self.change_filter_var = tk.StringVar(value="All")
         self.status_filter_var = tk.StringVar(value="All")
         filter_specs = (
-            ("filter.kind", self.kind_filter_var, KIND_FILTERS, 14),
-            ("filter.font", self.font_filter_var, ("All",), 15),
-            ("filter.change", self.change_filter_var, CHANGE_FILTERS, 12),
-            ("filter.status", self.status_filter_var, STATUS_FILTERS, 13),
+            ("filter.kind", self.kind_filter_var, KIND_FILTERS, 12),
+            ("filter.font", self.font_filter_var, ("All",), 12),
+            ("filter.change", self.change_filter_var, CHANGE_FILTERS, 9),
+            ("filter.status", self.status_filter_var, STATUS_FILTERS, 11),
         )
         self.filter_combos = []
         for label, variable, values, width in filter_specs:
-            self._reg(ttk.Label(self.filter_frame, font=("Segoe UI", 9, "bold")), label).pack(side=tk.LEFT, padx=(0 if not self.filter_combos else 10, 3))
-            combo = ttk.Combobox(self.filter_frame,textvariable=variable,values=values,state="readonly",width=width,)
-            combo.pack(side=tk.LEFT)
+            self._reg(ttk.Label(self.search_frame, font=("Segoe UI", 9, "bold")), label).pack(side=tk.LEFT, padx=(0, 3))
+            combo = ttk.Combobox(self.search_frame, textvariable=variable, values=values, state="readonly", width=width)
+            combo.pack(side=tk.LEFT, padx=(0, 10))
             combo.bind("<<ComboboxSelected>>", self.on_filter_change)
             self.filter_combos.append(combo)
-        self.clear_filters_button = ttk.Button(self.filter_frame, command=self.clear_filters)
+        self.clear_filters_button = ttk.Button(self.search_frame, command=self.clear_filters)
         self._reg(self.clear_filters_button, "filter.reset")
-        self.clear_filters_button.pack(side=tk.RIGHT)
+        self.clear_filters_button.pack(side=tk.LEFT, padx=(2, 12))
+        self.showing_label = ttk.Label(self.search_frame, text=self.tr("status.counter", shown=0, total=0), font=("Segoe UI", 9, "bold"), foreground="#2980B9")
+        self.showing_label.pack(side=tk.LEFT)
         self.search_var.trace_add("write", self.on_filter_change)
-        self.supported_controls.extend((self.search_entry, self.clear_filters_button, self.filter_toggle_button,*self.filter_combos))
+        self.supported_controls.extend((self.search_entry, self.clear_filters_button, *self.filter_combos))
         status_frame = ttk.Frame(self.tab_strings, padding=(15, 0, 15, 4))
         status_frame.pack(fill=tk.X)
         self.filter_status_label = ttk.Label(status_frame, text="", font=("Segoe UI", 9, "bold"), foreground="#B9770E")

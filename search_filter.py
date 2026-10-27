@@ -97,7 +97,7 @@ def build_filter_records(rows: Iterable[Mapping]) -> tuple[FilterRecord, ...]:
             preview_status=preview_status,
             status_override=status_override,
         )
-        search_blob = "\x00".join((current_text, baseline_text, string_id)).casefold()
+        search_blob = "\x00".join((current_text, string_id)).casefold()
         records.append(FilterRecord(
             source_index=source_index,
             string_id=string_id,
