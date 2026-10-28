@@ -54,14 +54,70 @@ class _YearMixin:
         if not (self._YEAR_MIN <= value <= self._YEAR_MAX):
             self._revert_year()
             return
+        writes = [(offset, value)]
+        for profile_key, delta in (("code_year+1", 1), ("code_year+3", 3)):
+            year_offsets = self.profile.get(profile_key, ())
+            if not isinstance(year_offsets, (tuple, list)):
+                self._revert_year()
+                return
+            for year_offset in year_offsets:
+                if (
+                    not isinstance(year_offset, int)
+                    or year_offset < 0
+                    or year_offset + 2 > len(self.exe_data)
+                ):
+                    self._revert_year()
+                    return
+                writes.append((year_offset, value + delta))
+        max_config = self.profile.get("code_year_max")
+        if max_config is not None:
+            if (
+                not isinstance(max_config, (tuple, list))
+                or len(max_config) != 2
+                or not isinstance(max_config[0], (tuple, list))
+                or not isinstance(max_config[1], int)
+                or not 0 <= max_config[1] <= 0xFFFF
+            ):
+                self._revert_year()
+                return
+            max_offsets, max_value = max_config
+            for max_offset in max_offsets:
+                if (
+                    not isinstance(max_offset, int)
+                    or max_offset < 0
+                    or max_offset + 2 > len(self.exe_data)
+                ):
+                    self._revert_year()
+                    return
+                writes.append((max_offset, max_value))
+        relative_offset = self.profile.get("code_year-1963")
+        if relative_offset is not None and (
+            not isinstance(relative_offset, int)
+            or relative_offset < 0
+            or relative_offset >= len(self.exe_data)
+        ):
+            self._revert_year()
+            return
+        changed = False
+        for write_offset, write_value in writes:
+            try:
+                payload = write_value.to_bytes(2, "little", signed=True)
+            except OverflowError:
+                self._revert_year()
+                return
+            if bytes(self.exe_data[write_offset:write_offset + 2]) != payload:
+                self.exe_data[write_offset:write_offset + 2] = payload
+                changed = True
+        if relative_offset is not None:
+            relative_byte = (value - 1963) & 0xFF
+            if self.exe_data[relative_offset] != relative_byte:
+                self.exe_data[relative_offset] = relative_byte
+                changed = True
         self.year_var.set(str(value))
         self._last_valid_year = value
-        payload = value.to_bytes(2, "little")
-        if bytes(self.exe_data[offset:offset + 2]) == payload:
-            return
-        self.exe_data[offset:offset + 2] = payload
-        self._invalidate_diff_preview("year-change")
-        self._update_save_state()
+        if changed:
+            self._invalidate_diff_preview("year-change")
+            self._update_save_state()
 
 
 class _RegionMixin:
