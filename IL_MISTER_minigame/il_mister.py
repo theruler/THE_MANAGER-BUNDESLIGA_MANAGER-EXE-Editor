@@ -15,6 +15,7 @@ from audio_system import Audio
 from ball_model import G
 from camera_system import CAM_GLIDE_SECS, CameraMixin
 from celebration_system import CELE_KINDS, CelebrationMixin, T_AFTER, T_CELE
+
 from entities import Ball, Flag, Player, Ref
 from fonts import FONTS
 from formation_system import DEFAULT_FORMATION, formation_slots, FormationMixin
@@ -598,16 +599,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                 p.lift = 0.0
                 if p.state in ("cele", "down"):
                     p.state = "free"
-        for p in self.players:
-            if p.state in ("out", "leaving") or p.busy():
-                continue
-            if p.state == "cele" and not g["released"]:
-                continue
-            in_cele = (not g["own"]) and (not g["released"]) and p.idx in g["part"] and p.team == team
-            if in_cele and p.role != "GK":
-                continue
-            hx, hv = self.home_pos(p, L / 2, V_SPOT, False)
-            p.tx, p.tv = hx, hv
+        self.cele_walk_home(g, t)
         done_t = T_CELE + T_AFTER
         if g["own"]:
             done_t = 4.0
@@ -623,7 +615,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                     self.end_half()
                     return
             self.log_event(tr("ev.kickoff", team=TEAM_NAMES[g["kick"]]), secs=3, team=g["kick"])
-            self.setup_kickoff(g["kick"])
+            self.setup_kickoff(g["kick"], walk=True)
 
     def teams_at(self, gx): # Return the teams positioned near the supplied field coordinate.
         a = next(t for t in (0, 1) if self.att[t] == (-1 if gx == 0.0 else 1))
@@ -679,9 +671,12 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             tx, tv = L / 2 - 30, V_SPOT + 24
         else:
             tx, tv = b.wx - 12, b.wv + (24 if b.wv < V_MID else -24)
+        tx, tv = self.visible_pos((tx, tv), 16.0) # Target well inside the screen edges: the final edge clamp must never pull him sideways.
         dx, dv = tx - r.wx, tv - r.wv
         dist = math.hypot(dx, dv)
         spd = 48.0 * min(1.0, max(0.35, dist / 20.0)) # Never creep: a minimum walking pace until the target is reached.
+        if dist > 30.0:
+            spd = 48.0 * min(1.7, 1.0 + (dist - 30.0) / 50.0) # Far away (corner on the opposite side): jog so he arrives in time, never teleports.
         if dist > 0.8:
             r.vx += (dx / dist * spd - r.vx) * min(1.0, 6 * dt)
             r.vv += (dv / dist * spd - r.vv) * min(1.0, 6 * dt)

@@ -25,6 +25,14 @@ GK_DEF_LINE_U = 0.24 # Goal kick: depth of the line defenders hold when they hav
 GK_THREAT_U = 0.50 # Goal kick: opponents closer than this (normalized, from the kicking team's goal) to the goal being kicked from are marked.
 GK_MARK_GOALSIDE = 6.0 # Goal kick: distance a marker keeps from his man, on the side of his own goal.
 GK_TARGET_DIST = 140.0 # Goal kick: preferred distance to the receiver of the AI's kick.
+RESTART_SHIFT_X = 0.55 # Restart shape: fraction of the ball's longitudinal offset from the centre the team block follows.
+RESTART_SHIFT_V = 0.25 # Same for the lateral offset (small: the team stays spread over the whole width).
+RESTART_SPREAD_W = 1.06 # Lateral widening of the shape around the pitch axis.
+RESTART_JIT_U = 0.035 # Per-player longitudinal jitter (normalized depth), fixed for the whole restart.
+RESTART_JIT_W = 0.05 # Per-player lateral jitter (normalized width).
+RESTART_MIN_GAP = 15.0 # Minimum distance between two teammates' restart positions (world units).
+RESTART_RELAX_ITERS = 6 # Overlap-relaxation passes.
+KICKOFF_WALK_MAX = 30.0 # Seconds after which a walking kickoff starts even if somebody has not reached his spot.
 THROW_PX = {"N": 0.0, "S": 4.0} # Vertical pixel offset of a throw-in taker outside the north/south touchline.
 
 
@@ -80,27 +88,31 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
             return s2w(sx, sy + THROW_PX["N" if v < V_MID else "S"])
         return self.stand_for((x, v), self.stand_facing(rs))
 
-    def setup_kickoff(self, team, sound=True): # Arrange players and the ball for a kickoff.
+    def setup_kickoff(self, team, sound=True, walk=False): # Arrange players and the ball for a kickoff; with walk=True everybody walks to his place (clock stopped, no teleport).
         b = self.ball
         sx, sv = L / 2.0, V_SPOT
         for p in self.players:
             if p.state == "out":
                 continue
-            p.state, p.act, p.vx, p.vv, p.cool, p.tag = "free", None, 0.0, 0.0, 0.0, None
+            p.state, p.act, p.cool, p.tag = "free", None, 0.0, None
+            if not walk:
+                p.vx, p.vv = 0.0, 0.0
             p.tx = p.tv = None
+            if walk:
+                p.path = None
             d = self.att[p.team]
             hx, hv = self.home_pos(p, sx, sv, False)
             if p.team != team and math.hypot(hx - sx, hv - sv) < 36:
                 u = 0.5 - 40.0 / L
                 hx = u * L if d > 0 else (1 - u) * L
-            p.wx, p.wv = hx, hv
+            self._kick_place(p, hx, hv, walk)
             p.dx, p.dv, p.face = float(d), 0.0, "E" if d > 0 else "W"
         fw = [p for p in self.team_p[team] if p.role == "FWD" and p.state != "out"] or\
              [p for p in self.team_p[team] if p.role != "GK" and p.state != "out"]
         d = self.att[team]
-        fw[0].wx, fw[0].wv = self.taker_stand(dict(kind="kickoff", pos=(sx, sv), team=team))
+        self._kick_place(fw[0], *self.taker_stand(dict(kind="kickoff", pos=(sx, sv), team=team)), walk)
         if len(fw) > 1:
-            fw[1].wx, fw[1].wv = sx - d * 6, sv + 15
+            self._kick_place(fw[1], sx - d * 6, sv + 15, walk)
         b.owner = None
         b.wx, b.wv, b.z, b.vx, b.vv, b.vz = sx, sv, 0.0, 0.0, 0.0, 0.0
         b.last_team = team
@@ -109,8 +121,11 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
         b.tactical_pass = False
         b.pass_active = False
         r = self.ref
-        r.wx, r.wv, r.vx, r.vv, r.card = sx - 30, sv + 24, 0.0, 0.0, None
-        self.restart = dict(kind="kickoff", team=team, pos=(sx, sv), taker=fw[0], t=0.0, ready=False, ready_t=0.0, said=False)
+        if walk: # The referee walks to his spot too (update_ref).
+            r.card = None
+        else:
+            r.wx, r.wv, r.vx, r.vv, r.card = sx - 30, sv + 24, 0.0, 0.0, None
+        self.restart = dict(kind="kickoff", team=team, pos=(sx, sv), taker=fw[0], t=0.0, ready=False, ready_t=0.0, said=False, walk=walk)
         self.mode = "restart"
         self.foul = self.goal = None
         self.auto_taker(fw[0])
@@ -118,6 +133,23 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
             self.audio.play("whistle")
         for p in self.players:
             self.post_move(p)
+
+    @staticmethod
+    def _kick_place(p, x, v, walk): # Put a player at a kickoff spot at once, or give him the spot as a walking target.
+        if walk:
+            p.tx, p.tv = x, v
+        else:
+            p.wx, p.wv = x, v
+
+    def kickoff_settled(self, rs): # Kickoff with walking players: True when everybody (user-steered players excepted) stands at his spot.
+        if not rs.get("walk") or rs["t"] > KICKOFF_WALK_MAX:
+            return True
+        for q in self.players:
+            if q.state != "free" or q.ctrl or q is rs["taker"] or q.tx is None:
+                continue
+            if math.hypot(q.tx - q.wx, q.tv - q.wv) > 3.0:
+                return False
+        return True
 
     def start_restart(self, kind, team, pos): # Initialize a restart such as a free kick, throw-in, or goal kick.
         pos = self.visible_pos(pos)
@@ -327,7 +359,8 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
                 box_free = False
                 rs["ready"] = False
                 rs["ready_t"] = rs["t"]
-        if not rs["ready"] and at and rs["t"] > minw and not tk.busy() and (box_free or rs["t"] > 8.0) and not manual_box_block:
+        settled = self.kickoff_settled(rs) if rs["kind"] == "kickoff" else True
+        if not rs["ready"] and at and settled and rs["t"] > minw and not tk.busy() and (box_free or rs["t"] > 8.0) and not manual_box_block:
             rs["ready"], rs["ready_t"] = True, rs["t"]
             if rs["kind"] in ("free", "penalty", "corner"):
                 self.audio.play("whistle")
@@ -347,7 +380,7 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
             idle_limit = 1.2 if rs["kind"] == "goalkick" else 4.0
             if rs["t"] - rs["ready_t"] > 0.55 and (not tk.ctrl or self.idle_t > idle_limit):
                 self.ai_take_restart(tk, rs)
-        elif rs["t"] > 14.0 and not tk.busy() and not manual_box_block:
+        elif rs["t"] > (KICKOFF_WALK_MAX + 10.0 if rs.get("walk") else 14.0) and not tk.busy() and not manual_box_block:
             self.ai_take_restart(tk, rs)
 
     @staticmethod
@@ -368,7 +401,7 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
         ad = self.att[team]
         agx = L if ad > 0 else 0.0
         poss = p.team == team
-        hx, hv = self.home_pos(p, L / 2.0, V_MID, poss)
+        hx, hv = self.restart_shape(rs, p, poss)
         near_goal = math.hypot(agx - x, V_GC - v) < 130
         own_box_gx = self.restart_box_gx(rs) if kind == "free" else None # Set when the free kick is taken inside the kicker's own area.
         if p.role == "GK":
@@ -427,6 +460,38 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
             if abs(hx - ogx) < edge and BOX_V0 - 6.0 <= hv <= BOX_V1 + 6.0:
                 hx = ogx + ad * edge
         p.tx, p.tv = clamp(hx, 6.0, L - 6.0), clamp(hv, V_MIN_P, V_MAX_P)
+
+    def restart_shape(self, rs, p, poss): # Organic, ball-aware position of an outfield player; the whole team shape is built once per restart and cached.
+        cache = rs.setdefault("shape", {})
+        if p.team not in cache:
+            x, v = rs["pos"]
+            bx = L / 2.0 + (x - L / 2.0) * RESTART_SHIFT_X # The block follows the ball only partly...
+            bv = V_MID + (v - V_MID) * RESTART_SHIFT_V # ...and hardly sideways, so nobody is dragged to one touchline.
+            rng = random.Random(hash((id(rs), p.team)) & 0xFFFFFFFF)
+            team_poss = p.team == rs["team"]
+            pts = {}
+            for q in self.team_p[p.team]:
+                if q.role == "GK" or q.state in ("out", "leaving"):
+                    continue
+                hx, hv = self.home_pos(q, bx, bv, team_poss)
+                u, w = self.team_uw(p.team, hx, hv)
+                u += rng.uniform(-RESTART_JIT_U, RESTART_JIT_U)
+                w = 0.5 + (w - 0.5) * RESTART_SPREAD_W + rng.uniform(-RESTART_JIT_W, RESTART_JIT_W)
+                u, w = clamp(u, q.zu[0], q.zu[1]), clamp(w, q.zw[0], q.zw[1])
+                pts[id(q)] = [(u * L if self.att[p.team] > 0 else (1.0 - u) * L), V_TOP + w * PITCH_W, q]
+            for _ in range(RESTART_RELAX_ITERS): # Relax overlaps: teammates closer than the minimum gap are pushed apart (inside their zones).
+                for a in pts.values():
+                    for b in pts.values():
+                        if a is b or id(a[2]) > id(b[2]):
+                            continue
+                        dd = math.hypot(a[0] - b[0], a[1] - b[1])
+                        if dd < RESTART_MIN_GAP:
+                            ux, uv = unit(a[0] - b[0], a[1] - b[1], (0.0, 1.0 if a[2].idx % 2 else -1.0))
+                            k = (RESTART_MIN_GAP - dd) * 0.5
+                            a[0], a[1] = self.zone_clamp(a[2], a[0] + ux * k, a[1] + uv * k, 0.03, 0.03)
+                            b[0], b[1] = self.zone_clamp(b[2], b[0] - ux * k, b[1] - uv * k, 0.03, 0.03)
+            cache[p.team] = {k: (a[0], a[1]) for k, a in pts.items()}
+        return cache[p.team].get(id(p)) or self.home_pos(p, L / 2.0, V_MID, poss)
 
     def goalkick_marks(self, rs): # Assign defenders (not the taker) to opponents who stayed in the kicking team's half; computed once per restart.
         if "gk_marks" in rs:

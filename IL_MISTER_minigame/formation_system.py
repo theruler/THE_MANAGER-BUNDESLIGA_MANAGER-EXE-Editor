@@ -179,7 +179,7 @@ class FormationMixin: # Formation slots, tactical zones, roles, and player posit
         if not quiet:
             self.say(tr("msg.formation", team=TEAM_NAMES[team], name=name), (255, 255, 255), 2.5)
         if self.mode == "restart" and self.restart and self.restart["kind"] == "kickoff":
-            self.setup_kickoff(self.restart["team"], sound=False)
+            self.setup_kickoff(self.restart["team"], sound=False, walk=True)
 
     def change_formation(self, team, delta): # Move to the next or previous available formation.
         names = list(FORMATIONS)

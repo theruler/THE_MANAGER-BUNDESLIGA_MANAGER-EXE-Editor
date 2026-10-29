@@ -14,7 +14,10 @@ from sprite_data import action_sids, run_cycle, stand_sid, team_sprite_offset
 
 
 PLAYER_SPEED = 52.0 # Base maximum movement speed for outfield players.
-TAKER_STALL_SECS = 1.0 # A restart taker that makes no progress towards his target for this long is moved onto it.
+TAKER_STALL_SECS = 1.0 # A restart taker that makes no progress towards his target for this long switches to "unstick" mode (never teleported).
+TAKER_UNSTICK_SECS = 2.5 # Duration of the unstick mode: faster pace and no repulsion from teammates, so he walks through the crowd.
+TAKER_UNSTICK_K = 1.3 # Speed multiplier while unsticking.
+BOX_EXIT_SPEED = 60.0 # Opponents inside a protected penalty area are walked out at this speed (units/s) instead of being moved to its edge.
 DRIBBLE_OFF = 6.0 # Offset between a player position and the ball while dribbling.
 REACH_FIRST = 9.0 # Initial reach distance used when evaluating ball control.
 PLAYER_CATCH_RADIUS = 4.5 # Normal ground-ball control radius for outfield players.
@@ -494,7 +497,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
                         x, hit = gx + out * (GOAL_D + 0.4), 1
         return x, v, hit
 
-    def clamp_player(self, p): # Keep the player inside the legal movement bounds for the current state.
+    def clamp_player(self, p, dt=1.0 / 60.0): # Keep the player inside the legal movement bounds for the current state.
         vmax = V_MAX_P if (p.state == "leaving" or self.mode != "play") else V_BOT + 0.5
         vmin = V_MIN_P
         rs = self.restart if self.mode == "restart" else None
@@ -513,8 +516,10 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
             ad = self.att[rs["team"]]
             own_gx = 0.0 if ad > 0 else L
             if in_box_fn(p.wx, p.wv, own_gx):
-                p.wx = own_gx + ad * (BOX_D + 0.5)
-                p.vx = 0.0
+                edge = own_gx + ad * (BOX_D + 0.5)
+                step = min(abs(edge - p.wx), BOX_EXIT_SPEED * dt) # Walk out at a finite speed: no jump to the edge.
+                p.wx += math.copysign(step, edge - p.wx)
+                p.vx = ad * BOX_EXIT_SPEED
         px, gy = w2s(p.wx, p.wv)
         lo, hi = 6.5, FW - 6.5
         for qx, qv in taker_pts:
@@ -534,6 +539,8 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         return pts
 
     def taker_watchdog(self, p, rs, dt, sp): # A taker that walks on the spot without getting closer to his target is placed on it.
+        if getattr(p, "unstick_t", 0.0) > 0.0:
+            p.unstick_t -= dt
         if rs is None or rs.get("taker") is not p or p.tx is None or p.state != "free":
             p.stall_t = 0.0
             return
@@ -542,10 +549,9 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
             p.stall_t, p.stall_d = 0.0, d
             return
         p.stall_t = getattr(p, "stall_t", 0.0) + dt
-        if p.stall_t > TAKER_STALL_SECS:
-            p.wx, p.wv, p.vx, p.vv = p.tx, p.tv, 0.0, 0.0
+        if p.stall_t > TAKER_STALL_SECS: # No teleport: walk through whatever blocks him, a bit faster.
+            p.unstick_t = TAKER_UNSTICK_SECS
             p.stall_t, p.stall_d = 0.0, 0.0
-            self.post_move(p)
 
     def post_move(self, p): # Resolve movement effects after the player has moved.
         p.sx, p.sy = w2s(p.wx, p.wv)
@@ -573,6 +579,9 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
             spd *= self.agon_speed_k(p) # Agonism: fast recoveries when conservative, sprinting pressers when aggressive.
         if p.injured:
             spd *= INJURED_SPEED_K
+        unstick = getattr(p, "unstick_t", 0.0) > 0.0
+        if unstick:
+            spd *= TAKER_UNSTICK_K
         if p.ctrl and p.kvec:
             return p.kvec[0] * spd * 1.05, p.kvec[1] * spd * 1.05
         if p.tx is None:
@@ -586,7 +595,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
             return 0.0, 0.0
         s = spd * min(1.0, d / 9.0 + 0.15)
         vx, vv = dx / d * s, dv / d * s
-        if not p.ctrl:
+        if not p.ctrl and not unstick:
             for q in self.team_p[p.team]:
                 if q is p or q.state == "out":
                     continue
@@ -656,7 +665,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         kv = depth_v_k(p.wv, p.wx)
         p.wx += p.vx * dt * kk
         p.wv += p.vv * dt * kv
-        self.clamp_player(p)
+        self.clamp_player(p, dt)
         self.taker_watchdog(p, rs, dt, sp)
         p.stride += sp * dt
         self.post_move(p)
@@ -779,7 +788,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         p.wv += p.vv * dt * kv
         if key == "dive" and p.role == "GK":
             p.wv = clamp(p.wv, V_GC - HALF_MOUTH * 2.2, V_GC + HALF_MOUTH * 2.2)
-        self.clamp_player(p)
+        self.clamp_player(p, dt)
         if key in ("header", "header_dive") and not kw.get("show"):
             ph = clamp(a["t"] / max(0.01, len(a["seq"]) * a["fdur"]), 0.0, 1.0)
             p.lift = (7.0 if key == "header" else 4.0) * math.sin(math.pi * ph)

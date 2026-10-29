@@ -2,7 +2,7 @@ import math
 import random
 
 from game_utils import clamp, unit
-from geometry import L, V_BOT, V_MID, V_MIN_P, V_TOP
+from geometry import L, V_BOT, V_MID, V_MIN_P, V_SPOT, V_TOP
 from lang import tr
 from match_config import TEAM_NAMES
 from physics_system import PLAYER_SPEED
@@ -10,10 +10,26 @@ from physics_system import PLAYER_SPEED
 
 CELE_KINDS = (("huddle", 2), ("slide", 2), ("lift", 2), ("brawl", 2), ("train", 2), ("dance", 2)) # Celebration types and participant counts.
 T_CELE, T_AFTER = 5.6, 2.6 # T_CELE: celebration duration; T_AFTER: post-celebration delay.
+GOAL_RETURN_DELAY = 4.0 # Seconds after a goal before the team that does not celebrate starts walking back to its kickoff positions.
 
 class CelebrationMixin: # Player and team goal-celebration sequences.
     def goto(self, p, x, v): # Set a player's target position and movement speed for an animation.
         p.tx, p.tv = clamp(x, 7.0, L - 7.0), clamp(v, V_MIN_P + 1.0, V_BOT - 1.0)
+
+    def cele_walk_home(self, g, t): # During the goal sequence: whoever is not celebrating walks back to his kickoff position; the conceding team first waits GOAL_RETURN_DELAY seconds.
+        team = g["team"]
+        for p in self.players:
+            if p.state in ("out", "leaving") or p.busy():
+                continue
+            if p.state == "cele" and not g["released"]:
+                continue
+            if not g["own"] and p.team != team and t < GOAL_RETURN_DELAY:
+                p.tx = p.tv = None
+                continue
+            in_cele = (not g["own"]) and (not g["released"]) and p.idx in g["part"] and p.team == team
+            if in_cele and p.role != "GK":
+                continue
+            p.tx, p.tv = self.home_pos(p, L / 2, V_SPOT, False)
 
     def pose(self, p): # Switch a player to the appropriate celebration pose.
         p.tx = p.tv = None
