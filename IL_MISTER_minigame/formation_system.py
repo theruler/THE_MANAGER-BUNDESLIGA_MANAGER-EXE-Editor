@@ -8,6 +8,7 @@ from stats_system import rating
 
 
 ROLE_K = {"GK": 0.0, "DEF": 0.55, "MID": 0.70, "FWD": 0.80} # Longitudinal home-position factors for each tactical role.
+AGON_LINE_PUSH = {"GK": 0.0, "DEF": 0.10, "MID": 0.22, "FWD": 0.16} # Longitudinal shift of the home position between agonism 0 % and 100 %.
 KEEP_OFF = 22.0 # Minimum distance an outfield player's home position should keep from the ball.
 LAT_K = 0.28 # Lateral correction factor used when positioning players relative to the ball.
 FORMATIONS = {} # Registry of available formations; each formation lists outfield players per line.
@@ -95,6 +96,7 @@ class FormationMixin: # Formation slots, tactical zones, roles, and player posit
         u = p.base_u + p.drift[0] + (bu - 0.5) * ROLE_K[p.role]
         if p.role in ("MID", "FWD"):
             u += 0.06 if poss else -0.04
+        u += (self.agon(p.team) - 0.5) * AGON_LINE_PUSH.get(p.role, 0.0) # Agonism: deep and compact at 0 %, high line at 100 %.
         u = clamp(u, p.zu[0], p.zu[1])
         w = clamp(p.base_w + p.drift[1] + (bw - 0.5) * (0.15 if p.role == "GK" else LAT_K), p.zw[0], p.zw[1])
         hx, hv = (u * L if d > 0 else (1 - u) * L), V_TOP + w * PITCH_W

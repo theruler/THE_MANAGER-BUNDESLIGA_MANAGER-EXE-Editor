@@ -29,6 +29,15 @@ THROW_PX = {"N": 0.0, "S": 4.0} # Vertical pixel offset of a throw-in taker outs
 
 
 class RestartMixin: # Restart setup, taker placement, AI takers and resume logic.
+    def restart_box_gx(self, rs): # Goal x of the penalty area the opponents must stay out of during this restart, or None.
+        kind = rs.get("kind")
+        ogx = 0.0 if self.att[rs["team"]] > 0 else L
+        if kind == "goalkick":
+            return ogx
+        if kind == "free" and in_box_fn(rs["pos"][0], rs["pos"][1], ogx): # Free kick inside the taker's own area: no wall, opponents outside.
+            return ogx
+        return None
+
     def pick_taker(self, kind, team, pos): # Choose the player responsible for a specified restart.
         c = [p for p in self.team_p[team] if p.state not in ("out", "leaving")]
         out = [p for p in c if p.role != "GK"]
@@ -114,6 +123,7 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
         pos = self.visible_pos(pos)
         self._gk_area_violator = None
         b = self.ball
+        self._backpass_src = None
         b.owner, b.vx, b.vv, b.vz, b.z = None, 0.0, 0.0, 0.0, 0.0
         b.wx, b.wv = pos
         b.intended = None
@@ -140,6 +150,7 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
 
     def begin_ball_out(self, kind, team, pos): # Start the sequence for a ball that has gone out of play.
         b = self.ball
+        self._backpass_src = None
         self.outball = dict(kind=kind, team=team, pos=pos, t=0.0, phase="roll", roll=random.uniform(0.25, 0.6), src=None, fly=0.0)
         b.owner, b.intended, b.shot_team = None, None, None
         b.tactical_pass = False
@@ -295,7 +306,7 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
         minw = dict(kickoff=1.3, throw=0.8, goalkick=0.8, corner=1.8, free=1.9, penalty=2.4)[rs["kind"]]
         box_free = True
         manual_box_block = False
-        if rs["kind"] == "goalkick":
+        if self.restart_box_gx(rs) is not None: # Goal kick, or free kick inside the taker's own area.
             ad_ = self.att[rs["team"]]
             ogx_ = 0.0 if ad_ > 0 else L
             if "push" not in rs:
@@ -359,6 +370,7 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
         poss = p.team == team
         hx, hv = self.home_pos(p, L / 2.0, V_MID, poss)
         near_goal = math.hypot(agx - x, V_GC - v) < 130
+        own_box_gx = self.restart_box_gx(rs) if kind == "free" else None # Set when the free kick is taken inside the kicker's own area.
         if p.role == "GK":
             p.tx, p.tv = hx, hv
             return
@@ -369,7 +381,7 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
                 hx, hv = agx - ad * (5 + (p.idx % 4) * 6), V_GC + (((p.idx + 2) % 5) - 2) * HALF_MOUTH * 0.55
         elif kind == "penalty":
             hx, hv = agx - ad * (BOX_D + 16 + (p.idx % 3) * 6), V_GC + ((p.idx % 7) - 3) * 10
-        elif kind == "free" and not poss and p.role != "GK":
+        elif kind == "free" and not poss and p.role != "GK" and own_box_gx is None:
             wall = rs.get("wall")
             if wall is None:
                 nwall = 3 if near_goal else 2
@@ -409,7 +421,7 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
             if dd < min_restart_distance:
                 ux, uv = unit(hx - x, hv - v, (-ad, 0.0))
                 hx, hv = x + ux * min_restart_distance, v + uv * min_restart_distance
-        if kind == "goalkick" and not poss:
+        if (kind == "goalkick" or own_box_gx is not None) and not poss:
             ogx = 0.0 if ad > 0 else L
             edge = BOX_D + 8.0
             if abs(hx - ogx) < edge and BOX_V0 - 6.0 <= hv <= BOX_V1 + 6.0:

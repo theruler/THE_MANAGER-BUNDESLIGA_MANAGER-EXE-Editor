@@ -97,7 +97,9 @@ class StatsMixin: # Effects of Fitness / Skill / Form on the simulation.
         return lerp(POWER_RANGE, norm(self.pstats(p)[0])) * (1.0 - self.fatigue(p))
 
     def injury_k(self, p): # Injury probability multiplier: multiply the base chance of an injury to p by this.
-        return lerp(INJURY_RANGE, norm(self.pstats(p)[0]))
+        k = lerp(INJURY_RANGE, norm(self.pstats(p)[0]))
+        ag = getattr(self, "agon_injury_k", None)
+        return k * ag(p) if ag else k # Agonism of both teams (giving and taking).
 
     def shot_err(self, p): # Angular error (rad) added to every shot.
         return SHOT_ERR_MIN + (SHOT_ERR_MAX - SHOT_ERR_MIN) * (1.0 - norm(self.pstats(p)[1]))

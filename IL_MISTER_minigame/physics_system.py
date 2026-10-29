@@ -260,7 +260,8 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         sp = math.hypot(o.vx, o.vv)
         b.own_t += h
         gk_dive = o.role == "GK" and o.state == "action" and o.act is not None and o.act.get("key") == "dive"
-        if o.role == "GK":
+        hands = o.role == "GK" and not getattr(o, "feet", False)
+        if hands:
             tx, tv = o.wx + self.att[o.team] * (1.6 if gk_dive else 1.2), o.wv
             k = 1.0
         else:
@@ -277,7 +278,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         b.wv += (tv - b.wv) * k
         b.vx, b.vv, b.vz = o.vx, o.vv, 0.0
         b.ds = 1.0
-        if o.role == "GK":
+        if hands:
             b.z = max(0.0, o.lift - 1.0) if gk_dive else 4.0
         elif b.own_t < 1.0:
             b.z = 2.2 * (1.0 - b.own_t) * abs(math.sin(b.own_t * 14.0))
@@ -316,6 +317,8 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
 
     def give_ball(self, p): # Transfer ball possession to the specified player.
         b = self.ball
+        p.feet = self.backpass_ban(p) # A keeper receiving a deliberate foot pass from a team-mate may not use his hands.
+        self._backpass_src = None
         if p.role == "GK":
             self.log_missed()
         if b.tactical_pass and b.intended is p and b.last is not None and b.last is not p:
@@ -336,6 +339,11 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         p.dec = random.uniform(0.15, 0.4)
         p.cool = 0.0
 
+    def backpass_ban(self, p): # True when keeper p would be taking a deliberate foot pass of a team-mate: hands not allowed.
+        src, b = getattr(self, "_backpass_src", None), self.ball
+        return (p.role == "GK" and src is not None and src is not p and b.last is src
+                and b.last_team == p.team and self.mode == "play")
+
     def check_possession(self): # Determine whether a player can take or retain possession of the ball.
         b = self.ball
         if b.owner is not None or self.mode != "play":
@@ -348,7 +356,8 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
             if p.state == "action" and p.act["key"] != "dive":
                 continue
             d = math.hypot(p.wx - b.wx, p.wv - b.wv)
-            gk = p.role == "GK"
+            ban = self.backpass_ban(p) # Back-pass: the keeper controls the ball like a field player.
+            gk = p.role == "GK" and not ban
             if gk and b.pen and not b.pen_save and b.last_team != p.team:
                 continue
             catch_radius = KEEPER_CATCH_RADIUS if gk else PLAYER_CATCH_RADIUS
@@ -358,7 +367,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
                 continue
             if b.z > (KEEPER_CATCH_HEIGHT if gk else PLAYER_CATCH_HEIGHT):
                 continue
-            if sp > FAST_BALL_SPEED and b.intended is not p and not gk and not p.ctrl:
+            if sp > FAST_BALL_SPEED and b.intended is not p and not gk and not ban and not p.ctrl:
                 if b.shot_team is not None and p.team != b.shot_team and self.try_block(p, sp):
                     return
                 continue
@@ -498,8 +507,9 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         p.wv = clamp(p.wv, vmin, vmax)
         if p.lx is not None:
             p.wx, p.wv, _hit = self.goal_solid(p.wx, p.wv, p.lx, p.lv)
-        if (rs is not None and rs.get("kind") == "goalkick" and p.team != rs["team"]
-                and p.role != "GK" and not p.ctrl and p.state not in ("out", "leaving")):
+        if (rs is not None and rs.get("kind") in ("goalkick", "free") and p.team != rs["team"]
+                and p.role != "GK" and not p.ctrl and p.state not in ("out", "leaving")
+                and self.restart_box_gx(rs) is not None):
             ad = self.att[rs["team"]]
             own_gx = 0.0 if ad > 0 else L
             if in_box_fn(p.wx, p.wv, own_gx):
@@ -559,6 +569,8 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
             spd *= 0.95 if getattr(p, "alert", False) else 0.62
         if self.ball.owner is p:
             spd *= 0.84
+        if not p.ctrl and self.mode == "play":
+            spd *= self.agon_speed_k(p) # Agonism: fast recoveries when conservative, sprinting pressers when aggressive.
         if p.injured:
             spd *= INJURED_SPEED_K
         if p.ctrl and p.kvec:
@@ -832,6 +844,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
             self.sel_hold_until = 0.0
         b.tactical_pass = bool(kw.get("tactical_pass", False) and kind == "pass" and kw.get("target") is not None)
         b.pass_active = kind == "pass"
+        self._backpass_src = p if (kind == "pass" and key == "kick") else None # Foot passes only (not headers, shots, throws).
         b.shot_team = p.team if kind == "shot" else None
         b.gk_attempted = False
         b.pen = bool(setp and kind == "shot" and self.restart is not None and self.restart["kind"] == "penalty")
@@ -939,6 +952,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         b.vx, b.vv, b.vz = dx * power, dv * power, random.uniform(0, 20)
         b.last, b.last_team, b.intended, b.age = p, p.team, None, 0.0
         b.pass_active = False
+        self._backpass_src = None
         self.audio.play("tackle", 0.7)
 
     def slide_check(self, p, a): # Check whether a sliding action can reach and contact the ball or opponent.
@@ -947,7 +961,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         if o is not None and o.team != p.team:
             dist_o = math.hypot(o.wx - p.wx, o.wv - p.wv)
             if dist_o < 12.0 and not o.fallen():
-                if o.role == "GK":
+                if o.role == "GK" and not getattr(o, "feet", False):
                     ux, uv = unit(o.wx - p.wx, o.wv - p.wv)
                     if dist_o < 9.5 and a["kw"]["dx"] * ux + a["kw"]["dv"] * uv > 0.6:
                         a["resolved"] = True
@@ -964,13 +978,13 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
             for q in self.players:
                 if q.team != p.team and q.state in ("free",) and math.hypot(q.wx - p.wx, q.wv - p.wv) < 8.0 and q is not o:
                     a["resolved"] = True
-                    if random.random() < 0.22 * (0.5 + p.aggr):
+                    if random.random() < 0.22 * (0.5 + p.aggr) * self.agon_mul(p.team, 0.40, 1.70):
                         self.call_foul(p, q, 0.30, 0.02)
                     return
 
     def resolve_challenge(self, t, o, kind): # Resolve the outcome of a player-versus-player challenge.
         b = self.ball
-        if o.role == "GK" and b.owner is o and t.team != o.team:
+        if o.role == "GK" and b.owner is o and t.team != o.team and not getattr(o, "feet", False):
             if kind != "slide":
                 return
             ref_near = math.hypot(self.ref.wx - t.wx, self.ref.wv - t.wv) < 24.0
@@ -984,8 +998,9 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         away = o.dx * ux + o.dv * uv
         moving = math.hypot(o.vx, o.vv) > 10
         behind = moving and away > 0.4 and (t.dx * ux + t.dv * uv) > 0.3
-        win = (0.52 if kind == "stand" else 0.46) + 0.28 * (t.skill - o.skill) - (0.14 if behind else 0.0)
-        foul = (0.07 if kind == "stand" else 0.18) + (0.14 if behind else 0.0) + 0.04 * t.aggr
+        win = ((0.52 if kind == "stand" else 0.46) + 0.28 * (t.skill - o.skill) - (0.14 if behind else 0.0)
+               + 0.12 * (self.agon(t.team) - 0.5)) # Agonism: committed tackles win the ball a bit more often...
+        foul = ((0.07 if kind == "stand" else 0.18) + (0.14 if behind else 0.0) + 0.04 * t.aggr) * self.agon_mul(t.team, 0.40, 1.70) # ...and are more often fouls.
         r = random.random()
         b = self.ball
         if r < win:

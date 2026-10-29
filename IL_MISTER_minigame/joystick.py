@@ -32,6 +32,8 @@ JOY_ACTIONS = [  # Available logical actions and their default keyboard/controll
     ("mute", pygame.K_m, "m", ""),
     ("fullscreen", pygame.K_F11, "", ""),
     ("spectator", pygame.K_q, "q", ""),
+    ("agon_up", pygame.K_PERIOD, ".", ""),
+    ("agon_down", pygame.K_COMMA, ",", ""),
     ("exit_match", pygame.K_ESCAPE, "", ""),
     ("confirm", pygame.K_RETURN, "", ""),
     ("back", pygame.K_ESCAPE, "", ""),
@@ -116,6 +118,8 @@ JOY_DEFAULT = {  # Default bindings restored when the user resets controller set
       "axis:4+"
     ],
     "mute": [],
+    "agon_up": [],
+    "agon_down": [],
     "fullscreen": [],
     "spectator": [],
     "exit_match": [],
@@ -136,7 +140,8 @@ class JoyPad: # Joystick discovery, binding persistence, and normalized control 
                 if os.path.isfile(f):
                     self.path = f
                     break
-        self.write_path = os.path.join(write_dir, JOY_FILE) if write_dir else (self.path or JOY_FILE)
+        # Save back to the file that was read (e.g. .\data\mister-joy.json); write_dir is used only when no file exists yet.
+        self.write_path = self.path or (os.path.join(write_dir, JOY_FILE) if write_dir else JOY_FILE)
         self.cfg = json.loads(json.dumps(JOY_DEFAULT))
         self.error = ""
         self.migrated = False

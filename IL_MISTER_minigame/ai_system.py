@@ -359,10 +359,10 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
                     pool.remove(sc[0])
                 if len(sc) > 1:
                     d1 = math.hypot(sc[1].wx - px, sc[1].wv - pv)
-                    if own is None and d1 < 14:
+                    if own is None and d1 < 14 * self.agon_mul(team, 0.5, 1.6):
                         sc[1].tag, sc[1].roam = "chase", roam
                         pool.remove(sc[1])
-                    elif own is not None and self.team_uw(team, px, pv)[0] < 0.35:
+                    elif own is not None and self.team_uw(team, px, pv)[0] < 0.35 * self.agon_mul(team, 0.55, 1.5):
                         sc[1].tag, sc[1].roam = "cover", roam
                         pool.remove(sc[1])
             if rs is not None:
@@ -441,13 +441,15 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
             p.tx, p.tv = own.wx + own.dx * 3.0, own.wv + own.dv * 3.0
             p.dec -= dt
             gk_hold = own.role == "GK"
-            if dd < 13.0 and p.dec <= 0 and p.cool <= 0 and p.act_cd <= 0 and not own.fallen() and (not gk_hold or random.random() < 0.03 * p.aggr):
-                p.dec = random.uniform(0.4, 0.9)
+            if dd < 13.0 * self.agon_mul(p.team, 0.85, 1.25) and p.dec <= 0 and p.cool <= 0 and p.act_cd <= 0 and not own.fallen() and (not gk_hold or random.random() < 0.03 * p.aggr):
+                p.dec = random.uniform(0.4, 0.9) * self.agon_mul(p.team, 1.4, 0.7) # Agonism: how often he tries.
                 ux, uv = unit(own.wx - p.wx, own.wv - p.wv)
                 r = random.random()
-                if r < 0.32:
+                stand_p = 0.32 * self.agon_mul(p.team, 0.75, 1.35)
+                slide_p = (0.08 + 0.14 * p.aggr) * 2.0 * self.agon(p.team) # None at 0 %, the original odds at 50 %, double at 100 %.
+                if r < stand_p:
                     self.start_tackle(p, ux, uv, "stand")
-                elif dd > 7.5 and r < 0.32 + 0.08 + 0.14 * p.aggr:
+                elif dd > 7.5 and r < stand_p + slide_p:
                     self.start_tackle(p, ux, uv, "slide")
         elif tag == "cover":
             ux, uv = unit(ogx - own.wx, V_GC - own.wv)
@@ -478,7 +480,7 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
         p.dec = random.uniform(0.6, 1.2)
         skl = norm(self.pstats(p)[1])
         hx, hv = self.home_pos(p, self.ball.wx, self.ball.wv, True)
-        if random.random() > FWD_RUN_BASE + FWD_RUN_SKILL * skl:
+        if random.random() > (FWD_RUN_BASE + FWD_RUN_SKILL * skl) * self.agon_mul(p.team, 0.65, 1.35): # Agonism: propensity to run forward.
             p.tx, p.tv = hx, hv
             return
         goalx = L if d > 0 else 0.0
@@ -498,7 +500,7 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
         if b.owner is p:
             p.hold_t += dt
             p.tx = p.tv = None
-            if p.hold_t > 2.5:
+            if p.hold_t > (0.7 if getattr(p, "feet", False) else 2.5): # Back-pass: no time to hold the ball with the feet.
                 self.gk_distribute(p)
             return
         toward = -d * b.vx
@@ -708,9 +710,10 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
             prob = LONG_SHOT_PROB * (0.2 + 0.8 * self.long_k(p)) * (0.4 if block < 6 else 1.0)
             if random.random() < prob:
                 return self.ai_shoot(p)
-        if p.hold_t > 0.3 and (press < 17 or p.hold_t > 1.1 or random.random() < 0.10):
+        press_r = 17.0 * self.agon_mul(p.team, 1.35, 0.8) # Agonism: a cautious team gets rid of the ball earlier under pressure.
+        if p.hold_t > 0.3 and (press < press_r or p.hold_t > 1.1 or random.random() < 0.10):
             bp = self.best_pass(p)
-            if bp and (press < 17 or bp[0] > 8):
+            if bp and (press < press_r or bp[0] > 8):
                 return self.ai_pass(p, bp)
         own_u = p.wx / L if d > 0 else 1 - p.wx / L
         if p.role in ("DEF", "MID") and own_u >= p.zu[1] and p.hold_t > 0.3:

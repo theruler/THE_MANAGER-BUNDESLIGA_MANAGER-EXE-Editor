@@ -7,6 +7,7 @@ import sys
 import time
 import pygame
 
+from agonism_system import AGON_DEFAULT, AgonismMixin
 from aim_system import AimMixin
 from ai_system import AIMixin
 from animation_config import ACT_SPEC
@@ -42,7 +43,7 @@ from stats_system import StatsMixin
 from substitution_system import SubstitutionMixin
 
 
-class Game(IntroMixin, StatsMixin, AimMixin, RestartMixin, InputMixin, MatchLogMixin, ReplayMixin, SubstitutionMixin, FormationMixin, PathMixin, PhysicsMixin, AIMixin, RenderingMixin, CameraMixin, CelebrationMixin): # Main match state, rule sequencing, user control, and frame coordination.
+class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMixin, MatchLogMixin, ReplayMixin, SubstitutionMixin, FormationMixin, PathMixin, PhysicsMixin, AIMixin, RenderingMixin, CameraMixin, CelebrationMixin): # Main match state, rule sequencing, user control, and frame coordination.
     def __init__(self, args, gfx, audio, screen, notes, teams): # Initialize the match engine and connect resources, teams, and subsystem state.
         self.args, self.gfx, self.audio, self.screen, self.notes = args, gfx, audio, screen, notes
         self.target = screen
@@ -151,6 +152,8 @@ class Game(IntroMixin, StatsMixin, AimMixin, RestartMixin, InputMixin, MatchLogM
     def reset_match(self): # Reset match objects, timers, statistics, and temporary state for a new match.
         self.slowmo_p = None
         self._gk_dribble_attempted = None
+        self.agon_lv, self.agon_drag = [AGON_DEFAULT, AGON_DEFAULT], None
+        self._backpass_src, self._gk_out_t = None, 0.0
         self.score = [0, 0]
         self.half, self.real_t, self.extra = 1, 0.0, 0.0
         self.stoppage_target = 1.0
@@ -459,7 +462,7 @@ class Game(IntroMixin, StatsMixin, AimMixin, RestartMixin, InputMixin, MatchLogM
             self.begin_walkon(1 - self.first_kick)
 
 
-    def call_foul(self, off, victim, yellow_p, red_p, fall=True): # Register a foul and start its associated referee and player reactions.
+    def call_foul(self, off, victim, yellow_p, red_p, fall=True, spot=None): # Register a foul and start its associated referee and player reactions.
         rs = self.restart if self.mode == "restart" else None
         if rs is not None and rs.get("kind") == "goalkick":
             return
@@ -470,7 +473,8 @@ class Game(IntroMixin, StatsMixin, AimMixin, RestartMixin, InputMixin, MatchLogM
                 return
         b = self.ball
         self.stoppage_target += 0.28
-        spot = (clamp(victim.wx, 3.0, L - 3.0), clamp(victim.wv, V_TOP + 1.0, V_BOT - 1.0))
+        if spot is None:
+            spot = (clamp(victim.wx, 3.0, L - 3.0), clamp(victim.wv, V_TOP + 1.0, V_BOT - 1.0))
         own_gx = 0.0 if self.att[off.team] > 0 else L
         in_box = in_box_fn(spot[0], spot[1], own_gx)
         card = None
@@ -1175,6 +1179,8 @@ class Game(IntroMixin, StatsMixin, AimMixin, RestartMixin, InputMixin, MatchLogM
         if self.ball.pen and (self.mode != "play" or self.ball.owner is not None or self.ball.last_team != self.ball.pen_team):
             self.ball.pen = False
         self.check_gk_box_time(dt)
+        self.check_gk_handling(dt)
+        self.update_agonism(dt)
         self.check_overlap_steal()
         self.update_flags(dt)
         self.auto_select()
@@ -1204,10 +1210,31 @@ class Game(IntroMixin, StatsMixin, AimMixin, RestartMixin, InputMixin, MatchLogM
                 self.click_mark = None
 
 
+    def check_gk_handling(self, dt): # A keeper carrying the ball in his hands outside his own area: yellow card and free kick for the opponents.
+        b = self.ball
+        o = b.owner
+        if self.mode != "play" or o is None or o.role != "GK" or getattr(o, "feet", False) or o.state in ("out", "leaving"):
+            self._gk_out_t = 0.0
+            return
+        own_gx = 0.0 if self.att[o.team] > 0 else L
+        if in_box_fn(b.wx, b.wv, own_gx) or in_box_fn(o.wx, o.wv, own_gx):
+            self._gk_out_t = 0.0
+            return
+        self._gk_out_t += dt
+        if self._gk_out_t < 0.12: # Tiny debounce so touching the line is not punished.
+            return
+        self._gk_out_t = 0.0
+        victims = [q for q in self.team_p[1 - o.team] if q.state not in ("out", "leaving") and not q.red]
+        if not victims:
+            return
+        v = min(victims, key=lambda q: math.hypot(q.wx - o.wx, q.wv - o.wv))
+        spot = (clamp(o.wx, 3.0, L - 3.0), clamp(o.wv, V_TOP + 1.0, V_BOT - 1.0))
+        self.call_foul(o, v, 1.0, 0.0, fall=False, spot=spot)
+
     def check_gk_box_time(self, dt): # Update the goalkeeper-area timing rule for possession.
         b = self.ball
         o = b.owner
-        if self.mode != "play" or o is None or o.role != "GK" or o.state in ("out", "leaving"):
+        if self.mode != "play" or o is None or o.role != "GK" or getattr(o, "feet", False) or o.state in ("out", "leaving"):
             self.box_t.clear()
             return
         own_gx = 0.0 if self.att[o.team] > 0 else L
@@ -1317,6 +1344,7 @@ class Game(IntroMixin, StatsMixin, AimMixin, RestartMixin, InputMixin, MatchLogM
         pygame.draw.rect(self.screen, (214, 218, 238), (0, self.field_y, self.view_w, self.view_h), 2)
         self.board.draw(self.screen, self, self.W, self.bh)
         self.board.draw_bar(self.screen, self, self.bar_y, self.W, self.bar_h)
+        self.draw_agonism(self.screen)
         self.draw_hud()
         if self.sub_menu:
             self.draw_sub_menu()
@@ -1396,7 +1424,7 @@ class Game(IntroMixin, StatsMixin, AimMixin, RestartMixin, InputMixin, MatchLogM
     HELP_LAYOUT = (
         (("mf", 7), ("mb", 3)),
         (("kg", 11), ("pt", 4)),
-        (("view", 6), ("other", 6)),
+        (("view", 6), ("other", 8)),
     )
 
     @classmethod

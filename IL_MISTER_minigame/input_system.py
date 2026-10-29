@@ -80,6 +80,8 @@ class InputMixin: # Keyboard, mouse, and joystick input handling.
             self.apply_view()
             if self.zoom != want and self.mode != "intro": # The screen is too small for the requested zoom.
                 self.say(tr("msg.zoom_limit", zoom=self.zoom), (255, 200, 140), 2.0)
+        elif k in (pygame.K_COMMA, pygame.K_PERIOD) and self.mode != "intro": # Agonism -5 % / +5 %.
+            self.agon_key(-1 if k == pygame.K_COMMA else 1, bool(ev.mod & pygame.KMOD_SHIFT)) # Shift: the right bar when spectating.
         elif k == pygame.K_m:
             self.audio.toggle_mute()
         elif k == pygame.K_l:
@@ -174,6 +176,8 @@ class InputMixin: # Keyboard, mouse, and joystick input handling.
                     self.su_click(ev.pos, ev.button) # Right button removes a shirt number.
                 return None
             x, y = ev.pos
+            if self.agon_mouse_down(ev.pos, ev.button): # Agonism bars.
+                return None
             if self.sub_menu:
                 self.sub_menu_click(ev.pos) if ev.button == 1 else setattr(self, "sub_menu", None)
                 return None
@@ -214,6 +218,12 @@ class InputMixin: # Keyboard, mouse, and joystick input handling.
                     elif self.drag is None:
                         self.drag = [x, my, x, my]
                         self.drag_act, self.drag_btn = "pass", 1
+        elif ev.type == pygame.MOUSEMOTION and self.agon_drag is not None:
+            self.agon_mouse_move(ev.pos)
+        elif ev.type == pygame.MOUSEBUTTONUP and ev.button == 1 and self.agon_drag is not None:
+            self.agon_mouse_up()
+        elif ev.type == pygame.MOUSEWHEEL and self.mode != "intro":
+            self.agon_wheel(ev.y)
         elif ev.type == pygame.MOUSEMOTION and self.pan_drag:
             pd = self.pan_drag
             raw_dx = ev.pos[0] - pd["start"][0]
