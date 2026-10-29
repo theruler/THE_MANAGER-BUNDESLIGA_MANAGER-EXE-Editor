@@ -90,14 +90,19 @@ class _YearMixin:
                     self._revert_year()
                     return
                 writes.append((max_offset, max_value))
-        relative_offset = self.profile.get("code_year-1963")
-        if relative_offset is not None and (
-            not isinstance(relative_offset, int)
-            or relative_offset < 0
-            or relative_offset >= len(self.exe_data)
-        ):
+        relative_offsets = self.profile.get("code_year-1963", ())
+        if not isinstance(relative_offsets, (tuple, list)):
             self._revert_year()
             return
+        for relative_offset in relative_offsets:
+            if (
+                not isinstance(relative_offset, int)
+                or isinstance(relative_offset, bool)
+                or relative_offset < 0
+                or relative_offset >= len(self.exe_data)
+            ):
+                self._revert_year()
+                return
         changed = False
         for write_offset, write_value in writes:
             try:
@@ -108,8 +113,8 @@ class _YearMixin:
             if bytes(self.exe_data[write_offset:write_offset + 2]) != payload:
                 self.exe_data[write_offset:write_offset + 2] = payload
                 changed = True
-        if relative_offset is not None:
-            relative_byte = (value - 1963) & 0xFF
+        relative_byte = (value - 1963) & 0xFF
+        for relative_offset in relative_offsets:
             if self.exe_data[relative_offset] != relative_byte:
                 self.exe_data[relative_offset] = relative_byte
                 changed = True
