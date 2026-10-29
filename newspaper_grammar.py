@@ -244,8 +244,13 @@ def rebuild(rows, string_id="?"):
             row = by_id.get(f"{key}.{position}")
             if row is None:
                 raise NewspaperGrammarError(f"{string_id}: {key}.{position} is missing")
-            parts.append(_encode_display(
-                _text_of(row), string_id, row["component_id"], resolved))
+            encoded = _encode_display(
+                _text_of(row), string_id, row["component_id"], resolved)
+            # Guard: a branch (after the first) starting with '%' would be read
+            # as the "#%" selector terminator, so prefix a space.
+            if position > 1 and encoded.startswith("%"):
+                encoded = " " + encoded
+            parts.append(encoded)
         resolved[key] = "%x" + codes[key] + "#".join(parts) + "#%"
 
     root = by_id["ROOT"]

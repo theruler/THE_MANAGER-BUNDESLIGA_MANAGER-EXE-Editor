@@ -40,6 +40,7 @@ class _DragState:
         self.active:  "_TagLabel | None" = None
         self._ghost:  "tk.Toplevel | None" = None
         self._cursor: "str | None" = None 
+        self._cursor_tw: "tk.Text | None" = None
 
     def show_ghost(self, text: str, bg: str, fg: str, x: int, y: int):
         self.hide_ghost()
@@ -68,22 +69,33 @@ class _DragState:
                 pass
             self._ghost = None
 
-    def show_cursor(self, tw: "tk.Text", index: str):
-        if self._cursor:
+    def _clear_cursor_tag(self):
+        tw = self._cursor_tw
+        if tw is not None:
             try:
                 tw.tag_remove("_drop_cursor", "1.0", tk.END)
             except Exception:
                 pass
+        self._cursor_tw = None
+
+    def show_cursor(self, tw: "tk.Text", index: str):
+        # remove the marker from whichever box had it before (possibly another one)
+        self._clear_cursor_tag()
         self._cursor = index
         tw.tag_configure("_drop_cursor",
                          background="#1565C0", foreground="#FFFFFF")
         try:
-            tw.tag_add("_drop_cursor", index, f"{index}+1c")
+            # at/after the end there is only the implicit trailing newline:
+            # painting it would look like a stray selection, so skip it
+            if tw.compare(index, "<", "end-1c"):
+                tw.tag_add("_drop_cursor", index, f"{index}+1c")
+                self._cursor_tw = tw
         except Exception:
             pass
 
-    def hide_cursor(self, tw: "tk.Text | None"):
-        if tw and self._cursor:
+    def hide_cursor(self, tw: "tk.Text | None" = None):
+        self._clear_cursor_tag()
+        if tw is not None:
             try:
                 tw.tag_remove("_drop_cursor", "1.0", tk.END)
             except Exception:
@@ -127,12 +139,6 @@ class _TagLabel(tk.Label):
         self.bind("<B1-Motion>",       self._motion)
         self.bind("<ButtonRelease-1>", self._release)
         self.bind("<Button-3>",        self._delete)
-        if deletable:
-            self.bind("<Double-Button-1>", self._delete)
-            self.bind("<Delete>",          self._delete)
-            self.bind("<BackSpace>",       self._delete)
-            self.bind("<FocusIn>",  lambda e: self.config(relief="solid", bd=1))
-            self.bind("<FocusOut>", lambda e: self.config(relief="flat",  bd=0))
 
     def _my_index(self) -> str:
         my_name = str(self)
@@ -303,12 +309,23 @@ class _ComponentEditor:
         self._committed: str       = component["source_text"]
         outer = tk.Frame(parent, bg="#BDC3C7", bd=1)
         outer.pack(side=tk.LEFT, anchor="nw")
-        self.widget = tk.Text(outer, height=1, width=30, wrap="none",font=("Consolas", 10, "bold"),bg="#FFFFFF", fg="#1A252F",insertbackground="#1A252F",relief="flat", padx=4, pady=2,)
+        self.widget = tk.Text(outer, height=1, width=30, wrap="none",font=("Consolas", 10, "bold"),bg="#FFFFFF", fg="#1A252F",insertbackground="#1A252F",insertwidth=2,relief="flat", padx=4, pady=2,)
         self.widget.pack(side=tk.LEFT)
         self.widget.bind("<KeyRelease>", self._on_key)
         self.widget.bind("<Return>",     self._on_return)
         self.widget.bind("<Control-z>",  self._undo_cb)
         self.widget.bind("<Control-Z>",  self._undo_cb)
+        self.widget.bind("<Delete>",            lambda e: self._on_del_key(e, False))
+        self.widget.bind("<BackSpace>",         lambda e: self._on_del_key(e, True))
+        self.widget.bind("<Control-Delete>",    lambda e: self._on_del_word(e, False))
+        self.widget.bind("<Control-BackSpace>", lambda e: self._on_del_word(e, True))
+        self.widget.bind("<<Cut>>",             self._on_cut)
+        self.widget.bind("<<Paste>>",           self._on_paste_guard)
+        self.widget.bind("<Key>",               self._on_type_guard)
+        self.widget.bind("<Left>",        lambda e: self._on_arrow(-1, False))
+        self.widget.bind("<Right>",       lambda e: self._on_arrow(+1, False))
+        self.widget.bind("<Shift-Left>",  lambda e: self._on_arrow(-1, True))
+        self.widget.bind("<Shift-Right>", lambda e: self._on_arrow(+1, True))
         self._populate(component["source_text"])
         self._push_undo()
 
@@ -353,6 +370,86 @@ class _ComponentEditor:
                 break
             tw.tag_add(self._SPACE_TAG, idx, f"{idx}+1c")
             idx = f"{idx}+1c"
+
+    # ---- tag-safe deletion: tags are removed only via right-click ----
+    def _char_is_window(self, index: str) -> bool:
+        tw = self.widget
+        if tw.compare(index, ">=", "end-1c"):
+            return False
+        return bool(tw.dump(index, f"{index}+1c", window=True))
+
+    def _delete_preserving_tags(self, a: str, b: str):
+        tw = self.widget
+        a, b = tw.index(a), tw.index(b)
+        if tw.compare(a, ">", b):
+            a, b = b, a
+        wins = [tw.index(item[2]) for item in tw.dump(a, b, window=True)]
+        segments, start = [], a
+        for w in wins:
+            if tw.compare(start, "<", w):
+                segments.append((start, w))
+            start = tw.index(f"{w}+1c")
+        if tw.compare(start, "<", b):
+            segments.append((start, b))
+        for x, y in reversed(segments):
+            tw.delete(x, y)
+
+    def _delete_selection_safe(self):
+        tw = self.widget
+        self._delete_preserving_tags("sel.first", "sel.last")
+        tw.tag_remove("sel", "1.0", tk.END)
+
+    def _on_del_key(self, _e, backward: bool):
+        tw = self.widget
+        if tw.tag_ranges("sel"):
+            self._delete_selection_safe()
+        elif backward:
+            if tw.compare(tk.INSERT, ">", "1.0") and not self._char_is_window("insert-1c"):
+                tw.delete("insert-1c")
+        elif not self._char_is_window(tk.INSERT):
+            tw.delete(tk.INSERT)
+        return "break"
+
+    def _on_del_word(self, _e, backward: bool):
+        tw = self.widget
+        if tw.tag_ranges("sel"):
+            self._delete_selection_safe()
+        elif backward:
+            self._delete_preserving_tags("insert-1c wordstart", "insert")
+        else:
+            self._delete_preserving_tags("insert", "insert wordend")
+        return "break"
+
+    def _on_arrow(self, step: int, extend: bool):
+        """Move exactly one position (a tag counts as one position), so the
+        caret can stop before, after and between adjacent tags."""
+        tw = self.widget
+        if not extend and tw.tag_ranges("sel"):
+            tw.tag_remove("sel", "1.0", tk.END)
+        target = tw.index(f"insert{'+' if step > 0 else '-'}1c")
+        if tw.compare(target, ">", "end-1c"):
+            target = tw.index("end-1c")
+        if extend:
+            tw.tk.call("tk::TextKeySelect", str(tw), target)
+        else:
+            tw.mark_set(tk.INSERT, target)
+            tw.see(tk.INSERT)
+        return "break"
+
+    def _on_cut(self, _e=None):
+        if self.widget.tag_ranges("sel"):
+            self.widget.event_generate("<<Copy>>")
+            self._delete_selection_safe()
+        return "break"
+
+    def _on_paste_guard(self, _e=None):
+        if self.widget.tag_ranges("sel"):
+            self._delete_selection_safe()
+
+    def _on_type_guard(self, e):
+        if (e.char and ord(e.char[0]) >= 32 and e.char != "\x7f"
+                and not (e.state & 0x4) and self.widget.tag_ranges("sel")):
+            self._delete_selection_safe()
 
     def _populate(self, display_text: str):
         tw = self.widget
