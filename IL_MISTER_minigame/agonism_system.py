@@ -16,10 +16,12 @@ Fatigue is stored per roster slot (team, p.sq), so a substitute starts fresh and
 """
 
 import math
+import random
 
 import pygame
 
 from game_utils import clamp
+from geometry import Y_OFFSET
 from graphics_system import BOARD_H, BOARD_W
 from stats_system import lerp, norm
 
@@ -33,22 +35,28 @@ AGON_RECOVERY_BONUS = 0.10 # Extra running speed of a team without the ball at 0
 AGON_CHASE_BONUS = 0.06 # Extra running speed of the player pressing the ball carrier at 100 % (and the same malus at 0 %).
 AGON_LINE_PUSH = {"GK": 0.0, "DEF": 0.10, "MID": 0.22, "FWD": 0.16} # Normalized longitudinal shift of the home positions between 0 % and 100 %.
 
+AGON_INTERCEPT_RANGE = (0.94, 1.08) # Interception radius multiplier of a team at 0 % / 100 % (alertness of an intense team).
 AGON_PACE_RANGE = (0.92, 1.08) # Running speed multiplier of a team at 0 % / 100 % (1.0 at 50 %), effective at once.
-FAT_RATE_UP = 0.018 # Fatigue (0..1) gained per match minute at 100 % bar, average Fitness/Form, average running effort.
+FAT_RATE_UP = 0.024 # Fatigue (0..1) gained per match minute at 100 % bar, average Fitness/Form, average running effort.
 FAT_RATE_DOWN = 0.030 # Fatigue recovered per match minute at 0 % bar, standing still (recovery is faster than tiring).
 FAT_WORK_REF = 0.5 # Running effort (speed / top speed) that counts as "average work"; sprinting counts up to 2.2x, a keeper far less.
 FAT_GK_WORK = 0.15 # Goalkeepers get tired this much slower.
 FAT_DEAD = 0.02 # Dead zone around 50 % (in -1..1 units): inside it fatigue stays frozen.
 FAT_SHOW = 0.01 # Fatigue above which the arrow is shown (a few seconds of running at high bar).
-FAT_SPEED_MAX = 0.28 # Fraction of running speed / kick power lost at fatigue 1 (used by stats_system.fatigue).
-FAT_EXHAUST_FROM = 0.80 # Fatigue above which the player starts slowing down towards a walk.
-FAT_WALK_K = 0.50 # Extra speed multiplier at fatigue 1 (on top of FAT_SPEED_MAX): the exhausted player walks slowly.
+FAT_SPEED_MAX = 0.40 # Fraction of running speed / kick power lost at fatigue 1 (used by stats_system.fatigue).
+FAT_EXHAUST_FROM = 0.65 # Fatigue above which the player starts slowing down towards a walk.
+FAT_WALK_K = 0.45 # Extra speed multiplier at fatigue 1 (on top of FAT_SPEED_MAX): the exhausted player walks slowly.
 FAT_INJURY_K = 0.5 # Injury probability grows by this fraction at fatigue 1.
-FAT_HALF_RECOVER = 0.35 # Fraction of the fatigue recovered during the half-time break.
+FAT_HALF_RECOVER = (0.15, 0.25) # Fraction of the fatigue recovered during the half-time break (random per player).
 FAT_BENCH_K = 0.6 # Benched players rest at this fraction of the maximum recovery rate, whatever the bar.
 FAT_FITNESS_RANGE = (1.30, 0.70) # Tiring-speed multiplier at Fitness 10 / 99.
 FAT_FORM_RANGE = (1.15, 0.85) # Tiring-speed multiplier at Form 10 / 99.
 FAT_OFF_STATES = ("out", "leaving", "subin", "subout", "tunnel") # Not on the pitch: no fatigue change.
+
+FAT_SWEAT_ON, FAT_SWEAT_OFF = 0.25, 0.10 # Fatigue at which the sweat drops start / stop (until the player is rested again).
+SWEAT_HEAD_H = 1.0 # Field pixels from the feet row up to the top of the head.
+SWEAT_SPREAD = 2.0 # Sideways reach of the spray, in field pixels.
+SWEAT_COL = (150, 215, 255)
 
 BAND_COLORS = ( # (highest percentage of the band, fill colour)
     (20, (52, 190, 84)), # 0-20 green
@@ -115,6 +123,9 @@ class AgonismMixin: # Per-team agonism level: state, behaviour multipliers, slid
     def fat_get(self, team, sq): # Fatigue 0..1 of a roster slot.
         return self._fat_state()[team].get(sq, 0.0)
 
+    def fat_of(self, p): # Fatigue 0..1 of a player.
+        return self.fat_get(p.team, getattr(p, "sq", -1))
+
     def agon_fatigue(self, p): # Fraction of speed / kick power lost by this player (read by stats_system.fatigue).
         return FAT_SPEED_MAX * self.fat_get(p.team, getattr(p, "sq", -1))
 
@@ -145,7 +156,7 @@ class AgonismMixin: # Per-team agonism level: state, behaviour multipliers, slid
                 self._fat_half = True
                 for d in fat:
                     for k in d:
-                        d[k] *= 1.0 - FAT_HALF_RECOVER
+                        d[k] *= 1.0 - random.uniform(FAT_HALF_RECOVER[0], FAT_HALF_RECOVER[1])
             return
         self._fat_half = False
         if self.mode == "full":
@@ -176,6 +187,47 @@ class AgonismMixin: # Per-team agonism level: state, behaviour multipliers, slid
             for sq in list(d): # Bench: always resting.
                 if sq not in on:
                     d[sq] = max(0.0, d[sq] - FAT_RATE_DOWN * FAT_BENCH_K * mdt)
+
+    # ---- sweat ----
+    def sweat_active(self, p): # Drops start when a player is clearly tired and stay until he is rested again (hysteresis).
+        on = self.__dict__.setdefault("_sweat_on", set())
+        key, f = (p.team, getattr(p, "sq", -1)), self.fat_of(p)
+        if key in on:
+            if f < FAT_SWEAT_OFF:
+                on.discard(key)
+                return False
+            return True
+        if f >= FAT_SWEAT_ON:
+            on.add(key)
+            return True
+        return False
+
+    def draw_sweat(self, surf, cx, cy): # 3-4 drops sprayed above the head of every tired player; surf is the zoomed world layer, (cx, cy) its field-pixel origin.
+        z, t = self.zoom, self.t_all
+        w, h = surf.get_size()
+        r = max(1, int(round(0.5 * z)))
+        for p in self.players:
+            if p.state in FAT_OFF_STATES or p.red or not self.sweat_active(p):
+                continue
+            hx = (p.sx - cx) * z
+            hy = (p.sy + Y_OFFSET + 5 - SWEAT_HEAD_H - cy) * z
+            if hx < -30 or hy < -30 or hx > w + 30 or hy > h + 30:
+                continue
+            n = 4 if self.fat_of(p) >= 0.5 else 3
+            seed = p.sq * 0.37 + p.team * 0.19
+            for i in range(n):
+                ph = (t * 1.4 + i / float(n) + seed) % 1.0 # 0 = leaves the head, 1 = gone.
+                side = -1.0 if i % 2 == 0 else 1.0
+                reach = 0.5 + 0.5 * ((i * 0.618 + seed) % 1.0)
+                x = hx + side * reach * SWEAT_SPREAD * ph * z
+                y = hy + (-30.0 * ph + 45.0 * ph * ph) * z # Up, then falling.
+                al = int(255 * min(1.0, (1.0 - ph) / 0.3))
+                d = pygame.Surface((2 * r + 2, 3 * r + 2), pygame.SRCALPHA)
+                col = SWEAT_COL + (al,)
+                pygame.draw.circle(d, col, (r + 1, 2 * r + 1), r)
+                pygame.draw.polygon(d, col, [(r + 1, 0), (1, 2 * r + 1), (2 * r + 1, 2 * r + 1)])
+                d.set_at((r, 2 * r), (255, 255, 255, al))
+                surf.blit(d, (int(x) - r - 1, int(y) - 3 * r - 1))
 
     # ---- bars ----
     def agon_bars(self): # [(team, side)] of the visible bars: only the user's team, or both (independent) for a spectator. side 0 = left, 1 = right.

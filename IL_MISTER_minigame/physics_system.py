@@ -39,13 +39,12 @@ KEEPER_CATCH_HEIGHT = 10.5 # Maximum ball height for goalkeeper catching attempt
 # ---- Goalkeeper save model (see PhysicsMixin.keeper_save_chance) ----
 KEEPER_SAVE_BASE = 0.86 # Save chance for a slow, central ball hit straight at a keeper of average skill.
 KEEPER_SPEED_K = 0.0017 # Chance lost per unit of ball speed above 140.
-KEEPER_SKILL_K = 0.30 # Chance gained per point of keeper skill above 0.75.
 KEEPER_REACH_K = 0.030 # Chance lost per world unit the keeper has to stretch.
 KEEPER_CORNER_K = 0.22 # Extra chance lost for a shot that crosses the goal line at the post (scaled by distance from centre).
 KEEPER_FAR_START, KEEPER_FAR_FULL = 45.0, 95.0 # Shot distance (world units) where foresight starts / is complete.
 KEEPER_READ_BONUS = 0.30 # Save chance gained at full foresight.
 KEEPER_FREEKICK_READ = 0.65 # Minimum foresight for free-kick shots (the keeper sees them coming).
-KEEPER_SAVE_MIN, KEEPER_SAVE_MAX = 0.15, 0.90 # Clamp for the final save chance.
+KEEPER_SAVE_MIN, KEEPER_SAVE_MAX = 0.12, 0.95 # Clamp for the final save chance.
 FAST_BALL_SPEED = 215.0 # Above this speed outfield players cannot simply take control of the ball.
 BLOCK_CHANCE = 0.25 # Probability that a defender touching a hard shot deflects it.
 
@@ -374,7 +373,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
                 if b.shot_team is not None and p.team != b.shot_team and self.try_block(p, sp):
                     return
                 continue
-            if gk and b.last_team != p.team and b.shot_team is not None:
+            if gk and self.keeper_threat(p) and b.shot_team is not None:
                 # A shot gives the goalkeeper one attempt; if it misses, the ball continues.
                 if b.gk_attempted:
                     continue
@@ -388,13 +387,13 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
                 else:
                     self.give_ball(p)
                 return
-            if gk and b.last_team != p.team and not p.busy() and p.act_cd <= 0 and (sp > 110 or b.z > 6.0):
+            if gk and self.keeper_threat(p) and not p.busy() and p.act_cd <= 0 and (sp > 110 or b.z > 6.0):
                 p.act_cd = 0.9
                 if random.random() < 0.28 + 0.25 * (1.0 - p.skill) + (0.2 if b.z > 8.0 else 0.0):
                     self.begin_action(p, "punch", "E" if b.wx > p.wx else "W", assist=True)
                     p.cool = 0.5
                     return
-            if gk and sp > 230 and b.last_team != p.team and random.random() > 0.25 + 0.6 * p.skill:
+            if gk and sp > 230 and self.keeper_threat(p) and random.random() > 0.25 + 0.6 * p.skill:
                 self.gk_parry(p, punch=random.random() < 0.4)
                 return
             if best is None or d < best[0]:
@@ -834,7 +833,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
             dx, dv = dx * math.cos(ang) - dv * math.sin(ang), dx * math.sin(ang) + dv * math.cos(ang)
         power, lift = kw["power"], kw["lift"]
         if kw.get("kind", "pass") in ("shot", "pass"):
-            power = min(power, self.power_cap(p)) # Fitness: maximum ball range on long kicks.
+            power = min(power, self.power_cap(p)) * self.kick_k(p) # Fitness: maximum ball range on long kicks; fatigue: weaker kicks of every length.
         if key in ("header", "header_dive"):
             power, lift = power * 0.8, max(lift, 18.0)
         elif key == "bicycle":
@@ -887,15 +886,15 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         return r
 
     def keeper_save_chance(self, gk, speed, reach_d): # Single source of truth for save odds (standing saves and dives).
-        p = KEEPER_SAVE_BASE - max(0.0, speed - 140.0) * KEEPER_SPEED_K + (gk.skill - 0.75) * KEEPER_SKILL_K
+        p = KEEPER_SAVE_BASE - max(0.0, speed - 140.0) * KEEPER_SPEED_K
         p -= reach_d * KEEPER_REACH_K # The farther the keeper must stretch, the harder the save.
         if self.ball.shot_team is not None: # Corners are harder to reach than shots down the middle.
             p -= KEEPER_CORNER_K * min(1.0, abs(self.ball.wv - V_GC) / HALF_MOUTH)
         p += KEEPER_READ_BONUS * self.keeper_reading() # Foresight: far shots and free kicks are easier to read.
-        return clamp(p, KEEPER_SAVE_MIN, KEEPER_SAVE_MAX)
+        return clamp(p * self.keeper_tech(gk), KEEPER_SAVE_MIN, KEEPER_SAVE_MAX) # Technique: the keeper's Skill scales the whole save chance.
 
     def try_block(self, p, sp): # A defender standing in the line of a hard shot may deflect it instead of letting it pass untouched.
-        if random.random() > BLOCK_CHANCE:
+        if random.random() > BLOCK_CHANCE * self.block_k(p): # Tired defenders block less.
             return False
         b = self.ball
         ang = random.choice((-1.0, 1.0)) * random.uniform(0.5, 1.3)
@@ -910,8 +909,12 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         self.audio.play("tackle", 0.6)
         return True
 
-    def register_save(self, gk): # Count a goalkeeper save when the ball in play is a shot.
-        if self.ball.shot_team is not None:
+    def keeper_threat(self, gk): # True when the loose ball is something the keeper must defend: the opponents' ball, or a shot by his own team-mate heading for his own goal.
+        b = self.ball
+        return b.last_team != gk.team or (b.shot_team == gk.team and -self.att[gk.team] * b.vx > 0.0)
+
+    def register_save(self, gk): # Count a goalkeeper save when the ball in play is an opponent's shot.
+        if self.ball.shot_team is not None and self.ball.shot_team != gk.team:
             self.stats["saves"][gk.team] += 1
 
     def shot_is_on_target(self, shooter): # Forecast whether the ball just struck will cross the goal line inside the posts and under the bar.
@@ -1008,8 +1011,9 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         moving = math.hypot(o.vx, o.vv) > 10
         behind = moving and away > 0.4 and (t.dx * ux + t.dv * uv) > 0.3
         win = ((0.52 if kind == "stand" else 0.46) + 0.28 * (t.skill - o.skill) - (0.14 if behind else 0.0)
-               + 0.12 * (self.agon(t.team) - 0.5)) # Agonism: committed tackles win the ball a bit more often...
-        foul = ((0.07 if kind == "stand" else 0.18) + (0.14 if behind else 0.0) + 0.04 * t.aggr) * self.agon_mul(t.team, 0.40, 1.70) # ...and are more often fouls.
+               + 0.12 * (self.agon(t.team) - 0.5) # Agonism: committed tackles win the ball a bit more often...
+               + 0.15 * (self.tired(o) - self.tired(t))) # Fatigue: a tired tackler wins less, a tired dribbler loses more.
+        foul = ((0.07 if kind == "stand" else 0.18) + (0.14 if behind else 0.0) + 0.04 * t.aggr) * self.agon_mul(t.team, 0.40, 1.70) * (1.0 + 0.5 * self.tired(t)) # ...and are more often fouls (tired tacklers arrive late).
         r = random.random()
         b = self.ball
         if r < win:
@@ -1033,9 +1037,9 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         b = self.ball
         if b.pen and not b.pen_save:
             return
-        if b.owner is None and b.last_team != p.team and self.mode == "play":
+        if b.owner is None and self.keeper_threat(p) and self.mode == "play":
             d = math.hypot(b.wx - p.wx, b.wv - p.wv)
-            if d < 10.5 and b.z < GOAL_H + 5:
+            if d < 10.5 + 5.0 * self.keeper_reading() and b.z < GOAL_H + 5: # A well-read (long) shot lets the keeper stretch farther.
                 a["resolved"] = True
                 sp = math.hypot(b.vx, b.vv)
                 is_shot = b.shot_team is not None

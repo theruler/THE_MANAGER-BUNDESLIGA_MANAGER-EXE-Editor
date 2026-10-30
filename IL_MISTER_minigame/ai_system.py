@@ -505,7 +505,7 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
             return
         toward = -d * b.vx
         p.alert = False
-        if b.owner is None and b.last_team != p.team and toward > 25 and (b.wx - own_x) * d > 0:
+        if b.owner is None and self.keeper_threat(p) and toward > 25 and (b.wx - own_x) * d > 0: # Also a team-mate's shot towards his own goal.
             fc = self.ball_forecast(own_x)
             if fc is not None and abs(fc["v"] - V_GC) < HALF_MOUTH + POST_T + 16.0 and fc["z"] < GOAL_H + 8.0:
                 kt = self.t_all - b.age

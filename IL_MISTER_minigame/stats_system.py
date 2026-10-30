@@ -32,6 +32,15 @@ FLAIR_RANGE = (0.08, 0.60) # Weight of attempting spectacular moves (bicycle, vo
 AERIAL_ERR_RANGE = (0.22, 0.03) # Angular error (rad, std dev) of a header that is a pass / clearance at Skill 10 / 99.
 
 
+KICK_FATIGUE_MAX = 0.40 # Fraction of kick power (every pass and shot, not only the long ones) lost at fatigue 1.
+ERR_FATIGUE_K = 0.9 # Shot / header angular error grows by this fraction at fatigue 1.
+TOUCH_FATIGUE_K = 0.35 # Dribbling ball-follow rate lost at fatigue 1 (looser touches).
+LOSE_BALL_FATIGUE_K = 1.5 # Loose-touch risk on sharp turns grows by this fraction at fatigue 1.
+INTERCEPT_FATIGUE_K = 0.40 # Interception radius lost at fatigue 1.
+BLOCK_FATIGUE_K = 0.60 # Chance of blocking a hard shot lost at fatigue 1.
+KEEPER_TECH_RANGE = (0.70, 1.30) # Goalkeeper save-chance multiplier at Skill 10 / 99 (proportional to his technique).
+
+
 def lerp(rng, t): # Linear interpolation inside a (low, high) pair.
     return rng[0] + (rng[1] - rng[0]) * t
 
@@ -91,6 +100,19 @@ class StatsMixin: # Effects of Fitness / Skill / Form on the simulation.
         return lerp(SPEED_RANGE, norm(self.pstats(p)[0])) * (1.0 - self.fatigue(p))\
             * (self.agon_pace_k(p) * self.agon_exhaust_k(p) if hasattr(self, "agon_pace_k") else 1.0) # Agonism pace and exhaustion (agonism_system).
 
+    def keeper_tech(self, p): # Save-chance multiplier of a goalkeeper, proportional to his Skill rating.
+        return lerp(KEEPER_TECH_RANGE, norm(self.pstats(p)[1]))
+
+    def block_k(self, p): # Multiplier on the chance that a defender blocks a hard shot.
+        return 1.0 - BLOCK_FATIGUE_K * self.tired(p)
+
+    def tired(self, p): # 0..1 fatigue of a player (agonism_system); 0 if the mixin is absent.
+        fn = getattr(self, "fat_of", None)
+        return fn(p) if fn else 0.0
+
+    def kick_k(self, p): # Multiplier on the power of every pass / shot: tired legs, weaker kicks.
+        return 1.0 - KICK_FATIGUE_MAX * self.tired(p)
+
     def power_cap(self, p): # Maximum kick power (ball range) for this player.
         return lerp(POWER_RANGE, norm(self.pstats(p)[0])) * (1.0 - self.fatigue(p))
 
@@ -100,10 +122,10 @@ class StatsMixin: # Effects of Fitness / Skill / Form on the simulation.
         return k * ag(p) if ag else k # Agonism of both teams (giving and taking).
 
     def shot_err(self, p): # Angular error (rad) added to every shot.
-        return SHOT_ERR_MIN + (SHOT_ERR_MAX - SHOT_ERR_MIN) * (1.0 - norm(self.pstats(p)[1]))
+        return (SHOT_ERR_MIN + (SHOT_ERR_MAX - SHOT_ERR_MIN) * (1.0 - norm(self.pstats(p)[1]))) * (1.0 + ERR_FATIGUE_K * self.tired(p))
 
     def touch_rate(self, p): # How tightly the ball follows a dribbler.
-        return lerp(TOUCH_RATE, norm(self.pstats(p)[1]))
+        return lerp(TOUCH_RATE, norm(self.pstats(p)[1])) * (1.0 - TOUCH_FATIGUE_K * self.tired(p))
 
     def long_k(self, p): # 0 (Skill 99) .. 1 (Skill 10): how much the AI is tempted by long shots and long passes.
         return 1.0 - norm(self.pstats(p)[1])
@@ -112,10 +134,15 @@ class StatsMixin: # Effects of Fitness / Skill / Form on the simulation.
         return lerp(FLAIR_RANGE, norm(self.pstats(p)[1]))
 
     def aerial_err(self, p): # Angular error (rad) of a header that is not a shot: how precisely he redirects the ball.
-        return lerp(AERIAL_ERR_RANGE, norm(self.pstats(p)[1]))
+        return lerp(AERIAL_ERR_RANGE, norm(self.pstats(p)[1])) * (1.0 + ERR_FATIGUE_K * self.tired(p))
 
     def intercept_k(self, p): # Interception radius multiplier.
-        return lerp(INTERCEPT_RANGE, norm(self.pstats(p)[2]))
+        k = lerp(INTERCEPT_RANGE, norm(self.pstats(p)[2])) * (1.0 - INTERCEPT_FATIGUE_K * self.tired(p))
+        am = getattr(self, "agon_mul", None)
+        if am:
+            from agonism_system import AGON_INTERCEPT_RANGE
+            k *= am(p.team, AGON_INTERCEPT_RANGE[0], AGON_INTERCEPT_RANGE[1]) # Intense teams are more alert.
+        return k
 
     def apply_skill(self, p, st): # Rescale the base p.skill (0..1) used by keepers, headers and challenges.
         base = getattr(p, "skill0", None)
@@ -136,4 +163,4 @@ class StatsMixin: # Effects of Fitness / Skill / Form on the simulation.
         if rate <= TURN_RATE_MIN:
             return False
         risk = LOSE_BALL_RATE * clamp((rate - TURN_RATE_MIN) / (TURN_RATE_FULL - TURN_RATE_MIN), 0.0, 1.0)
-        return random.random() < risk * (1.0 - norm(self.pstats(o)[1])) * h
+        return random.random() < risk * (1.0 - norm(self.pstats(o)[1])) * (1.0 + LOSE_BALL_FATIGUE_K * self.tired(o)) * h

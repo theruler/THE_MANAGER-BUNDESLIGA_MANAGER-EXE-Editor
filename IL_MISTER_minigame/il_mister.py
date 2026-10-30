@@ -41,7 +41,7 @@ from sprite_data import load_data, REF_MOVE, REF_STAND, team_sprite_offset
 from stats_system import StatsMixin
 from substitution_system import SubstitutionMixin
 
-VERSION = "1.5.2"
+VERSION = "1.5.3"
 
 class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMixin, MatchLogMixin, ReplayMixin, SubstitutionMixin, FormationMixin, PathMixin, PhysicsMixin, AIMixin, RenderingMixin, CameraMixin, CelebrationMixin): # Main match state, rule sequencing, user control, and frame coordination.
     def __init__(self, args, gfx, audio, screen, notes, teams): # Initialize the match engine and connect resources, teams, and subsystem state.
@@ -1313,6 +1313,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             world.blit(self.scale_world(self.sprite_surf, cx, cy, ox, oy), (0, 0))
         if not rp:
             self.draw_marker()
+            self.draw_sweat(world, cx, cy)
         if self.paused and not rp:
             self.draw_tactics()
         if self.drag and self.cp and not rp:
