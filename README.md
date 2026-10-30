@@ -147,8 +147,9 @@ Extract the content of the "Il_mister" archive into THE MANAGER game's original 
 ## Usage
 You need a copy of installed THE MANAGER / BMP DOS program to use the graphic, font and data of the game
 
-1. Open a supported EXE.
-2. Have fun.
+1. Extract the archive into the dos game directory
+2. Execute the exe program of your choice (il_mister.exe, "THE MANAGER Editor.exe" etcetera)   
+3. Have fun.
 
 Modified EXEPACK executables are saved unpacked. The editor does not contain an EXEPACK compressor.
 Always keep a backup of the original executable and test modified executables before regular use.
