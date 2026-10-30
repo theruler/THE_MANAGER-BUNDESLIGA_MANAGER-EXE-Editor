@@ -41,7 +41,7 @@ from sprite_data import load_data, REF_MOVE, REF_STAND, team_sprite_offset
 from stats_system import StatsMixin
 from substitution_system import SubstitutionMixin
 
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 
 class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMixin, MatchLogMixin, ReplayMixin, SubstitutionMixin, FormationMixin, PathMixin, PhysicsMixin, AIMixin, RenderingMixin, CameraMixin, CelebrationMixin): # Main match state, rule sequencing, user control, and frame coordination.
     def __init__(self, args, gfx, audio, screen, notes, teams): # Initialize the match engine and connect resources, teams, and subsystem state.

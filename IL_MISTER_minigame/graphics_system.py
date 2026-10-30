@@ -405,6 +405,17 @@ class Scoreboard: # Scoreboard, team roster, and match-information rendering.
             text_y = y - 1
             self.text_at(lo, f, str(p.num), tuple(v // 2 for v in col) if out else col, x0 + (4 if 1 <= p.num <= 9 else 1), text_y)
             right = x0 + w - 1
+            fs = None if out else g.fatigue_sign(t, p.sq) if hasattr(g, "fatigue_sign") else None
+            if fs == "down" or (fs == "up" and int(getattr(g, "t_all", 0.0) * 2.5) % 2 == 0): # Fatigue arrow: red down = tired, green up = recovering (blinks).
+                fc = (232, 62, 62) if fs == "down" else (70, 212, 96)
+                head, stem = ((y, y + 1, y + 2), (y + 3, y + 4)) if fs == "up" else ((y + 2, y + 3, y + 4), (y, y + 1))
+                for k, hy_ in enumerate(head if fs == "up" else head[::-1]): # Arrow head: 1, 3, 5 px wide towards its base.
+                    n = 1 + 2 * k
+                    lo.fill(fc, (right - 2 - k, hy_, n, 1))
+                for sy in stem:
+                    lo.fill(fc, (right - 2, sy, 1, 1))
+            if fs:
+                right -= 7
             if p.red or p.yellow:
                 lo.fill((230, 30, 30) if p.red else (240, 240, 0), (right - 1, y, 2, 4))
                 right -= 4

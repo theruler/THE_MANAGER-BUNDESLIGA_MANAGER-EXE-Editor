@@ -6,7 +6,7 @@ substituted player automatically plays with his own values.
 
     Fitness -> running speed, injury proneness, maximum ball range on long kicks
     Skill   -> shooting accuracy, ball keeping on direction changes (p.skill is also rescaled, see apply_skill)
-    Form    -> intercepting balls, endurance (fitness drop in the second half)
+    Form    -> intercepting balls, endurance (tires slower, with Fitness; fatigue itself comes from agonism_system)
 """
 
 import math
@@ -30,7 +30,6 @@ LOSE_BALL_RATE = 1.4 # Probability per second of a loose touch at maximum turn r
 INTERCEPT_RANGE = (0.80, 1.25) # Interception radius multiplier at Form 10 / 99.
 FLAIR_RANGE = (0.08, 0.60) # Weight of attempting spectacular moves (bicycle, volley, diving header) at Skill 10 / 99.
 AERIAL_ERR_RANGE = (0.22, 0.03) # Angular error (rad, std dev) of a header that is a pass / clearance at Skill 10 / 99.
-FATIGUE_MAX = 0.22 # Fraction of speed/power lost by the end of the second half at Form 10 (Form 99: none).
 
 
 def lerp(rng, t): # Linear interpolation inside a (low, high) pair.
@@ -84,14 +83,13 @@ class StatsMixin: # Effects of Fitness / Skill / Form on the simulation.
         except (AttributeError, KeyError, IndexError, TypeError):
             return DEFAULT_STATS
 
-    def fatigue(self, p): # 0..FATIGUE_MAX: second-half fitness loss, smaller with a good Form.
-        if self.half < 2:
-            return 0.0
-        prog = clamp(self.real_t / max(1.0, self.half_secs), 0.0, 1.0)
-        return FATIGUE_MAX * (1.0 - norm(self.pstats(p)[2])) * prog
+    def fatigue(self, p): # 0..~0.28: fraction of speed / kick power lost to fatigue (driven by the agonism bar and the player's own running).
+        fn = getattr(self, "agon_fatigue", None)
+        return fn(p) if fn else 0.0
 
     def speed_mod(self, p): # Running speed multiplier.
-        return lerp(SPEED_RANGE, norm(self.pstats(p)[0])) * (1.0 - self.fatigue(p))
+        return lerp(SPEED_RANGE, norm(self.pstats(p)[0])) * (1.0 - self.fatigue(p))\
+            * (self.agon_pace_k(p) * self.agon_exhaust_k(p) if hasattr(self, "agon_pace_k") else 1.0) # Agonism pace and exhaustion (agonism_system).
 
     def power_cap(self, p): # Maximum kick power (ball range) for this player.
         return lerp(POWER_RANGE, norm(self.pstats(p)[0])) * (1.0 - self.fatigue(p))
