@@ -185,7 +185,6 @@ PATH_COLORS = {"ball": "#ffd54a", "ref": "#d0d0d0", "red": "#ff6e6e", "blue": "#
 PATH_COLOR_LABELS = (("ball", "col.ball"), ("ref", "col.ref"), ("red", "col.red"), ("blue", "col.blue"))
 VIEW_ZOOM_MAX = 12.0
 GHOST_KEYS = ("ghost.none", "ghost.prev", "ghost.allsel", "ghost.allspr")
-
 DIRS = ["E", "NE", "N", "NW", "W", "SW", "S", "SE"]
 DIR_LABEL = {d: "dir." + d for d in DIRS}
 
@@ -331,11 +330,16 @@ def _poses_file(red, referee, ball):
     return {"red": red, "blue": {n: [k + 59 for k in v] for n, v in red.items()}, "referee": referee, "ball": ball}
 
 
-def _clean_actions(raw):
+def _clean_actions(raw, warn=None):
     acts = {}
     for key, a in raw["actions"].items():
-        e = _ks(a["E"], 0, 58)
-        d = {"label": str(a.get("label", key)), "E": e, "W": _ks(a["W"], 0, 58) if a.get("W") else [58 - k for k in e]}
+        try:
+            e = _ks(a["E"], 0, 58)
+            d = {"label": str(a.get("label", key)), "E": e, "W": _ks(a["W"], 0, 58) if a.get("W") else [58 - k for k in e]}
+        except (KeyError, TypeError, ValueError, AttributeError) as ex:
+            if warn is not None:
+                warn.append("%s: action '%s' ignored - %s" % (os.path.basename(ACTIONS_FILE), key, _why(ex)))
+            continue
         if a.get("single"):
             d["single"] = True
         if a.get("travel"):
@@ -363,7 +367,7 @@ def load_data():
     global PLAYER_CATS, REF_CATS, BALL_CATS, BALL_ALL
     warn = []
     try:
-        acts, order, moves, stand, ref, rot = _clean_actions(_load_json(ACTIONS_FILE))
+        acts, order, moves, stand, ref, rot = _clean_actions(_load_json(ACTIONS_FILE), warn)
     except (DataError, TypeError, ValueError, KeyError, AttributeError) as ex:
         warn.append("%s: %s - actions and movement unavailable" % (os.path.basename(ACTIONS_FILE), _why(ex)))
         acts, order, moves, stand, ref, rot = {}, [], {}, {}, {"move": {}, "stand": {}}, None
@@ -527,6 +531,20 @@ def sprite_kind(sid):
     return "loco" if sid in loco_ids(sid) else "action"
 
 
+def _plain_locomotion(q):
+    if all(sprite_kind(v) == "stand" for v in q):
+        return True
+    for d in DIRS:
+        c = loco_cycle(q[0], d)
+        if not c:
+            continue
+        n = len(c)
+        for st in range(n):
+            if all(q[j] == c[(st + j) % n] for j in range(len(q))):
+                return True
+    return False
+
+
 def find_actions(sids):
     cands, out, i = {}, [], 0
     while i < len(sids):
@@ -535,7 +553,7 @@ def find_actions(sids):
             if team not in cands:
                 cands[team] = [(k, s, q) for k in ACTION_ORDER for s in action_sides(k)
                                for q in (action_ids(sids[i], k, s),)
-                               if q and any(sprite_kind(v) == "action" for v in q)]
+                               if q and not _plain_locomotion(q)]
             best = None
             for k, s, q in cands[team]:
                 if sids[i:i + len(q)] == q and (best is None or len(q) > len(best[2])):
@@ -3687,14 +3705,18 @@ class ToreEditorPanel(ttk.Frame):
         cw = self._tl_cw()
         sel = self.sel if self.sel is not None and self.sel < min(len(f.figs) for f in fs) else None
         sids = [f.figs[sel][2] for f in fs] if sel is not None else []
+        acts = find_actions(sids) if sids else []
+        in_act = set()
+        for a_, b_, _k, _s in acts:
+            in_act.update(range(a_, b_))
         for i in range(n):
             x0 = 4 + i * cw
             c.create_rectangle(x0, 4, x0 + cw - 1, 18, outline="", fill="#1e88e5" if i == self.idx else ("#d8d8d8" if i % 2 else "#c4c4c4"))
             if sids:
-                c.create_rectangle(x0, 20, x0 + cw - 1, 27, outline="", fill=TL_KIND_COLORS[sprite_kind(sids[i])])
+                c.create_rectangle(x0, 20, x0 + cw - 1, 27, outline="", fill=TL_KIND_COLORS["action" if i in in_act else sprite_kind(sids[i])])
             if cw >= 16 or i % 5 == 4 or i == self.idx:
                 c.create_text(x0 + cw / 2, 45, text=str(i + 1), font=("TkDefaultFont", 7), fill="#444")
-        self._draw_action_labels(c, sel, sids, cw)
+        self._draw_action_labels(c, sel, sids, cw, acts)
         for k, e in enumerate(self.scene.events):
             if e is not None and e < n:
                 x = 4 + e * cw + cw / 2
@@ -3710,9 +3732,8 @@ class ToreEditorPanel(ttk.Frame):
         c.create_polygon(xa, 66, xa + 13, 74, xa, 83, fill="#d32f2f", outline="black")
         c.create_polygon(xb, 66, xb - 13, 74, xb, 83, fill="#6a1b9a", outline="black")
 
-    def _draw_action_labels(self, c, sel, sids, cw):
+    def _draw_action_labels(self, c, sel, sids, cw, acts):
         self._tl_acts = []
-        acts = find_actions(sids) if sids else []
         for k, (a, b, key, side) in enumerate(acts):
             x0 = 4 + a * cw
             limit = 4 + (acts[k + 1][0] if k + 1 < len(acts) else len(sids)) * cw
@@ -4091,10 +4112,14 @@ class ToreEditorPanel(ttk.Frame):
             prev_sid = fs[i0 - 1].figs[sl][2]
             face = dir_of_sprite(prev_sid)
             ph = 0
+            protected = set()
+            if not force:
+                for a_, b_, _k, _s in find_actions([f_.figs[sl][2] for f_ in fs]):
+                    protected.update(range(a_, b_))
             for n, i in enumerate(range(i0, i1 + 1)):
                 f = fs[i]
                 g = f.figs[sl]
-                if not force and g[2] not in loco_ids(g[2]):
+                if not force and (g[2] not in loco_ids(g[2]) or i in protected):
                     prev_sid, face, ph = g[2], dir_of_sprite(g[2]), 0
                     continue
                 d = dirs[n]
