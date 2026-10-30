@@ -63,6 +63,8 @@
       "axis:4+"
     ],
     "mute": [],
+    "agon_up": [],
+    "agon_down": [],
     "fullscreen": [],
     "spectator": [],
     "exit_match": [],

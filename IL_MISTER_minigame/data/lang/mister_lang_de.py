@@ -287,6 +287,10 @@ TEXTS_DE = {
     'help.other.5.d': 'Menü / Beenden',
     'help.other.6.k': 'L',
     'help.other.6.d': 'Zeitlupe bei spektakulären Aktionen an / aus',
+    'help.other.7.k': ', .    oder    Leiste an den Seiten der Anzeigetafel',
+    'help.other.7.d': 'Aggressivität -5% / +5% deines Teams (Mausrad oder Ziehen an der Leiste): Grätschen, Pressing, hohe Abseitslinie, Fouls und Verletzungen',
+    'help.other.8.k': 'Zuschauer: , .    und    Shift + , .',
+    'help.other.8.d': 'zwei unabhängige Leisten: links (Team 1) und rechts (Team 2); das KI-Team passt seine Aggressivität selbst an',
 
     # --- Comandi azione, suggerimenti a schermo, mappatura joypad (spostati dal codice)
     'ev.bicycle': 'Fallrückzieher von {p}',
@@ -308,6 +312,8 @@ TEXTS_DE = {
     'hint.shot3': 'Grätsche / Fallrückzieher / Hechtsprung',
     'hint.switch': 'Spieler wechseln',
     'intro.joymap': 'Joypad-Belegung',
+    'joy.act.agon_down': 'Aggressivität - (dein Team)',
+    'joy.act.agon_up': 'Aggressivitt + (dein Team)',
     'joy.act.back': 'Abbrechen / Nein',
     'joy.act.cele': 'Jubel / Moonwalk / Schwalbe',
     'joy.act.confirm': 'Bestätigen / Starten / Ja',

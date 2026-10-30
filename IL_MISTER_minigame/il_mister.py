@@ -6,7 +6,6 @@ import random
 import sys
 import time
 import pygame
-
 from agonism_system import AGON_DEFAULT, AgonismMixin
 from aim_system import AimMixin
 from ai_system import AIMixin
@@ -14,8 +13,7 @@ from animation_config import ACT_SPEC
 from audio_system import Audio
 from ball_model import G
 from camera_system import CAM_GLIDE_SECS, CameraMixin
-from celebration_system import CELE_KINDS, CelebrationMixin, T_AFTER, T_CELE
-
+from celebration_system import CELE_KINDS, CelebrationMixin, GOAL_FETCH_MAX, T_AFTER, T_CELE
 from entities import Ball, Flag, Player, Ref
 from fonts import FONTS
 from formation_system import DEFAULT_FORMATION, formation_slots, FormationMixin
@@ -43,6 +41,7 @@ from sprite_data import load_data, REF_MOVE, REF_STAND, team_sprite_offset
 from stats_system import StatsMixin
 from substitution_system import SubstitutionMixin
 
+VERSION = "1.5.1"
 
 class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMixin, MatchLogMixin, ReplayMixin, SubstitutionMixin, FormationMixin, PathMixin, PhysicsMixin, AIMixin, RenderingMixin, CameraMixin, CelebrationMixin): # Main match state, rule sequencing, user control, and frame coordination.
     def __init__(self, args, gfx, audio, screen, notes, teams): # Initialize the match engine and connect resources, teams, and subsystem state.
@@ -599,10 +598,13 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                 p.lift = 0.0
                 if p.state in ("cele", "down"):
                     p.state = "free"
+        self.goal_fetch_ball(g, t)
         self.cele_walk_home(g, t)
         done_t = T_CELE + T_AFTER
         if g["own"]:
             done_t = 4.0
+        if not g.get("fetched") and t < done_t + GOAL_FETCH_MAX:
+            return # Replay and kickoff wait until the ball has been carried back to the centre.
         if t > done_t and not g.get("replayed"):
             g["replayed"] = True
             if self.replay_auto:
@@ -1408,7 +1410,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
     def set_language(self, code): # Change the interface language and refresh translated text.
         if T.set_language(code):
             self._help_cache = None
-            pygame.display.set_caption(tr("app.caption"))
+            pygame.display.set_caption(f"{tr('app.caption')} v{VERSION}")
             for detail in T.take_problems():
                 self.notes.append(Note("note.lang_problem", True, detail=detail))
 
@@ -1512,7 +1514,7 @@ def main(): # Parse launch options, load resources, initialize the game, and run
     # Saved options (data/options.json); an explicit command-line flag always wins over them.
     args.options_path = options_path([os.path.join(exe_dir, "data"), os.path.join(app_dir, "data"), os.path.join(cwd, "data")])
     saved = load_options(args.options_path)
-    init_language(args.lang or saved.get("lang") or "it")
+    init_language(args.lang or saved.get("lang") or "en")
     if args.half is None:
         args.half = saved.get("half_min", 3.0)
     if args.replay_secs is None:
@@ -1544,7 +1546,7 @@ def main(): # Parse launch options, load resources, initialize the game, and run
     miss_fon = [n for n, f in (("MICRO4.FON", FONTS.micro), ("FLOW.FON", FONTS.flow)) if f is None]
     if miss_fon:
         fatal(miss_fon, [d for d in asset_dirs if d])
-    pygame.display.set_caption(tr("app.caption"))
+    pygame.display.set_caption(f"{tr('app.caption')} v{VERSION}")
     args.zoom = args.zoom or (3 if args.noscroll else 5)
     d = compute_layout(args.zoom, not args.noscroll)
     try:

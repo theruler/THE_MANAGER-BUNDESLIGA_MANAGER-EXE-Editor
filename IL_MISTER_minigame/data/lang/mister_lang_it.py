@@ -287,6 +287,10 @@ TEXTS_IT = {
     'help.other.5.d': 'menu / uscita',
     'help.other.6.k': 'L',
     'help.other.6.d': 'slow motion sulle azioni spettacolari sì / no',
+    'help.other.7.k': ', .   oppure   barra ai lati del tabellone',
+    'help.other.7.d': 'agonismo -5% / +5% della tua squadra (rotella o trascinamento sulla barra): scivolate, pressing, linee alte, falli e infortuni',
+    'help.other.8.k': 'Spettatore: , .   e   Maiusc + , .',
+    'help.other.8.d': 'due barre indipendenti: sinistra (squadra 1) e destra (squadra 2); la squadra del PC regola da sola il suo agonismo',
 
     # --- Comandi azione, suggerimenti a schermo, mappatura joypad (spostati dal codice)
     'ev.bicycle': 'Rovesciata di {p}',
@@ -308,6 +312,8 @@ TEXTS_IT = {
     'hint.shot3': 'scivolata / rovesciata / tuffo',
     'hint.switch': 'cambia giocatore',
     'intro.joymap': 'Joypad mapping',
+    'joy.act.agon_down': 'Agonismo - (squadra selezionata)',
+    'joy.act.agon_up': 'Agonismo + (squadra selezionata)',
     'joy.act.back': 'Annulla / no',
     'joy.act.cele': 'Esultanza / moonwalk / simulazione',
     'joy.act.confirm': "Conferma / inizia / si'",

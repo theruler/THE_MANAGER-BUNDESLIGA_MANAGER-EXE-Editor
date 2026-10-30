@@ -5,6 +5,7 @@
   "replay_auto": true,
   "replay_secs": 5,
   "font_modern": false,
-  "hints": true,
-  "user_team": 0
+  "hints": false,
+  "user_team": 0,
+  "orig_audio": true
 }

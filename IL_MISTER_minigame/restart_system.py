@@ -88,6 +88,28 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
             return s2w(sx, sy + THROW_PX["N" if v < V_MID else "S"])
         return self.stand_for((x, v), self.stand_facing(rs))
 
+    def kickoff_forwards(self, team): # Players who start the kickoff: the first one takes it, the second stands beside him.
+        return [p for p in self.team_p[team] if p.role == "FWD" and p.state != "out"] or\
+               [p for p in self.team_p[team] if p.role != "GK" and p.state != "out"]
+
+    def kickoff_taker(self, team): # The player who will kick off for the given team (None if nobody is available).
+        fw = self.kickoff_forwards(team)
+        return fw[0] if fw else None
+
+    def kickoff_spot(self, p, team): # Kickoff position of any player (taker and partner included); used by setup_kickoff and during the goal sequence.
+        sx, sv = L / 2.0, V_SPOT
+        fw = self.kickoff_forwards(team)
+        if fw and p is fw[0]:
+            return self.taker_stand(dict(kind="kickoff", pos=(sx, sv), team=team))
+        if len(fw) > 1 and p is fw[1]:
+            return sx - self.att[team] * 6, sv + 15
+        d = self.att[p.team]
+        hx, hv = self.home_pos(p, sx, sv, False)
+        if p.team != team and math.hypot(hx - sx, hv - sv) < 36:
+            u = 0.5 - 40.0 / L
+            hx = u * L if d > 0 else (1 - u) * L
+        return hx, hv
+
     def setup_kickoff(self, team, sound=True, walk=False): # Arrange players and the ball for a kickoff; with walk=True everybody walks to his place (clock stopped, no teleport).
         b = self.ball
         sx, sv = L / 2.0, V_SPOT
@@ -101,18 +123,9 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
             if walk:
                 p.path = None
             d = self.att[p.team]
-            hx, hv = self.home_pos(p, sx, sv, False)
-            if p.team != team and math.hypot(hx - sx, hv - sv) < 36:
-                u = 0.5 - 40.0 / L
-                hx = u * L if d > 0 else (1 - u) * L
-            self._kick_place(p, hx, hv, walk)
+            self._kick_place(p, *self.kickoff_spot(p, team), walk)
             p.dx, p.dv, p.face = float(d), 0.0, "E" if d > 0 else "W"
-        fw = [p for p in self.team_p[team] if p.role == "FWD" and p.state != "out"] or\
-             [p for p in self.team_p[team] if p.role != "GK" and p.state != "out"]
-        d = self.att[team]
-        self._kick_place(fw[0], *self.taker_stand(dict(kind="kickoff", pos=(sx, sv), team=team)), walk)
-        if len(fw) > 1:
-            self._kick_place(fw[1], sx - d * 6, sv + 15, walk)
+        fw = self.kickoff_forwards(team)
         b.owner = None
         b.wx, b.wv, b.z, b.vx, b.vv, b.vz = sx, sv, 0.0, 0.0, 0.0, 0.0
         b.last_team = team

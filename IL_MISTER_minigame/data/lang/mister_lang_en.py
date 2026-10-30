@@ -287,6 +287,10 @@ TEXTS_EN = {
     'help.other.5.d': 'menu / exit',
     'help.other.6.k': 'L',
     'help.other.6.d': 'slow motion on spectacular plays on / off',
+    'help.other.7.k': ', .    or    bar at the sides of the scoreboard',
+    'help.other.7.d': 'competitiveness -5% / +5% of your team (scroll wheel or drag on the bar): sliding tackles, pressing, high defensive lines, fouls and injuries',
+    'help.other.8.k': 'Spectator: , .    and    Shift + , .',
+    'help.other.8.d': 'two independent bars: left (team 1) and right (team 2); the computer-controlled team adjusts its competitiveness on its own',
 
     # --- Comandi azione, suggerimenti a schermo, mappatura joypad (spostati dal codice)
     'ev.bicycle': 'Bicycle kick by {p}',
@@ -308,6 +312,8 @@ TEXTS_EN = {
     'hint.shot3': 'slide tackle / bicycle kick / dive',
     'hint.switch': 'switch player',
     'intro.joymap': 'Joypad mapping',
+    'joy.act.agon_down': 'Competitiveness - (selected team)',
+    'joy.act.agon_up': 'Competitiveness + (selected team)',
     'joy.act.back': 'Cancel / no',
     'joy.act.cele': 'Celebration / moonwalk / dive',
     'joy.act.confirm': 'Confirm / start / yes',

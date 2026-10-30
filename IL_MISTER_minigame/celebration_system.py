@@ -10,16 +10,44 @@ from physics_system import PLAYER_SPEED
 
 CELE_KINDS = (("huddle", 2), ("slide", 2), ("lift", 2), ("brawl", 2), ("train", 2), ("dance", 2)) # Celebration types and participant counts.
 T_CELE, T_AFTER = 5.6, 2.6 # T_CELE: celebration duration; T_AFTER: post-celebration delay.
-GOAL_RETURN_DELAY = 4.0 # Seconds after a goal before the team that does not celebrate starts walking back to its kickoff positions.
+GOAL_RETURN_DELAY = 1.5 # Seconds after a goal before the conceding team starts to rearrange and its kickoff taker goes to fetch the ball from the net.
+GOAL_FETCH_MAX = 25.0 # Safety limit: seconds after the end of the goal sequence the kickoff is forced even if the ball has not reached the centre.
 
 class CelebrationMixin: # Player and team goal-celebration sequences.
     def goto(self, p, x, v): # Set a player's target position and movement speed for an animation.
         p.tx, p.tv = clamp(x, 7.0, L - 7.0), clamp(v, V_MIN_P + 1.0, V_BOT - 1.0)
 
-    def cele_walk_home(self, g, t): # During the goal sequence: whoever is not celebrating walks back to his kickoff position; the conceding team first waits GOAL_RETURN_DELAY seconds.
+    def goal_fetch_ball(self, g, t): # The conceding team's kickoff taker picks the ball out of the net and dribbles it to the centre spot (whether or not the others celebrate).
+        if g.get("fetched"):
+            return
+        team, b = g["kick"], self.ball
+        tk = g.get("fetcher")
+        if tk is None or tk.state in ("out", "leaving"):
+            tk = g["fetcher"] = self.kickoff_taker(team)
+            g["carry"] = False
+            if tk is None:
+                g["fetched"] = True
+                return
+        if t < GOAL_RETURN_DELAY or tk.busy():
+            return
+        tk.path = None
+        if not g.get("carry"):
+            tk.tx, tk.tv = b.wx, b.wv # Not goto(): the ball lies in the net, outside the walkable band; clamp_player stops him at the screen edge.
+            if b.owner is None and math.hypot(tk.wx - b.wx, tk.wv - b.wv) < 9.0:
+                self.give_ball(tk) # From here on the engine's own dribble() keeps the ball at his feet.
+                g["carry"] = True
+            return
+        if b.owner is not tk: # Lost the ball (fall, etc.): go and get it again.
+            g["carry"] = False
+            return
+        tk.tx, tk.tv = self.kickoff_spot(tk, team)
+        if math.hypot(tk.wx - tk.tx, tk.wv - tk.tv) < 1.4:
+            g["fetched"] = True # setup_kickoff will put the ball on the spot, exactly where it already is.
+
+    def cele_walk_home(self, g, t): # During the goal sequence: whoever is not celebrating walks to his kickoff spot (the ball fetcher excepted); the conceding team starts after GOAL_RETURN_DELAY seconds.
         team = g["team"]
         for p in self.players:
-            if p.state in ("out", "leaving") or p.busy():
+            if p.state in ("out", "leaving") or p.busy() or p is g.get("fetcher"):
                 continue
             if p.state == "cele" and not g["released"]:
                 continue
@@ -29,7 +57,7 @@ class CelebrationMixin: # Player and team goal-celebration sequences.
             in_cele = (not g["own"]) and (not g["released"]) and p.idx in g["part"] and p.team == team
             if in_cele and p.role != "GK":
                 continue
-            p.tx, p.tv = self.home_pos(p, L / 2, V_SPOT, False)
+            p.tx, p.tv = self.kickoff_spot(p, g["kick"])
 
     def pose(self, p): # Switch a player to the appropriate celebration pose.
         p.tx = p.tv = None
