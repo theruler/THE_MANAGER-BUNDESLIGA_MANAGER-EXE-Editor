@@ -36,8 +36,11 @@ class TranslationIntegrityError(RuntimeError):
 
 LINGVA_INSTANCES = [
     "https://lingva.lunar.icu",
+    "https://translate.plausibility.cloud",
+    "https://translate.projectsegfau.lt",
     "https://translate.dr460nf1r3.org",
     "https://lingva.garudalinux.org",
+    "https://translate.jae.fi",
 ]
 
 
@@ -81,27 +84,42 @@ def google_translate(text: str, source_lang: str = "auto", target_lang: str = "i
         data = json.loads(resp.read().decode("utf-8"))
     return "".join(seg[0] for seg in (data[0] or []) if seg and seg[0])
 
+def _looks_untranslated(original: str, translated: str) -> bool:
+    """True if a translator echoed the input back (Lingva does this when its
+    Google scraper is broken upstream)."""
+    strip = lambda t: MARKER_PATTERN.sub("", t).strip()
+    o, t = strip(original), strip(translated)
+    return bool(re.search(r"[^\W\d_]{3,}", o)) and o == t
+
+
 def lingva_translate(text: str, source_lang: str = "auto", target_lang: str = "it") -> str:
     if not text or text.isspace():
         return text
     quoted = urllib.parse.quote(text, safe="")
-    last_error = None
+    errors = []
     for base in LINGVA_INSTANCES:
         url = f"{base}/api/v1/{source_lang}/{target_lang}/{quoted}"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0",
+                                                   "Accept": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=8) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                if "translation" in data:
-                    return data["translation"]
-        except Exception as exc:
-            last_error = exc
-    if last_error:
-        raise RuntimeError(
-            "All servers are inaccessible (403/503). "
-            "Try Google Translate or MyMemory."
-        ) from last_error
-    return ""
+        except Exception as exc:          # HTTP error, timeout, HTML instead of JSON...
+            errors.append(f"{base}: {exc}")
+            continue
+        result = data.get("translation") if isinstance(data, dict) else None
+        if not result:
+            errors.append(f"{base}: {data.get('error', 'empty response') if isinstance(data, dict) else 'bad response'}")
+            continue
+        if source_lang != target_lang and _looks_untranslated(text, result):
+            errors.append(f"{base}: text returned untranslated")
+            continue
+        return result
+    raise RuntimeError(
+        "Lingva: no instance returned a valid translation.\n"
+        + "\n".join(errors[-3:])
+        + "\nTry Google Translate or MyMemory."
+    )
 
 def mymemory_translate(text: str, source_lang: str = "auto", target_lang: str = "it") -> str:
     if not text or text.isspace():

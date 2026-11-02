@@ -47,7 +47,7 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.9.7"
+APP_VERSION = "2.9.8"
 APP_TITLE = f"THE MANAGER/BMP-FLTD/BMH Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -513,7 +513,9 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             on_font_state_changed=self._on_font_state_changed,
             can_change_charmap=self._can_change_charmap,
             on_string_font_change=self._on_string_font_change,
-            translate=self.tr,)
+            translate=self.tr,
+            on_bmh_charmap_changed=self._on_bmh_charmap_changed,
+            can_change_bmh_charmap=self._can_change_bmh_charmap,)
         self.tab_settings = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_settings, text=self.tr("tab.options"))
         self._reg_tab(self.tab_settings, "tab.options") 
@@ -664,17 +666,33 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.notebook.select(self.tab_strings)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_request)
 
+    def _exe_tabs(self):
+        return (self.tab_strings, self.tab_fonts, self.tab_settings,
+                self.tab_mana, self.tab_vga, self.tab_tore)
+
+    def _refresh_tab_visibility(self):
+        """Once an EXE is loaded, tabs that are not active for it disappear.
+        With nothing loaded all tabs stay visible (disabled)."""
+        loaded = bool(self.is_supported or self.bmh_game)
+        for tab in self._exe_tabs():
+            if not loaded or str(self.notebook.tab(tab, "state")) == "normal":
+                self.notebook.add(tab)          # restores a hidden tab at its old position
+            else:
+                self._hide_tab(tab)
+
     def _set_supported_state(self, supported: bool):
         self.is_supported = bool(supported and self.profile_name and self.profile and self.exe_data)
         state = tk.NORMAL if self.is_supported else tk.DISABLED
-        for tab in (self.tab_strings, self.tab_fonts, self.tab_settings, self.tab_mana, self.tab_vga, self.tab_tore):
+        for tab in self._exe_tabs():
             self.notebook.tab(tab, state=state)
+        self._refresh_tab_visibility()
         self._set_menu_state(self.supported_menu_entries, self.is_supported)
         self._update_translate_all_state()
         for widget in self.supported_controls:
             widget.config(state="readonly" if self.is_supported and isinstance(widget, ttk.Combobox) else state)
         self.edit_text.config(state=state)
-        self.font_editor.set_enabled(self.is_supported and self.font_editor.is_supported)
+        self.font_editor.set_enabled(
+            bool(self.is_supported or self.bmh_game) and self.font_editor.is_supported)
         self._sync_year_widget()
         self._sync_region_widget()
         self._sync_points_widget()
@@ -855,7 +873,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
     def _update_save_state(self):
         if getattr(self, "bmh_game", None):
             panel = self.bmh_panel
-            can_save = bool(panel.is_dirty() and not panel.has_pending_edit())
+            can_save = bool(not panel.has_pending_edit()
+                            and (panel.is_dirty() or self.font_editor.fnt_dirty()))
             self.save_button.config(state=tk.NORMAL if can_save else tk.DISABLED)
             self._set_menu_state(self.save_menu_entries, can_save)
             return
@@ -951,6 +970,16 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             return True
         messagebox.showwarning(self.tr("dlg.pending_text.title"), self.tr("dlg.pending_charmap.msg"))
         return False
+
+    def _can_change_bmh_charmap(self) -> bool:
+        if not self.bmh_panel.has_pending_edit():
+            return True
+        messagebox.showwarning(self.tr("dlg.pending_text.title"), self.tr("dlg.pending_charmap.msg"))
+        return False
+
+    def _on_bmh_charmap_changed(self):
+        self.bmh_panel.refresh_texts()
+        self._update_save_state()
 
     def _on_charmap_changed(self, game_name: str, font_key: str, charmap: dict):
         if not self._supported_loaded() or game_name != self.profile_name:
@@ -1591,7 +1620,11 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
         prog_win.destroy()
         if validation.get("noop"):
-            messagebox.showinfo(self.tr("dlg.translate_all.title"), self.tr("dlg.translate_all.unchanged"))
+            if stats["error"] is not None:
+                messagebox.showerror(self.tr("dlg.translate_all.blocked"),
+                                     self.tr("dlg.translate_all.nochange", detail=stats["error"]))
+            else:
+                messagebox.showinfo(self.tr("dlg.translate_all.title"), self.tr("dlg.translate_all.unchanged"))
             return
         if not validation["ok"]:
             detail = "\n".join(validation.get("errors", [])[:8]) or "Unknown validation error"
@@ -1604,7 +1637,14 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         summary = self.tr("dlg.translate_all.summary", translated=stats["translated"], unchanged=stats["unchanged"], blank=stats["blank"])
         if stats["suffix_skipped"]:
             summary += self.tr("dlg.translate_all.suffix", n=stats["suffix_skipped"])
-        messagebox.showinfo(self.tr("dlg.translate_all.done"), summary)
+        if stats["integrity_skipped"]:
+            summary += f"\n\nSkipped (translator altered protected tokens): {stats['integrity_skipped']}"
+        if stats["error"] is not None:
+            messagebox.showwarning(
+                self.tr("dlg.translate_all.done"),
+                summary + f"\n\nTranslation interrupted by an error; strings translated before it were applied:\n{str(stats['error'])[:300]}")
+        else:
+            messagebox.showinfo(self.tr("dlg.translate_all.done"), summary)
 
     def _current_entry_is_newspaper(self) -> bool:
         if self.current_index is None or not self._supported_loaded():
@@ -2217,6 +2257,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._reset_state()
         self.bmh_game = game
         self.source_path = os.path.abspath(filepath)
+        bmh_editor.set_charmap(load_config().get("bmh_charmap", {}))
         self.bmh_panel.load(os.path.abspath(blk_path), data)
         self.notebook.add(self.tab_bmh, text="BMH Strings")
         for folder, (tab, panel) in self.bmh_vga.items():
@@ -2226,6 +2267,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             else:
                 self._clear_vga_panel(panel, f"Cartella {folder} non trovata in: {exe_dir}")
             self.notebook.add(tab, text=f"VGA {folder}")
+        self._autoload_bmh_fonts(exe_dir)
         self.notebook.select(self.tab_bmh)
         self.filename_label.config(text=f"({os.path.basename(filepath)} + {os.path.basename(blk_path)})")
         self._set_profile(value=game["label"])
@@ -2237,8 +2279,36 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._set_status(None)
         return True
 
+    def _autoload_bmh_fonts(self, exe_dir):
+        """Load BMH2.FNT / BMH3.FNT from the .\\F folder next to the executable into the Fonts tab."""
+        editor = self.font_editor
+        font_dir = bmh_editor.find_dir_ci(exe_dir, "F")
+        paths = []
+        if font_dir:
+            for name in ("BMH2.FNT", "BMH3.FNT"):
+                path = bmh_editor.find_file_ci(font_dir, name)
+                if path:
+                    paths.append(path)
+        names, errors = editor.load_fnt_fonts(paths) if paths else ([], [])
+        self.notebook.tab(self.tab_fonts, state=tk.NORMAL)
+        self._refresh_tab_visibility()
+        if not font_dir:
+            editor.set_status_text(f"Cartella F non trovata in: {exe_dir}", "#C0392B")
+        elif not paths:
+            editor.set_status_text(f"BMH2.FNT / BMH3.FNT non trovati in: {font_dir}", "#C0392B")
+        elif len(names) < 2:
+            missing = [n for n in ("BMH2.FNT", "BMH3.FNT") if n not in names]
+            editor.set_status_text(f"{editor.font_status.cget('text')}  (mancanti: {', '.join(missing)})", "#E67E22")
+        if errors:
+            messagebox.showwarning("BMH Fonts", "\n".join(errors))
+
     def _save_bmh(self):
+        editor = self.font_editor
+        if editor.fnt_dirty() and not editor.save_all_fnt():
+            return False
         panel = self.bmh_panel
+        if not panel.is_dirty():
+            return True
         if panel.has_pending_edit():
             messagebox.showwarning(self.tr("dlg.save.blocked"), self.tr("block.text_pending"))
             return False

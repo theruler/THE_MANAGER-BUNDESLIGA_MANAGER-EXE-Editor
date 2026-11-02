@@ -4,7 +4,7 @@ import json
 import os
 
 from charmap import CharmapEncodeError, charmap_decode, charmap_encode
-from translator import CONTROL_TOKEN_PATTERN
+from translator import CONTROL_TOKEN_PATTERN, TranslationIntegrityError
 from repack_validator import repack_transaction, validate_image
 from string_exchange import StringExchangeError
 from exe_handler import EXE_FONT_PROFILES
@@ -213,7 +213,8 @@ class StringCodecMixin:
         staged_entries = copy.deepcopy(self.entries)
         staged_by_id   = {entry["string_id"]: entry for entry in staged_entries}
         suffix_ids     = self._suffix_group_ids(self.entries)
-        stats          = {"translated": 0, "unchanged": 0, "blank": 0,"suffix_skipped": 0, "excluded": 0}
+        stats          = {"translated": 0, "unchanged": 0, "blank": 0,"suffix_skipped": 0, "excluded": 0,
+                 "integrity_skipped": 0, "error": None}
         targets = [entry for entry in self.entries
                    if only_ids is None or entry["string_id"] in only_ids]
         stats["excluded"] = len(self.entries) - len(targets)
@@ -231,7 +232,14 @@ class StringCodecMixin:
                 stats["blank"] += 1
                 continue
 
-            translated = translator_func(original)
+            try:
+                translated = translator_func(original)
+            except TranslationIntegrityError:
+                stats["integrity_skipped"] += 1     # one damaged string: keep original, go on
+                continue
+            except Exception as exc:
+                stats["error"] = exc                # engine failure: stop, keep what is done
+                break
             if not isinstance(translated, str) or not translated:
                 raise TextTransactionError(
                     f"Translator returned no text for {source_entry['string_id']}"

@@ -18,6 +18,7 @@ import re
 import struct
 import tkinter as tk
 from tkinter import ttk, messagebox
+from translator import TranslationIntegrityError
 
 TEXT_COUNT = 0x566  # pointer table TextPointerTable[1382]
 
@@ -55,9 +56,36 @@ def find_dir_ci(directory, name):
 
 # ---------------------------------------------------------------- codec ----
 # DIN 66003 / ISO 646-DE: the 7-bit German national variant.
-_DE_DECODE = {0x40: "§", 0x5B: "Ä", 0x5C: "Ö", 0x5D: "Ü",
-              0x7B: "ä", 0x7C: "ö", 0x7D: "ü", 0x7E: "ß"}
+_BASE_DE_DECODE = {0x40: "§", 0x5B: "Ä", 0x5C: "Ö", 0x5D: "Ü",
+                   0x7B: "ä", 0x7C: "ö", 0x7D: "ü", 0x7E: "ß"}
+# Effective tables (base + user char map).  They are mutated in place by set_charmap(),
+# so every module holding a reference sees the current mapping.
+_DE_DECODE = dict(_BASE_DE_DECODE)
 _DE_ENCODE = {ch: code for code, ch in _DE_DECODE.items()}
+
+
+def set_charmap(mapping):
+    """Overlay a user char map ({"7e": "à", ...}: byte -> character) on ISO 646-DE.
+
+    A mapped byte decodes to its character and a mapped character encodes to its byte.
+    The byte's plain ASCII character is then no longer encodable (it would be ambiguous);
+    raw bytes stay reachable through \\xNN."""
+    overrides = {}
+    for key, value in (mapping or {}).items():
+        try:
+            code = int(str(key), 16)
+        except ValueError:
+            continue
+        if 0 < code <= 0xFF and isinstance(value, str) and len(value) == 1:
+            overrides[code] = value
+    _DE_DECODE.clear()
+    _DE_DECODE.update(_BASE_DE_DECODE)
+    _DE_DECODE.update(overrides)
+    _DE_ENCODE.clear()
+    for code, ch in _DE_DECODE.items():          # overrides come last and win
+        _DE_ENCODE[ch] = code
+    for code, ch in overrides.items():
+        _DE_ENCODE[ch] = code
 _ESCAPE_RE = re.compile(r"\\x([0-9A-Fa-f]{2})")
 
 
@@ -93,7 +121,7 @@ def encode_text(text: str) -> bytes:
         ch = text[i]
         if ch in _DE_ENCODE:
             out.append(_DE_ENCODE[ch])
-        elif 0x20 <= ord(ch) < 0x7F and ch not in "@[\\]{|}~":
+        elif 0x20 <= ord(ch) < 0x7F and ord(ch) not in _DE_DECODE:
             out.append(ord(ch))
         else:
             raise BMHEncodeError(f"Character {ch!r} is not available in ISO 646-DE (use \\xNN for raw bytes)")
@@ -323,6 +351,14 @@ class BMHStringsPanel(ttk.Frame):
         if self.current_id is not None and self.tree.exists(str(self.current_id)):
             self.tree.selection_set(str(self.current_id))
 
+    def refresh_texts(self):
+        """Redisplay all strings (e.g. after the char map changed); raw bytes are untouched."""
+        if not self.loaded:
+            return
+        self._refresh_tree()
+        if self.current_id is not None:
+            self._show(self.current_id)
+
     def _on_select(self, _event=None):
         sel = self.tree.selection()
         if not sel:
@@ -427,7 +463,8 @@ class BMHStringsPanel(ttk.Frame):
         if self.has_pending_edit() and not self.apply_edit():
             return
         ids = [i for i, s in enumerate(self._strings) if re.search(r"[A-Za-z\xC4\xD6\xDC\xE4\xF6\xFC]", decode_text(s))]
-        if not ids or not messagebox.askyesno("Translate all", f"Translate {len(ids)} strings with the selected engine?"):
+        ids = self._ask_translate_range(root, ids)
+        if not ids:
             return
         translate_fn = self.bar.make_translate_fn()
         win = tk.Toplevel(root)
@@ -440,23 +477,30 @@ class BMHStringsPanel(ttk.Frame):
         status = ttk.Label(win, text="", font=("Segoe UI", 9, "italic"), padding=(10, 0, 10, 10))
         status.pack()
         win.update()
-        results, skipped = {}, 0
+        results, skipped, error = {}, 0, None
         try:
             for n, text_id in enumerate(ids, 1):
                 source = decode_text(self._strings[text_id])
                 status.config(text=f"{n}/{len(ids)}  {source[:50]}")
                 var.set(n)
                 win.update()
-                translated = self._translate_text(translate_fn, source)
+                try:
+                    translated = self._translate_text(translate_fn, source)
+                except TranslationIntegrityError:
+                    skipped += 1
+                    continue
+                except Exception as exc:
+                    error = exc          # engine failure: stop, keep what is done
+                    break
                 try:
                     results[text_id] = encode_text(translated)
                 except BMHEncodeError:
                     skipped += 1  # translated text has characters the game charset cannot hold
-        except Exception as exc:
+        finally:
             win.destroy()
-            messagebox.showerror("Translate all", f"Translation aborted, nothing was changed.\n\n{exc}")
+        if error is not None and not results:
+            messagebox.showerror("Translate all", f"Translation aborted, nothing was changed.\n\n{error}")
             return
-        win.destroy()
         changed = 0
         for text_id, raw in results.items():
             if raw != self._strings[text_id]:
@@ -466,5 +510,71 @@ class BMHStringsPanel(ttk.Frame):
         if self.current_id is not None:
             self._show(self.current_id)
         self._on_change()
-        messagebox.showinfo("Translate all", f"Translated: {changed}\nUnchanged: {len(results) - changed}\n"
-                                             f"Skipped (characters not in ISO 646-DE): {skipped}")
+        summary = (f"Translated: {changed}\nUnchanged: {len(results) - changed}\n"
+                   f"Skipped (characters not in ISO 646-DE / altered tokens): {skipped}")
+        if error is not None:
+            messagebox.showwarning("Translate all", summary + "\n\nTranslation interrupted by an error; "
+                                   f"strings translated before it were applied:\n{str(error)[:300]}")
+        else:
+            messagebox.showinfo("Translate all", summary)
+
+    def _ask_translate_range(self, root, ids):
+        """Ask for an inclusive ID range (IDs as shown in the table); returns the ids inside it."""
+        if not ids:
+            messagebox.showinfo("Translate all", "No translatable strings found.")
+            return None
+        lo_all, hi_all = min(ids), max(ids)
+        win = tk.Toplevel(root)
+        win.title("Translate all")
+        win.resizable(False, False)
+        win.transient(root)
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frm, text=f"Translatable strings: {len(ids)} (IDs {lo_all}-{hi_all})").grid(
+            row=0, column=0, columnspan=4, sticky="w")
+        from_var, to_var = tk.StringVar(value=str(lo_all)), tk.StringVar(value=str(hi_all))
+        ttk.Label(frm, text="From ID").grid(row=1, column=0, sticky="w", pady=6)
+        ttk.Entry(frm, textvariable=from_var, width=8).grid(row=1, column=1, padx=(4, 12))
+        ttk.Label(frm, text="To ID").grid(row=1, column=2, sticky="w")
+        ttk.Entry(frm, textvariable=to_var, width=8).grid(row=1, column=3, padx=(4, 0))
+        info = ttk.Label(frm, text="", font=("Segoe UI", 9, "bold"))
+        info.grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 8))
+        row = ttk.Frame(frm)
+        row.grid(row=3, column=0, columnspan=4, sticky="e")
+        ok = ttk.Button(row, text="Start")
+        ok.pack(side=tk.LEFT, padx=(0, 6))
+        result = {"ids": None}
+
+        def compute():
+            try:
+                lo = int(from_var.get().strip().lstrip("#") or lo_all)
+                hi = int(to_var.get().strip().lstrip("#") or hi_all)
+            except ValueError:
+                return None
+            return None if hi < lo else [i for i in ids if lo <= i <= hi]
+
+        def update(*_):
+            sel = compute()
+            if sel is None:
+                info.config(text="Invalid range", foreground="#C0392B")
+                ok.config(state=tk.DISABLED)
+            else:
+                info.config(text=f"{len(sel)} strings selected", foreground="#1565C0")
+                ok.config(state=tk.NORMAL if sel else tk.DISABLED)
+
+        def accept(*_):
+            sel = compute()
+            if sel:
+                result["ids"] = sel
+                win.destroy()
+
+        ok.config(command=accept)
+        ttk.Button(row, text="Cancel", command=win.destroy).pack(side=tk.LEFT)
+        for var in (from_var, to_var):
+            var.trace_add("write", update)
+        win.bind("<Return>", accept)
+        win.bind("<Escape>", lambda _e: win.destroy())
+        update()
+        win.grab_set()
+        win.wait_window()
+        return result["ids"]

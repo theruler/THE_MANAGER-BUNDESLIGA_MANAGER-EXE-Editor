@@ -504,7 +504,197 @@ def atomic_save_bytes(
     return str(backup_path) if backup_path is not None else None
 
 
+# ---------------------------------------------------------------------------
+# Bundesliga Manager Hattrick .FNT bitmap fonts (Amiga TextFont-like layout)
+#
+# 28-byte little-endian header, then height*row_bytes of 1-bpp bitmap (MSB first),
+# n * (u16 bit offset, u16 bit width) and, unless flags == 2, n * s16 advances,
+# with n = last - first + 2 (the extra entry is the replacement glyph).
+# Glyphs sharing the same (offset, width) are aliases and share one `shape`.
+# The header is kept verbatim except for bytes-per-row, recomputed on save when the
+# layout changed; an untouched font is written back byte-identical.
+# ---------------------------------------------------------------------------
+FNT_HEADER_SIZE = 28
+FNT_MAX_GLYPH_WIDTH = 32
+
+
+class FntError(FontSafetyError):
+    pass
+
+
+class FntFont:
+    def __init__(self, header, glyphs, shapes):
+        self.header = bytearray(header)
+        self.glyphs = glyphs          # list of {"shape": shape, "advance": int, "raw_offset": int}
+        self.shapes = shapes          # unique shape dicts: {"width": int, "rows": [int]*height}
+        self.layout_dirty = False     # True once a width changed: bitmap is then repacked
+
+    # ---- header accessors ----
+    @property
+    def height(self):        return struct.unpack_from("<H", self.header, 0)[0]
+    @property
+    def flags(self):         return self.header[3]
+    @property
+    def nominal_width(self): return struct.unpack_from("<H", self.header, 4)[0]
+    @property
+    def baseline(self):      return struct.unpack_from("<H", self.header, 6)[0]
+    @property
+    def first(self):         return self.header[8]
+    @property
+    def last(self):          return self.header[9]
+    @property
+    def has_spacing(self):   return self.flags != 2
+
+    def glyph_for_code(self, code):
+        if self.first <= code <= self.last:
+            return self.glyphs[code - self.first]
+        return self.glyphs[-1]
+
+    def code_of(self, index):
+        return self.first + index     # last index (replacement) is last+1
+
+    def is_replacement(self, index):
+        return index == len(self.glyphs) - 1
+
+    def alias_count(self, index):
+        shape = self.glyphs[index]["shape"]
+        return sum(1 for g in self.glyphs if g["shape"] is shape)
+
+    # ---- editing ----
+    def set_width(self, index, width):
+        if not 0 <= width <= FNT_MAX_GLYPH_WIDTH:
+            raise FntError(f"Width must be 0..{FNT_MAX_GLYPH_WIDTH}")
+        shape = self.glyphs[index]["shape"]
+        old = shape["width"]
+        if width < old:
+            shape["rows"] = [r >> (old - width) for r in shape["rows"]]
+        elif width > old:
+            shape["rows"] = [r << (width - old) for r in shape["rows"]]
+        shape["width"] = width
+        self.layout_dirty = True
+
+    def clone(self):
+        shape_map = {id(s): {"width": s["width"], "rows": list(s["rows"])} for s in self.shapes}
+        font = FntFont(
+            self.header,
+            [{**g, "shape": shape_map[id(g["shape"])]} for g in self.glyphs],
+            list(shape_map.values()),
+        )
+        font.layout_dirty = self.layout_dirty
+        return font
+
+    # ---- serialization ----
+    def to_bytes(self) -> bytes:
+        height = self.height
+        order, seen = [], set()
+        for g in self.glyphs:                       # unique shapes, first-use order
+            s = g["shape"]
+            if id(s) not in seen:
+                seen.add(id(s))
+                order.append(s)
+        offsets, cursor = {}, 0
+        if self.layout_dirty:
+            for s in order:
+                offsets[id(s)] = cursor
+                cursor += s["width"]
+            modulo = max(1, (cursor + 7) // 8)
+        else:                                       # untouched layout: keep the original offsets
+            for g in self.glyphs:
+                offsets[id(g["shape"])] = g["raw_offset"]
+            modulo = struct.unpack_from("<H", self.header, 16)[0]
+        bitmap = [0] * height                       # each row as one big int, MSB first
+        total_bits = modulo * 8
+        for s in order:
+            off, w = offsets[id(s)], s["width"]
+            if not w:
+                continue
+            for r in range(height):
+                bitmap[r] |= (s["rows"][r] & ((1 << w) - 1)) << (total_bits - off - w)
+        out = bytearray(self.header)
+        struct.pack_into("<H", out, 16, modulo)
+        for r in range(height):
+            out += bitmap[r].to_bytes(modulo, "big")
+        for g in self.glyphs:
+            s = g["shape"]
+            off = offsets[id(s)] if (self.layout_dirty and s["width"]) else g["raw_offset"]
+            out += struct.pack("<HH", off, s["width"])
+        if self.has_spacing:
+            for g in self.glyphs:
+                out += struct.pack("<h", g["advance"])
+        return bytes(out)
+
+
+def parse_fnt(data: bytes) -> FntFont:
+    if len(data) < FNT_HEADER_SIZE:
+        raise FntError("FNT: file too short")
+    height = struct.unpack_from("<H", data, 0)[0]
+    flags = data[3]
+    first, last = data[8], data[9]
+    modulo = struct.unpack_from("<H", data, 16)[0]
+    nominal = struct.unpack_from("<H", data, 4)[0]
+    if last < first:
+        raise FntError("FNT: last character precedes first")
+    if not 1 <= height <= 64:
+        raise FntError(f"FNT: unsupported glyph height {height}")
+    n = last - first + 2
+    bmp = FNT_HEADER_SIZE
+    loc = bmp + height * modulo
+    spc = loc + n * 4
+    end = spc + (0 if flags == 2 else n * 2)
+    if end != len(data):
+        raise FntError(f"FNT: size mismatch (expected {end}, got {len(data)})")
+    bits_total = modulo * 8
+    rows_int = [int.from_bytes(data[bmp + r * modulo: bmp + (r + 1) * modulo], "big")
+                for r in range(height)]
+    glyphs, shapes, by_key = [], [], {}
+    for i in range(n):
+        off, width = struct.unpack_from("<HH", data, loc + i * 4)
+        if width > FNT_MAX_GLYPH_WIDTH:
+            raise FntError(f"FNT: glyph {i} is {width}px wide (max {FNT_MAX_GLYPH_WIDTH})")
+        if width and off + width > bits_total:
+            raise FntError(f"FNT: glyph {i} lies outside the bitmap")
+        key = (off, width) if width else ("zero", i)
+        shape = by_key.get(key)
+        if shape is None:
+            mask = (1 << width) - 1
+            shape = {"width": width,
+                     "rows": [(rows_int[r] >> (bits_total - off - width)) & mask if width else 0
+                              for r in range(height)]}
+            by_key[key] = shape
+            shapes.append(shape)
+        adv = nominal if flags == 2 else struct.unpack_from("<h", data, spc + i * 2)[0]
+        glyphs.append({"shape": shape, "advance": adv, "raw_offset": off})
+    return FntFont(data[:FNT_HEADER_SIZE], glyphs, shapes)
+
+
+def text_width(font: FntFont, text_codes) -> int:
+    return sum(font.glyph_for_code(c)["advance"] for c in text_codes)
+
+
+def render_text(font: FntFont, text_codes):
+    """Return (width, rows) where rows is a list of sets of lit x positions per scanline."""
+    rows = [set() for _ in range(font.height)]
+    x = 0
+    for c in text_codes:
+        g = font.glyph_for_code(c)
+        s = g["shape"]
+        for r in range(font.height):
+            v = s["rows"][r]
+            for b in range(s["width"]):
+                if v & (1 << (s["width"] - 1 - b)):
+                    rows[r].add(x + b)
+        x += g["advance"]
+    return x, rows
+
+
+
 __all__ = [
+    "FntFont",
+    "FntError",
+    "parse_fnt",
+    "render_text",
+    "text_width",
+    "FNT_MAX_GLYPH_WIDTH",
     "FontSafetyError",
     "atomic_save_bytes",
     "bytes_per_row_for_width",
