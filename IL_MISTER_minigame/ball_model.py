@@ -3,10 +3,7 @@
 import math
 
 from geometry import depth_k, depth_v_k
-
-
-STANDING_BALL_OFFSET = 4.5 # World units between a stationary player's anchor and the ball at his feet; shared by dribble() and restart placement.
-G = 150.0 # Gravity applied to the ball in world units per second squared.
+from match_config import BALL_GRAVITY
 
 
 def step_ball_physics(x, v, z, vx, vv, vz, h, ds): # Advance the ball one physics step; shared by previews and forecasts.
@@ -15,7 +12,7 @@ def step_ball_physics(x, v, z, vx, vv, vz, h, ds): # Advance the ball one physic
     x += vx * h * kk
     v += vv * h * kv
     z += vz * h
-    vz -= G * h
+    vz -= BALL_GRAVITY * h
     if z <= 0.0:
         z = 0.0
         if vz < -35.0:

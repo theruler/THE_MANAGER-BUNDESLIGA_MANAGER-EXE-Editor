@@ -14,31 +14,18 @@ import random
 
 from game_utils import clamp
 
-STAT_MIN, STAT_MAX = 10, 99
-DEFAULT_STATS = (55, 55, 55) # Used when a player has no rating (should not happen).
+from match_config import (AERIAL_ERR_RANGE, BLOCK_FATIGUE_K, DEFAULT_STATS, ERR_FATIGUE_K, FLAIR_RANGE,
+                          INJURY_RANGE, INTERCEPT_FATIGUE_K, INTERCEPT_RANGE, KEEPER_TECH_RANGE,
+                          KICK_FATIGUE_MAX, LOSE_BALL_FATIGUE_K, LOSE_BALL_RATE, POWER_RANGE, SHOT_ERR_MAX,
+                          SHOT_ERR_MIN, SKILL_RANGE, SPEED_RANGE, STAT_MAX, STAT_MIN, TOUCH_FATIGUE_K,
+                          TOUCH_RATE, TURN_RATE_FULL, TURN_RATE_MIN)
 
-SPEED_RANGE = (0.88, 1.12) # Running speed multiplier at Fitness 10 / 99.
-POWER_RANGE = (215.0, 320.0) # Maximum kick power (ball range) at Fitness 10 / 99.
-INJURY_RANGE = (1.5, 0.5) # Injury probability multiplier at Fitness 10 / 99.
-SHOT_ERR_MAX = 0.15 # Angular error (rad, std dev) of a shot at Skill 10; Skill 99 keeps only SHOT_ERR_MIN.
-SHOT_ERR_MIN = 0.01
-SKILL_RANGE = (0.65, 1.30) # Multiplier applied to the base p.skill (keeper saves, headers, challenges) at Skill 10 / 99.
-TOUCH_RATE = (10.0, 16.0) # How tightly the ball follows the dribbler (1/s) at Skill 10 / 99.
-TURN_RATE_MIN = 3.0 # Direction change (rad/s) above which a dribbler can lose the ball...
-TURN_RATE_FULL = 9.0 # ...and at which the risk is maximal.
-LOSE_BALL_RATE = 1.4 # Probability per second of a loose touch at maximum turn rate and Skill 10.
-INTERCEPT_RANGE = (0.80, 1.25) # Interception radius multiplier at Form 10 / 99.
-FLAIR_RANGE = (0.08, 0.60) # Weight of attempting spectacular moves (bicycle, volley, diving header) at Skill 10 / 99.
-AERIAL_ERR_RANGE = (0.22, 0.03) # Angular error (rad, std dev) of a header that is a pass / clearance at Skill 10 / 99.
+ROLE_COL = {"GK": (90, 150, 255), "DEF": (90, 210, 120), "MID": (240, 200, 80), "FWD": (240, 90, 90)} # Shared colours for tactical roles in roster and match panels.
 
 
-KICK_FATIGUE_MAX = 0.40 # Fraction of kick power (every pass and shot, not only the long ones) lost at fatigue 1.
-ERR_FATIGUE_K = 0.9 # Shot / header angular error grows by this fraction at fatigue 1.
-TOUCH_FATIGUE_K = 0.35 # Dribbling ball-follow rate lost at fatigue 1 (looser touches).
-LOSE_BALL_FATIGUE_K = 1.5 # Loose-touch risk on sharp turns grows by this fraction at fatigue 1.
-INTERCEPT_FATIGUE_K = 0.40 # Interception radius lost at fatigue 1.
-BLOCK_FATIGUE_K = 0.60 # Chance of blocking a hard shot lost at fatigue 1.
-KEEPER_TECH_RANGE = (0.70, 1.30) # Goalkeeper save-chance multiplier at Skill 10 / 99 (proportional to his technique).
+def stat_color(v): # Red (10) -> yellow -> green (99).
+    t = clamp((v - 10) / 89.0, 0.0, 1.0)
+    return (255, int(90 + 165 * min(1.0, t * 2)), 90) if t < 0.5 else (int(255 - 185 * (t - 0.5) * 2), 230, 110)
 
 
 def lerp(rng, t): # Linear interpolation inside a (low, high) pair.
@@ -100,8 +87,11 @@ class StatsMixin: # Effects of Fitness / Skill / Form on the simulation.
         return lerp(SPEED_RANGE, norm(self.pstats(p)[0])) * (1.0 - self.fatigue(p))\
             * (self.agon_pace_k(p) * self.agon_exhaust_k(p) if hasattr(self, "agon_pace_k") else 1.0) # Agonism pace and exhaustion (agonism_system).
 
+    def keeper_skill(self, p): # Normalized goalkeeper Skill rating (0..1).
+        return norm(self.pstats(p)[1])
+
     def keeper_tech(self, p): # Save-chance multiplier of a goalkeeper, proportional to his Skill rating.
-        return lerp(KEEPER_TECH_RANGE, norm(self.pstats(p)[1]))
+        return lerp(KEEPER_TECH_RANGE, self.keeper_skill(p))
 
     def block_k(self, p): # Multiplier on the chance that a defender blocks a hard shot.
         return 1.0 - BLOCK_FATIGUE_K * self.tired(p)

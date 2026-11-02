@@ -1,7 +1,7 @@
 import os
 import time
 
-from lang import tr
+from i18n import tr
 from match_config import TEAM_COL, TEAM_NAMES
 
 

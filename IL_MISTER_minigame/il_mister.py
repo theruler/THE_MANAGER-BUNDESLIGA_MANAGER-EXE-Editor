@@ -6,59 +6,55 @@ import random
 import sys
 import time
 import pygame
-from agonism_system import AGON_DEFAULT, AgonismMixin
-from aim_system import AimMixin
-from ai_system import AIMixin
-from animation_config import ACT_SPEC
-from audio_system import Audio
-from ball_model import G
-from camera_system import CAM_GLIDE_SECS, CameraMixin
-from celebration_system import CELE_KINDS, CelebrationMixin, GOAL_FETCH_MAX, T_AFTER, T_CELE
-from entities import Ball, Flag, Player, Ref
-from fonts import FONTS
-from formation_system import DEFAULT_FORMATION, formation_slots, FormationMixin
-from game_utils import clamp, dir8, unit
-from geometry import (
-    depth_k, depth_v_k, FH, FIELD_X0, FW, in_box_fn, L, MAX_Y, PEN_D, pitch_v, s2w, screen_to_world_dir,
-    V_BOT, V_GC, V_MAX_P, V_MID, V_MIN_P, V_PEN, V_SPOT, V_TOP, w2s, w2s_jac, Y_OFFSET,
-)
-from graphics_system import find_file, Graphics, Scoreboard
-from input_system import InputMixin
-from intro_system import IntroMixin
-from options_store import load_options, options_path
-from joystick import JOY_IMG, JOY_KEYS, JoyPad
-from lang import init_language, Note, ROLE_TAG, T, tr
-from layout import compute_layout, SU_H, SU_W
-from match_config import FLAG_H, FLAG_R, SPEED_DEFAULT, SPEED_UNIT, SPEEDS, TEAM_COL, TEAM_NAMES
-from match_log_system import MatchLogMixin, set_match_log_dir
-from path_system import PathMixin
-from physics_system import AIR_MIN_Z, PhysicsMixin, REACH_FIRST, STRIKE_REACH, THROW_HOLD_Z
-from rendering_system import RenderingMixin
-from replay_system import REPLAY_MAX_SECS, ReplayMixin, TORE_FPS
-from resources import ask_pic_dir, fatal, find_asset, find_original_sound, load_teams, locate_pic
-from restart_system import RestartMixin
-from sprite_data import load_data, REF_MOVE, REF_STAND, team_sprite_offset
-from stats_system import StatsMixin
-from substitution_system import SubstitutionMixin
+import agonism_system
+import ai_system
+import audio_system
+import camera_system
+import celebration_system
+import entities
+import fonts
+import formation_system
+import game_utils
+import geometry
+import graphics_system
+import i18n
+import input_system
+import intro_system
+import joystick
+import layout
+import match_config
+import match_log_system
+import physics_system
+import rendering_system
+import replay_system
+import resources
+import restart_system
+import single_match_system
+import sprite_data
+import stats_system
+import substitution_system
 
-VERSION = "1.5.3"
+VERSION = "1.5.4"
 
-class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMixin, MatchLogMixin, ReplayMixin, SubstitutionMixin, FormationMixin, PathMixin, PhysicsMixin, AIMixin, RenderingMixin, CameraMixin, CelebrationMixin): # Main match state, rule sequencing, user control, and frame coordination.
+class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_system.StatsMixin, agonism_system.AgonismMixin,
+             restart_system.RestartMixin, input_system.InputMixin, match_log_system.MatchLogMixin, replay_system.ReplayMixin,
+             substitution_system.SubstitutionMixin, formation_system.FormationMixin, physics_system.PhysicsMixin,
+             ai_system.AIMixin, rendering_system.RenderingMixin, camera_system.CameraMixin, celebration_system.CelebrationMixin): # Main match state, rule sequencing, user control, and frame coordination.
     def __init__(self, args, gfx, audio, screen, notes, teams): # Initialize the match engine and connect resources, teams, and subsystem state.
         self.args, self.gfx, self.audio, self.screen, self.notes = args, gfx, audio, screen, notes
         self.target = screen
         self.teams = teams
         self.sel = [0, 1 if len(teams) > 1 else 0]
-        self.form_names = [DEFAULT_FORMATION, DEFAULT_FORMATION]
+        self.form_names = [match_config.DEFAULT_FORMATION, match_config.DEFAULT_FORMATION]
         self.team_data = [teams[self.sel[0]], teams[self.sel[1]]]
-        self.board = Scoreboard(gfx.board_path, FONTS, ROLE_TAG, TEAM_COL, TEAM_NAMES, tr)
+        self.board = graphics_system.Scoreboard(gfx.board_path, fonts.FONTS, i18n.ROLE_TAG, match_config.TEAM_COL, match_config.TEAM_NAMES, i18n.tr)
         self.board.gfx_icon = gfx.roster_icon
         self.lineup = [None, None]
         self.su_pick = None
         self.replay_auto = not getattr(args, "no_replay", False)
         self.replay_secs = int(getattr(args, "replay_secs", 5) or 5)
         self.tore_dir = getattr(args, "tore_dir", None) or "TORE_OUT"
-        self.rec = collections.deque(maxlen=60 * (REPLAY_MAX_SECS + 14))
+        self.rec = collections.deque(maxlen=60 * (replay_system.REPLAY_MAX_SECS + 14))
         self.tick = 0
         self.replay = None
         self.last_scorer = ""
@@ -67,21 +63,25 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         self.lang_open = False
         self._su_last_sel = {}
         self.options_path = getattr(args, "options_path", None) # DATA/options.json
-        self.options_open = False # OPTIONS page (language, joypad mapping, font, replay...) reached from the INTRO.
-        self.langs = T.discover_languages()
+        self.options_open = False # OPTIONS page (language, joypad mapping, font, replay...) reached from the main menu.
+        self.menu_page = "main" # Intro page: "main" (CAMPIONATO / PARTITA VELOCE / OPZIONI), "quick" (single match), "champ" (championship).
+        self.menu_notice = None # (text, expiry time) shown on the main menu, e.g. the CAMPIONATO placeholder.
+        self.langs = i18n.T.discover_languages()
         self.help_page = 0
         self._help_paged = False
         self.vsurf = None
-        self.su_surf = pygame.Surface((SU_W, SU_H))
+        self.su_surf = pygame.Surface((layout.SU_W, layout.SU_H), pygame.SRCALPHA) # Transparent where a menu picture must show through.
         self.su_scroll, self.su_active, self.su_hits = [0, 0], 0, []
-        self.joy = JoyPad(getattr(args, "joy_dirs", []), getattr(args, "joy_write_dir", None))
+        self.joy = joystick.JoyPad(getattr(args, "joy_dirs", []), getattr(args, "joy_write_dir", None))
         self.joy_img_path = getattr(args, "joy_img", None)
         self.joymap_open, self.jm_wait, self.jm_rows, self.jm_btns, self.jm_img = False, None, [], [], None
         self.jm_drag, self.jm_spots = None, {}
         self.jm_flash = {}
         self.zoom = args.zoom
         self.scroll = not getattr(args, "noscroll", False)
-        self.speed_idx = SPEED_DEFAULT
+        sm = int(getattr(args, "speed_max", 100) or 100)
+        self.speed_max = max([c for c in match_config.SPEED_MAX_CHOICES if c <= sm] or [match_config.SPEED_MAX_CHOICES[0]]) # Highest speed multiplier selectable in game (OPTIONS: 10x / 25x / 50x / 100x).
+        self.speed_idx = match_config.SPEED_DEFAULT
         self.user_team = 0
         self.ctrl_choice = 0
         self.slowmo_p = None
@@ -92,14 +92,15 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         self.idle_t = 0.0
         self._last_owner = None
         self._poss_prev = None
+        self.reset_steal()
         self.show_help = False
         self.fullscreen = False
         self.set_view_dims()
-        self.font_s = FONTS.get(22)
-        self.font_m = FONTS.get(34)
-        self.font_t = FONTS.get(18)
-        self.font_l = FONTS.get(72)
-        self.field_surf = pygame.Surface((FW, FH))
+        self.font_s = fonts.FONTS.get(22)
+        self.font_m = fonts.FONTS.get(34)
+        self.font_t = fonts.FONTS.get(18)
+        self.font_l = fonts.FONTS.get(72)
+        self.field_surf = pygame.Surface((geometry.FW, geometry.FH))
         self.half_secs = max(20.0, args.half * 60.0)
         self.mode = "intro"
         self.paused = False
@@ -134,7 +135,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         self.drag_btn = 1
         self.charge = None
         self._arrow = None
-        self.sprite_surf = pygame.Surface((FW, FH), pygame.SRCALPHA)
+        self.sprite_surf = pygame.Surface((geometry.FW, geometry.FH), pygame.SRCALPHA)
         self.paused_gesture = None
         self.paused_traj_data = None
         self.click_mark = None
@@ -152,7 +153,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
     def reset_match(self): # Reset match objects, timers, statistics, and temporary state for a new match.
         self.slowmo_p = None
         self._gk_dribble_attempted = None
-        self.agon_lv, self.agon_drag = [AGON_DEFAULT, AGON_DEFAULT], None
+        self.agon_lv, self.agon_drag = [match_config.AGON_DEFAULT, match_config.AGON_DEFAULT], None
         self._backpass_src, self._gk_out_t = None, 0.0
         self.score = [0, 0]
         self.half, self.real_t, self.extra = 1, 0.0, 0.0
@@ -161,22 +162,22 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         self.players, self.team_p = [], [[], []]
         self.sync_teams()
         for team in (0, 1):
-            slots = formation_slots(self.form_names[team])
+            slots = formation_system.formation_slots(self.form_names[team])
             self.fix_lineup(team)
             names = self.lineup_names(team)
             for i in range(11):
-                p = Player(team, i, names[i] if i < len(names) else "")
+                p = entities.Player(team, i, names[i] if i < len(names) else "")
                 p.apply_slot(slots[i])
                 self.players.append(p)
                 self.team_p[team].append(p)
-        self.ball, self.ref = Ball(), Ref()
+        self.ball, self.ref = entities.Ball(), entities.Ref()
         self.first_kick = random.randint(0, 1)
         self.cp = None
         self.foul = self.goal = self.restart = self.outball = None
         self.half_t = 0.0
         self.msgs, self.big = [], None
         self.stats = self.new_stats()
-        self.flags = [Flag(0.0, V_TOP, 1.0), Flag(L, V_TOP, -1.0), Flag(0.0, V_BOT, 1.0), Flag(L, V_BOT, -1.0)]
+        self.flags = [entities.Flag(0.0, geometry.V_TOP, 1.0), entities.Flag(geometry.L, geometry.V_TOP, -1.0), entities.Flag(0.0, geometry.V_BOT, 1.0), entities.Flag(geometry.L, geometry.V_BOT, -1.0)]
         self.sub_q, self.subs_used, self.sub_out = [[], []], [0, 0], [set(), set()]
         self.injury, self.sub_menu, self.pathdrag = None, None, None
         self.paused = False
@@ -189,8 +190,9 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                 p_.sq = sq
                 self.apply_skill(p_, self.team_data[t_]["stats"][sq])
         self.mlog, self.log_saved = [], False
-        self.log_event(tr("ev.match_start", home=TEAM_NAMES[0], away=TEAM_NAMES[1], fh=self.form_names[0], fa=self.form_names[1]), show=False)
+        self.log_event(i18n.tr("ev.match_start", home=match_config.TEAM_NAMES[0], away=match_config.TEAM_NAMES[1], fh=self.form_names[0], fa=self.form_names[1]), show=False)
         self.manual, self._last_owner, self._poss_prev = False, None, None
+        self.reset_steal()
         self.setup_kickoff(self.first_kick, sound=False)
 
 
@@ -205,9 +207,9 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             if live and f.state == "planted":
                 if b.owner is None and self.flag_grace <= 0.0:
                     sp = math.hypot(b.vx, b.vv)
-                    if abs(b.wx - f.x) < FLAG_R and abs(b.wv - f.v) < FLAG_R * 1.2 and b.z < FLAG_H + 1.5 and sp > 20.0:
+                    if abs(b.wx - f.x) < match_config.FLAG_R and abs(b.wv - f.v) < match_config.FLAG_R * 1.2 and b.z < match_config.FLAG_H + 1.5 and sp > 20.0:
                         if f.hit(b.vx, b.vv, sp):
-                            self.audio.play("bar" if b.z > 4.5 else "post", clamp(0.4 + sp / 260.0, 0.4, 1.0))
+                            self.audio.play("bar" if b.z > 4.5 else "post", game_utils.clamp(0.4 + sp / 260.0, 0.4, 1.0))
                             b.vx *= -0.4
                             b.vv *= 0.6
                             continue
@@ -216,12 +218,12 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                         continue
                     ddx, ddv = f.x - p.wx, f.v - p.wv
                     dist = math.hypot(ddx, ddv)
-                    if dist > FLAG_R * 1.1:
+                    if dist > match_config.FLAG_R * 1.1:
                         continue
                     sp = math.hypot(p.vx, p.vv)
                     if sp > 32.0 and (p.vx * ddx + p.vv * ddv) > 0.4 * sp * max(dist, 0.1):
                         if f.hit(p.vx, p.vv, sp * (1.3 if p.state == "action" else 1.0)):
-                            self.audio.play("post", clamp(0.35 + sp / 300.0, 0.35, 0.8))
+                            self.audio.play("post", game_utils.clamp(0.35 + sp / 300.0, 0.35, 0.8))
                             break
             ev = f.update(dt)
             if ev == "thud":
@@ -243,7 +245,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
     ARROW_MIN, ARROW_MAX = 14.0, 64.0
 
     def gesture_intensity(self, ln): # Convert gesture length and timing into an action intensity.
-        return clamp(ln / max(160.0, self.view_w * self.GESTURE_FULL), 0.0, 1.0)
+        return game_utils.clamp(ln / max(160.0, self.view_w * self.GESTURE_FULL), 0.0, 1.0)
 
     def gesture_plan(self, x0, y0, x1, y1, act=None): # Convert a user gesture into a planned kick direction and type.
         p = self.cp
@@ -253,10 +255,10 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             return None
         ux, uy = dx / ln, dy / ln
         f = self.gesture_intensity(ln)
-        return (act or self.drag_act), screen_to_world_dir(p.wx, p.wv, ux, uy), f
+        return (act or self.drag_act), geometry.screen_to_world_dir(p.wx, p.wv, ux, uy), f
 
     def kick_plan(self, p, dx, dv, f, lob, free): # Build the launch parameters for a kick using direction, power, and lift.
-        D = 14.0 + f * (L * 0.85 - 14.0)
+        D = 14.0 + f * (geometry.L * 0.85 - 14.0)
         lx, lv = p.wx + dx * D, p.wv + dv * D
         rad = 12.0 if free else max(14.0, 0.18 * D)
         best = None
@@ -269,14 +271,14 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         target = None
         if best:
             target = best[1]
-            dx, dv = unit(target.wx - p.wx, target.wv - p.wv)
+            dx, dv = game_utils.unit(target.wx - p.wx, target.wv - p.wv)
             D = math.hypot(target.wx - p.wx, target.wv - p.wv)
         kind = "pass" if target else "shot"
         if target:
-            power = clamp(D * 1.55 + 55.0, 95.0, 300.0)
+            power = game_utils.clamp(D * 1.55 + 55.0, 95.0, 300.0)
             lift = max(self.lob_lift(D, power), 18.0) if lob else 0.0
         elif lob:
-            power = clamp(D * 1.55 + 55.0, 60.0, 300.0)
+            power = game_utils.clamp(D * 1.55 + 55.0, 60.0, 300.0)
             lift = max(self.lob_lift(D, power), 18.0)
         else:
             lift = 28.0
@@ -296,8 +298,8 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         return (lo + hi) / 2.0
 
     def ground_plan(self, p, kind, dx, dv, f, free=False): # Build a ground-pass or shot plan from the supplied direction and power.
-        goalx = L if self.att[p.team] > 0 else 0.0
-        gx, gv = unit(goalx - p.wx, V_GC - p.wv)
+        goalx = geometry.L if self.att[p.team] > 0 else 0.0
+        gx, gv = game_utils.unit(goalx - p.wx, geometry.V_GC - p.wv)
 
         def lofted(): # Return whether the current planned action sends the ball into the air.
             kp = self.kick_plan(p, dx, dv, f, True, free)
@@ -307,8 +309,8 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         if kind == "shot":
             sx, sv = dx, dv
             if sx * gx + sv * gv > 0.94:
-                sx, sv = unit(sx * 0.5 + gx * 0.5, sv * 0.5 + gv * 0.5)
-            return dict(dx=sx, dv=sv, power=clamp(140.0 + 180.0 * f, 140.0, 320.0), lift=22.0 + 16.0 * f,
+                sx, sv = game_utils.unit(sx * 0.5 + gx * 0.5, sv * 0.5 + gv * 0.5)
+            return dict(dx=sx, dv=sv, power=game_utils.clamp(140.0 + 180.0 * f, 140.0, 320.0), lift=22.0 + 16.0 * f,
                         kind="shot", target=None, D=0.0)
         if free:
             kp = self.kick_plan(p, dx, dv, f, f >= self.PASS_LOW, True)
@@ -317,14 +319,14 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             return kp
         if f >= self.PASS_LONG:
             return lofted()
-        cone = self.PASS_CONE + (self.PASS_CONE_TIGHT - self.PASS_CONE) * clamp(f / self.PASS_LONG, 0.0, 1.0) # Firmer passes obey the aim more.
+        cone = self.PASS_CONE + (self.PASS_CONE_TIGHT - self.PASS_CONE) * game_utils.clamp(f / self.PASS_LONG, 0.0, 1.0) # Firmer passes obey the aim more.
         bp = self.best_pass(p, aim=(dx, dv), cone=cone)
         if bp:
             _s, q, qx, qv = bp
             dist = math.hypot(qx - p.wx, qv - p.wv)
-            ddx, ddv = unit(qx - p.wx, qv - p.wv)
+            ddx, ddv = game_utils.unit(qx - p.wx, qv - p.wv)
             high = dist >= self.PASS_NEAR and f >= self.PASS_LOW
-            power = clamp(dist * 1.55 + 55.0, 95.0, 300.0)
+            power = game_utils.clamp(dist * 1.55 + 55.0, 95.0, 300.0)
             lift = max(self.lob_lift(dist, power), 18.0) if high else 0.0
             return dict(dx=ddx, dv=ddv, power=power, lift=lift, kind="pass", target=q, D=dist)
         if f < self.PASS_LOW:
@@ -335,7 +337,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         p, b = self.cp, self.ball
         if p is None or p.state != "free":
             return False
-        return b.owner is p or (b.owner is None and math.hypot(b.wx - p.wx, b.wv - p.wv) < REACH_FIRST and b.z < 7.5)
+        return b.owner is p or (b.owner is None and math.hypot(b.wx - p.wx, b.wv - p.wv) < match_config.REACH_FIRST and b.z < 7.5)
 
 
     def pick_player(self, p): # Set the active player and prepare control state for that player.
@@ -352,8 +354,8 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
     def minute_label(self): # Format the current match time for display.
         if self.time_over():
             extra = max(1, int(self.extra / max(1.0, self.half_secs) * 45.0) + 1)
-            return tr("hud.minute_extra", base=45 * self.half, extra=extra)
-        return tr("hud.minute", n=int(self.minute()) + 1)
+            return i18n.tr("hud.minute_extra", base=45 * self.half, extra=extra)
+        return i18n.tr("hud.minute", n=int(self.minute()) + 1)
 
     def start_match(self): # Initialize and start a new match (needs 11 numbered players per team).
         if not self.lineup_ready():
@@ -363,7 +365,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         self.begin_walkon(self.first_kick)
 
     def minute(self): # Return the current match minute.
-        return (self.half - 1) * 45 + clamp(self.real_t / self.half_secs, 0.0, 1.0) * 45
+        return (self.half - 1) * 45 + game_utils.clamp(self.real_t / self.half_secs, 0.0, 1.0) * 45
 
     def time_over(self): # Check whether the current period has reached its end.
         return self.real_t >= self.half_secs
@@ -376,7 +378,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             if self.time_over():
                 self.extra += dt
                 own = self.ball.owner
-                danger = own is not None and (own.wx / L if self.att[own.team] > 0 else 1 - own.wx / L) > 0.72
+                danger = own is not None and (own.wx / geometry.L if self.att[own.team] > 0 else 1 - own.wx / geometry.L) > 0.72
                 extra_minutes = self.extra / max(1.0, self.half_secs) * 45.0
                 if extra_minutes >= self.stoppage_target and not danger:
                     if self.mode == "outball":
@@ -384,7 +386,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                     self.end_half()
 
     def end_half(self): # Finish the current half and prepare the next match phase.
-        self.log_event(tr("ev.end_first" if self.half == 1 else "ev.end_full", a=self.score[0], b=self.score[1]), show=False)
+        self.log_event(i18n.tr("ev.end_first" if self.half == 1 else "ev.end_full", a=self.score[0], b=self.score[1]), show=False)
         if self.half == 2:
             self.save_log("finale")
         self.audio.play("whistle_end")
@@ -395,7 +397,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         b.owner, b.vx, b.vv, b.vz = None, 0.0, 0.0, 0.0
         for p in self.players:
             p.tx = p.tv = None
-        self.big = (tr("big.end_first" if self.half == 1 else "big.end_full"), 4.5)
+        self.big = (i18n.tr("big.end_first" if self.half == 1 else "big.end_full"), 4.5)
         self.audio.react("whistle_end")
         if self.half == 1:
             self.begin_walkoff()
@@ -411,7 +413,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
 
     def begin_walkon(self, team): # Start the players' walk-on sequence for a new period.
         self.setup_kickoff(team, sound=False)
-        vexit, cx = pitch_v(MAX_Y + 30), L / 2.0
+        vexit, cx = geometry.pitch_v(geometry.MAX_Y + 30), geometry.L / 2.0
         for t in (0, 1):
             for k, p in enumerate([q for q in self.team_p[t] if q.state != "out"]):
                 p.wk_to = (p.wx, p.wv)
@@ -457,7 +459,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             self._gk_press_owner = None
             self._gk_press_idx = None
             self.att = {0: -1, 1: 1}
-            self.big = (tr("big.second_half"), 2.5)
+            self.big = (i18n.tr("big.second_half"), 2.5)
             self.half_t = 0.0
             self.begin_walkon(1 - self.first_kick)
 
@@ -468,15 +470,15 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             return
         tracked = getattr(self, "_gk_area_violator", None)
         if tracked is off and victim.role == "GK" and self.ball.owner is victim:
-            own_gx = 0.0 if self.att[victim.team] > 0 else L
-            if in_box_fn(off.wx, off.wv, own_gx):
+            own_gx = 0.0 if self.att[victim.team] > 0 else geometry.L
+            if geometry.in_box_fn(off.wx, off.wv, own_gx):
                 return
         b = self.ball
         self.stoppage_target += 0.28
         if spot is None:
-            spot = (clamp(victim.wx, 3.0, L - 3.0), clamp(victim.wv, V_TOP + 1.0, V_BOT - 1.0))
-        own_gx = 0.0 if self.att[off.team] > 0 else L
-        in_box = in_box_fn(spot[0], spot[1], own_gx)
+            spot = (game_utils.clamp(victim.wx, 3.0, geometry.L - 3.0), game_utils.clamp(victim.wv, geometry.V_TOP + 1.0, geometry.V_BOT - 1.0))
+        own_gx = 0.0 if self.att[off.team] > 0 else geometry.L
+        in_box = geometry.in_box_fn(spot[0], spot[1], own_gx)
         card = None
         r = random.random()
         if r < red_p:
@@ -487,7 +489,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         self.foul = dict(off=off, victim=victim, card=card, kind="penalty" if in_box else "free", spot=spot, t=0.0, shown=False)
         b.owner, b.vx, b.vv, b.vz = None, 0.0, 0.0, 0.0
         self.stats["fouls"][off.team] += 1
-        self.log_event(tr("ev.foul", off=off.label(), victim=victim.label(), team=TEAM_NAMES[off.team]), team=off.team)
+        self.log_event(i18n.tr("ev.foul", off=off.label(), victim=victim.label(), team=match_config.TEAM_NAMES[off.team]), team=off.team)
         if fall:
             self.begin_action(victim, "fall", "E" if victim.dx >= 0 else "W")
         for p in self.players:
@@ -521,7 +523,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                 ckey, ccol, csecs = "ev.card_yellow", (255, 230, 70), 4
             else:
                 ckey, ccol, csecs = ("ev.card_red_second" if second else "ev.card_red"), (255, 90, 90), 5
-            self.log_event(tr(ckey, p=off.label(), team=TEAM_NAMES[off.team]), ccol, csecs)
+            self.log_event(i18n.tr(ckey, p=off.label(), team=match_config.TEAM_NAMES[off.team]), ccol, csecs)
             self.audio.react("card")
         end_t = 3.6 if f["card"] else 2.2
         if f["t"] > end_t and not self.ref.card and (f["shown"] or not f["card"]):
@@ -529,7 +531,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                 off.red = True
                 off.state, off.act = "leaving", None
                 self.set_gate(off)
-                off.tx, off.tv = L / 2.0 + off.gate, V_MAX_P
+                off.tx, off.tv = geometry.L / 2.0 + off.gate, geometry.V_MAX_P
                 if self.cp is off:
                     self.select_player(None)
             if self.time_over() and f["kind"] != "penalty":
@@ -537,12 +539,12 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                 return
             self.start_restart(f["kind"], f["victim"].team, f["spot"])
             if f["kind"] == "penalty":
-                own_gx = 0.0 if self.att[off.team] > 0 else L
-                px = PEN_D if own_gx == 0.0 else L - PEN_D
-                self.ball.wx, self.ball.wv = px, V_PEN
-                self.restart["pos"] = (px, V_PEN)
-                self.log_event(tr("ev.penalty"), secs=3, team=f["victim"].team)
-                self.big = (tr("big.penalty"), 2.0)
+                own_gx = 0.0 if self.att[off.team] > 0 else geometry.L
+                px = geometry.PEN_D if own_gx == 0.0 else geometry.L - geometry.PEN_D
+                self.ball.wx, self.ball.wv = px, geometry.V_PEN
+                self.restart["pos"] = (px, geometry.V_PEN)
+                self.log_event(i18n.tr("ev.penalty"), secs=3, team=f["victim"].team)
+                self.big = (i18n.tr("big.penalty"), 2.0)
 
     def score_goal(self, team, gx): # Register a goal and update the score and match statistics.
         b = self.ball
@@ -558,21 +560,21 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         else:
             candidates = [p for p in self.team_p[team] if p.state != "out" and p.role != "GK"]
             sc = min(candidates, key=lambda p: math.hypot(p.wx - b.wx, p.wv - b.wv)) if candidates else self.team_p[team][0]
-        kinds = [k for k, w in CELE_KINDS for _ in range(w)]
+        kinds = [k for k, w in match_config.CELE_KINDS for _ in range(w)]
         self.goal = dict(team=team, scorer=sc, t=0.0, kick=1 - team, own=own_goal, kind=random.choice(kinds), s={}, part=set(),
                          released=False, pairs=None)
         self.mode = "goal"
         if own_goal:
-            self.log_event(tr("ev.own_goal", p=sc.label(), own_team=TEAM_NAMES[sc.team], team=TEAM_NAMES[team],
+            self.log_event(i18n.tr("ev.own_goal", p=sc.label(), own_team=match_config.TEAM_NAMES[sc.team], team=match_config.TEAM_NAMES[team],
                               a=self.score[0], b=self.score[1]), secs=6, team=team)
         else:
-            self.log_event(tr("ev.goal", p=sc.label(), team=TEAM_NAMES[team], a=self.score[0], b=self.score[1]), secs=6, team=team)
+            self.log_event(i18n.tr("ev.goal", p=sc.label(), team=match_config.TEAM_NAMES[team], a=self.score[0], b=self.score[1]), secs=6, team=team)
         self.last_scorer = sc.name
         b.owner = None
         b.vx *= 0.25
         b.vv *= 0.25
         b.vz = 0.0
-        self.big = (tr("big.goal", team=TEAM_NAMES[team]), 4.0)
+        self.big = (i18n.tr("big.goal", team=match_config.TEAM_NAMES[team]), 4.0)
         self.audio.play("net")
         self.audio.play("whistle")
         self.audio.react("goal")
@@ -590,9 +592,9 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         if t > 0.5 and not g["own"] and not g["released"] and sc.state not in ("out", "leaving"):
             if g.get("said") is None:
                 g["said"] = True
-                self.log_event(tr("ev.cele." + g["kind"]), secs=3, team=g["team"])
+                self.log_event(i18n.tr("ev.cele." + g["kind"]), secs=3, team=g["team"])
             getattr(self, "cele_" + g["kind"])(g, t, sc, mates)
-        if t >= T_CELE and not g["released"]:
+        if t >= match_config.T_CELE and not g["released"]:
             g["released"] = True
             for p in self.players:
                 p.lift = 0.0
@@ -600,10 +602,10 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                     p.state = "free"
         self.goal_fetch_ball(g, t)
         self.cele_walk_home(g, t)
-        done_t = T_CELE + T_AFTER
+        done_t = match_config.T_CELE + match_config.T_AFTER
         if g["own"]:
             done_t = 4.0
-        if not g.get("fetched") and t < done_t + GOAL_FETCH_MAX:
+        if not g.get("fetched") and t < done_t + match_config.GOAL_FETCH_MAX:
             return # Replay and kickoff wait until the ball has been carried back to the centre.
         if t > done_t and not g.get("replayed"):
             g["replayed"] = True
@@ -616,7 +618,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                 if extra_minutes >= self.stoppage_target:
                     self.end_half()
                     return
-            self.log_event(tr("ev.kickoff", team=TEAM_NAMES[g["kick"]]), secs=3, team=g["kick"])
+            self.log_event(i18n.tr("ev.kickoff", team=match_config.TEAM_NAMES[g["kick"]]), secs=3, team=g["kick"])
             self.setup_kickoff(g["kick"], walk=True)
 
     def teams_at(self, gx): # Return the teams positioned near the supplied field coordinate.
@@ -637,42 +639,42 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         if m == "foul" and self.foul and self.foul["card"]:
             # Carding: walk up to the offender (stopping at talking distance on the side the referee comes from).
             off = self.foul["off"]
-            ux, uv = unit(r.wx - off.wx, r.wv - off.wv, (-1.0, 0.0))
-            tx = clamp(off.wx + ux * self.REF_CARD_DIST, 8.0, L - 8.0)
-            tv = clamp(off.wv + uv * self.REF_CARD_DIST, V_TOP + 2.0, V_BOT + 2.0)
+            ux, uv = game_utils.unit(r.wx - off.wx, r.wv - off.wv, (-1.0, 0.0))
+            tx = game_utils.clamp(off.wx + ux * self.REF_CARD_DIST, 8.0, geometry.L - 8.0)
+            tv = game_utils.clamp(off.wv + uv * self.REF_CARD_DIST, geometry.V_TOP + 2.0, geometry.V_BOT + 2.0)
         elif m == "foul" and self.foul:
             sx, sv = self.foul["spot"]
-            tx, tv = sx - 8, sv + (11 if sv < V_MID else -11)
+            tx, tv = sx - 8, sv + (11 if sv < geometry.V_MID else -11)
         elif m == "goal":
-            tx, tv = L / 2 - 30, V_SPOT + 24
+            tx, tv = geometry.L / 2 - 30, geometry.V_SPOT + 24
         elif m == "restart" and self.restart:
             rs = self.restart
             offender = rs.get("area_violator")
             if (rs["kind"] == "goalkick" and rs.get("area_stage", 0) >= 1
                     and offender is not None and offender.state not in ("out", "leaving")):
-                own_gx = 0.0 if self.att[rs["team"]] > 0 else L
+                own_gx = 0.0 if self.att[rs["team"]] > 0 else geometry.L
                 toward_pitch = 1.0 if own_gx == 0.0 else -1.0
-                tx = clamp(offender.wx + toward_pitch * 7.0, 12.0, L - 12.0)
-                tv = clamp(offender.wv + (4.0 if offender.wv < V_MID else -4.0),
-                           V_TOP + 8.0, V_BOT - 8.0)
+                tx = game_utils.clamp(offender.wx + toward_pitch * 7.0, 12.0, geometry.L - 12.0)
+                tv = game_utils.clamp(offender.wv + (4.0 if offender.wv < geometry.V_MID else -4.0),
+                           geometry.V_TOP + 8.0, geometry.V_BOT - 8.0)
             else:
                 x, v = rs["pos"]
                 d = self.att[rs["team"]]
-                tx = clamp(x - d * 14.0, 12.0, L - 12.0)
-                tv = clamp(v + (20.0 if v < V_MID else -20.0), V_TOP + 8.0, V_BOT - 8.0)
+                tx = game_utils.clamp(x - d * 14.0, 12.0, geometry.L - 12.0)
+                tv = game_utils.clamp(v + (20.0 if v < geometry.V_MID else -20.0), geometry.V_TOP + 8.0, geometry.V_BOT - 8.0)
         elif m == "outball" and self.outball:
             rs = self.outball
             x, v = self.visible_pos(rs["pos"])
             d = self.att[rs["team"]]
-            tx = clamp(x - d * 14.0, 12.0, L - 12.0)
-            tv = clamp(v + (20.0 if v < V_MID else -20.0), V_TOP + 8.0, V_BOT - 8.0)
+            tx = game_utils.clamp(x - d * 14.0, 12.0, geometry.L - 12.0)
+            tv = game_utils.clamp(v + (20.0 if v < geometry.V_MID else -20.0), geometry.V_TOP + 8.0, geometry.V_BOT - 8.0)
         elif m == "injury" and self.injury:
             q = self.injury["p"]
-            tx, tv = q.wx + 6, q.wv + (4 if q.wv < V_MID else -4)
+            tx, tv = q.wx + 6, q.wv + (4 if q.wv < geometry.V_MID else -4)
         elif m in ("half", "full", "intro"):
-            tx, tv = L / 2 - 30, V_SPOT + 24
+            tx, tv = geometry.L / 2 - 30, geometry.V_SPOT + 24
         else:
-            tx, tv = b.wx - 12, b.wv + (24 if b.wv < V_MID else -24)
+            tx, tv = b.wx - 12, b.wv + (24 if b.wv < geometry.V_MID else -24)
         tx, tv = self.visible_pos((tx, tv), 16.0) # Target well inside the screen edges: the final edge clamp must never pull him sideways.
         dx, dv = tx - r.wx, tv - r.wv
         dist = math.hypot(dx, dv)
@@ -685,12 +687,12 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         else:
             r.vx *= 0.8
             r.vv *= 0.8
-        r.wx += r.vx * dt * depth_k(r.wv)
-        r.wv = clamp(r.wv + r.vv * dt * depth_v_k(r.wv, r.wx), V_MIN_P, V_MAX_P)
-        px, gy = w2s(r.wx, r.wv)
-        if px < 6.5 or px > FW - 6.5:
-            r.wx = s2w(clamp(px, 6.5, FW - 6.5), gy)[0]
-            px, gy = w2s(r.wx, r.wv)
+        r.wx += r.vx * dt * geometry.depth_k(r.wv)
+        r.wv = game_utils.clamp(r.wv + r.vv * dt * geometry.depth_v_k(r.wv, r.wx), geometry.V_MIN_P, geometry.V_MAX_P)
+        px, gy = geometry.w2s(r.wx, r.wv)
+        if px < 6.5 or px > geometry.FW - 6.5:
+            r.wx = geometry.s2w(game_utils.clamp(px, 6.5, geometry.FW - 6.5), gy)[0]
+            px, gy = geometry.w2s(r.wx, r.wv)
         r.sx, r.sy = px, gy
         sp = math.hypot(r.vx, r.vv)
         r.stride += sp * dt
@@ -698,32 +700,32 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             r.face_t -= dt
         if r.card and self.foul:
             fx, fv = self.foul["off"].sx, self.foul["off"].sy
-            nd = dir8(fx - px, fv - gy, True)
+            nd = game_utils.dir8(fx - px, fv - gy, True)
             if nd and r.face_t <= 0:
                 r.face, r.face_t = nd, 0.2
         elif sp > 2.5:
-            x1, y1 = w2s(r.wx + r.vx * 0.06 * depth_k(r.wv),
-                         r.wv + r.vv * 0.06 * depth_v_k(r.wv, r.wx))
-            nd = dir8(x1 - px, y1 - gy, True)
+            x1, y1 = geometry.w2s(r.wx + r.vx * 0.06 * geometry.depth_k(r.wv),
+                         r.wv + r.vv * 0.06 * geometry.depth_v_k(r.wv, r.wx))
+            nd = game_utils.dir8(x1 - px, y1 - gy, True)
             if nd and nd != r.face and r.face_t <= 0:
                 r.face, r.face_t = nd, 0.12
         if sp > 2.5:
-            cyc = REF_MOVE[r.face] # Any visible movement uses the walking cycle (also while a card is up).
+            cyc = sprite_data.REF_MOVE[r.face] # Any visible movement uses the walking cycle (also while a card is up).
             r.sid = cyc[int(r.stride / 5.0) % len(cyc)]
         else:
-            r.sid = REF_STAND[r.face]
+            r.sid = sprite_data.REF_STAND[r.face]
 
 
     @property
     def speed(self): # Return the current match simulation speed multiplier.
-        base = SPEEDS[self.speed_idx] * SPEED_UNIT
+        base = match_config.SPEEDS[self.speed_idx] * match_config.SPEED_UNIT
         sp = getattr(self, "slowmo_p", None)
         if sp is not None:
             a = sp.act
             w = a.get("slow") if (sp.state == "action" and a is not None) else None
             if w is not None and a["t"] < w[1]:
                 if a["t"] >= w[0]:
-                    return min(base, SPEEDS[0] * SPEED_UNIT)
+                    return min(base, match_config.SPEEDS[0] * match_config.SPEED_UNIT)
                 return base
             self.slowmo_p = None
         return base
@@ -732,23 +734,23 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         b = self.ball
         if b.owner is not None or self.mode != "play":
             return False
-        spec = ACT_SPEC[key]
-        T = spec["contact"] * spec["fdur"]
-        tx, tv = self.ball_pred(T)
-        zt = max(0.0, b.z + b.vz * T - 0.5 * G * T * T)
-        reach, zlo, zhi = STRIKE_REACH[key]
+        spec = sprite_data.ACT_SPEC[key]
+        i18n.T = spec["contact"] * spec["fdur"]
+        tx, tv = self.ball_pred(i18n.T)
+        zt = max(0.0, b.z + b.vz * i18n.T - 0.5 * match_config.BALL_GRAVITY * i18n.T * i18n.T)
+        reach, zlo, zhi = match_config.STRIKE_REACH[key]
         travel = 0.0
         if kw.get("assist"):
             reach, zlo, zhi = reach + 7.0, (-2.0 if key == "bicycle" else zlo - 3.0), zhi + 8.0
-            travel = (85.0 if key == "header_dive" else 65.0) * T * 0.6
+            travel = (85.0 if key == "header_dive" else 65.0) * i18n.T * 0.6
         elif key in ("header", "header_dive"):
-            travel = (95.0 if key == "header_dive" else 34.0) * T * 0.5
+            travel = (95.0 if key == "header_dive" else 34.0) * i18n.T * 0.5
         d = math.hypot(tx - p.wx, tv - p.wv)
         return d - travel <= reach and zlo <= zt <= zhi
 
     @property
     def speed_label(self): # Format the current simulation speed for the interface.
-        return SPEEDS[self.speed_idx]
+        return match_config.SPEEDS[self.speed_idx]
 
     def select_player(self, p, quiet=False): # Select a player and update the user-control state.
         if self.cp is p:
@@ -764,7 +766,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             if not quiet:
                 if p.state not in ("subin", "subout"):
                     p.tx = p.tv = None
-                self.say(tr("msg.control", name=p.label(), role=self.natural_role(p.sq)), (255, 255, 255), 2.5)
+                self.say(i18n.tr("msg.control", name=p.label(), role=self.natural_role(p.sq)), (255, 255, 255), 2.5)
 
 
     def user_move_input(self): # Read manual movement input for the currently controlled player.
@@ -785,7 +787,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         v = (k[pygame.K_DOWN] or k[pygame.K_s]) - (k[pygame.K_UP] or k[pygame.K_w])
         jv = None if (x or v) else self.joy.move_vec()
         if x or v:
-            p.kvec = unit(float(x), float(v))
+            p.kvec = game_utils.unit(float(x), float(v))
         elif jv:
             p.kvec = jv
         else:
@@ -799,7 +801,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         cx, cy, ox, oy = self.cam_view()
         fx = cx + (mx + ox) / self.zoom
         row = cy + (my + oy) / self.zoom
-        return fx, row, s2w(fx, row - Y_OFFSET - 10)
+        return fx, row, geometry.s2w(fx, row - geometry.Y_OFFSET - 10)
 
     def user_action(self, kind, vec=None, lob=False, inten=None): # Execute a manual player action from the selected input and direction.
         p = self.cp
@@ -807,7 +809,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             return
         self.idle_t = 0.0
         b = self.ball
-        dx, dv = unit(*(vec or self.aim_dir(p)))
+        dx, dv = game_utils.unit(*(vec or self.aim_dir(p)))
         d = math.hypot(b.wx - p.wx, b.wv - p.wv)
         have = b.owner is p
         rs = self.restart if self.mode == "restart" else None
@@ -818,20 +820,20 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             if setp:
                 return
             return self.user_celebrate(p, dx, dv)
-        f = clamp(inten if inten is not None else (0.25 if kind == "pass" else 0.75), 0.0, 1.0)
+        f = game_utils.clamp(inten if inten is not None else (0.25 if kind == "pass" else 0.75), 0.0, 1.0)
         if setp and rs["kind"] == "throw":
             bp = self.best_pass(p, aim=(dx, dv), cone=0.6)
             if bp:
                 _s, q, qx, qv = bp
                 dist = math.hypot(qx - p.wx, qv - p.wv)
-                ddx, ddv = unit(qx - p.wx, qv - p.wv)
-                power = clamp(dist * 1.4 + 40, 80, 170)
+                ddx, ddv = game_utils.unit(qx - p.wx, qv - p.wv)
+                power = game_utils.clamp(dist * 1.4 + 40, 80, 170)
                 self.start_throw(p, ddx, ddv, power, self.lob_lift(dist, power, -10.0), q)
             else:
                 self.start_throw(p, dx, dv, 80.0 + 90.0 * f, 45.0)
             return
         ground = have or setp or (self.mode == "play" and b.owner is None and
-                                  d < REACH_FIRST and b.z <= AIR_MIN_Z)
+                                  d < match_config.REACH_FIRST and b.z <= match_config.AIR_MIN_Z)
         if ground:
             applying = bool(getattr(self, "_applying_paused_gesture", False))
             kp = self.ground_plan(p, kind, dx, dv, f, self.paused or applying)
@@ -863,7 +865,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             return
         aim = (dx, dv) # What the user is pointing at: where a successful tackle should send the ball.
         if b.owner is not None and b.owner.team != p.team and vec is None:
-            dx, dv = unit(b.owner.wx - p.wx, b.owner.wv - p.wv) # The lunge itself still homes in on the carrier.
+            dx, dv = game_utils.unit(b.owner.wx - p.wx, b.owner.wv - p.wv) # The lunge itself still homes in on the carrier.
         self.start_tackle(p, dx, dv, "slide" if shot else "stand", aim=aim)
 
     def user_show(self, p, kind, dx, dv): # Display the feedback associated with a manual player action.
@@ -873,16 +875,82 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         else:
             self.begin_action(p, "fall", "E" if p.dx >= 0 else "W")
             if self.mode == "play" and random.random() < 0.6:
-                self.log_event(tr("ev.dive_fake", p=p.label()), secs=2.5, team=p.team)
+                self.log_event(i18n.tr("ev.dive_fake", p=p.label()), secs=2.5, team=p.team)
                 self.audio.react("foul")
 
-    def user_celebrate(self, p, dx, dv): # Start a celebration requested by the user.
-        pool = ["moon", "moon_back", "dance", "pump"]
-        if self.mode == "play" and any(math.hypot(q.wx - p.wx, q.wv - p.wv) < 14 and not q.busy() for q in self.opponents(p.team)):
-            pool.append("fall")
-        pick = random.choice(pool)
-        if pick == "fall":
-            return self.user_show(p, "fall", dx, dv)
+    # ---------- key C: dive / protest / celebration ----------
+    def reset_steal(self): # Clear the possession-change tracking used by the C key.
+        self._clk, self._steal_prev, self._steal_loose = 0.0, None, None
+        self.stolen = None # dict(victim, thief, t): the last ball taken from a player by an opponent.
+        self._sim_last = -999.0 # Game-time of the last dive / protest (anti-spam).
+
+    def track_steal(self, dt): # Detect "ball taken from a player by an opponent" (directly, or within 0.8 s through a loose ball).
+        self._clk += dt
+        o, prev = self.ball.owner, self._steal_prev
+        if o is prev:
+            return
+        if prev is not None and o is None:
+            self._steal_loose = (prev, self._clk)
+        if o is not None:
+            lost = None
+            if prev is not None and prev.team != o.team:
+                lost = prev
+            elif prev is None and self._steal_loose and self._steal_loose[0].team != o.team and self._clk - self._steal_loose[1] < 0.8:
+                lost = self._steal_loose[0]
+            if lost is not None and self.mode == "play":
+                self.stolen = dict(victim=lost, thief=o, t=self._clk)
+            self._steal_loose = None
+        self._steal_prev = o
+
+    def sim_spam(self): # True while a previous dive / protest is still "recent".
+        return self._clk - self._sim_last < match_config.SIM_COOLDOWN
+
+    def book_simulation(self, p): # The referee books a useless simulation / protest (a second yellow becomes red in update_foul).
+        if self.mode != "play":
+            return
+        opp = min(self.opponents(p.team), key=lambda q: math.hypot(q.wx - p.wx, q.wv - p.wv))
+        own_gx = 0.0 if self.att[p.team] > 0 else geometry.L
+        if geometry.in_box_fn(p.wx, p.wv, own_gx):
+            return # Never turn a dive inside the own box into a penalty for the opponent.
+        spot = (game_utils.clamp(p.wx, 3.0, geometry.L - 3.0), game_utils.clamp(p.wv, geometry.V_TOP + 1.0, geometry.V_BOT - 1.0))
+        self.call_foul(p, opp, 1.0, 0.0, fall=False, spot=spot)
+
+    def simulate_dive(self, p): # C with the ball: dive. A foul is possible only when an opponent is close and the key is not being spammed.
+        spam = self.sim_spam()
+        self._sim_last = self._clk
+        near = [q for q in self.opponents(p.team) if math.hypot(q.wx - p.wx, q.wv - p.wv) < 10 and not q.busy()]
+        if near and not spam and random.random() < 0.20: # 20% chance of booking
+            return self.call_foul(near[0], p, 0.35, 0.02)
+        self.begin_action(p, "fall", "E" if p.dx >= 0 else "W")
+        self.log_event(i18n.tr("ev.dive_fake", p=p.label()), secs=2.5, team=p.team)
+        self.audio.react("foul")
+        if random.random() < (match_config.SIM_BOOK_SPAM if spam else match_config.SIM_BOOK_P):
+            self.book_simulation(p)
+
+    def can_protest(self, p): # The ball was just taken from p by an opponent who is still within STEAL_RANGE.
+        st = self.stolen
+        return bool(st and self.mode == "play" and st["victim"] is p and self.ball.owner is not p
+                    and self._clk - st["t"] <= match_config.STEAL_WINDOW
+                    and math.hypot(st["thief"].wx - p.wx, st["thief"].wv - p.wv) <= match_config.STEAL_RANGE)
+
+    def protest(self, p): # C right after losing the ball: protest animation (cele). Very rarely a free kick against the thief; useless protests can be booked.
+        st, spam = self.stolen, self.sim_spam()
+        self.stolen = None # One protest per tackle.
+        self._sim_last = self._clk
+        if not spam and random.random() < match_config.PROTEST_FOUL_P:
+            return self.call_foul(st["thief"], p, 0.05, 0.0)
+        self.begin_action(p, "cele", "E", repeat=3)
+        txt = i18n.tr("ev.protest", p=p.label())
+        self.log_event(p.label() + "!" if txt == "ev.protest" else txt, secs=2.5, team=p.team)
+        if random.random() < (match_config.SIM_BOOK_SPAM if spam else match_config.PROTEST_BOOK_P):
+            self.book_simulation(p)
+
+    def user_celebrate(self, p, dx, dv): # C: with the ball = dive; just robbed of the ball = protest; otherwise a random celebration.
+        if self.mode == "play" and self.ball.owner is p:
+            return self.simulate_dive(p)
+        if self.can_protest(p):
+            return self.protest(p)
+        pick = random.choice(["moon", "moon_back", "dance", "pump"])
         if pick == "moon":
             self.begin_action(p, "moonwalk", self.side_of(p, dx, dv), dx=dx, dv=dv, vel=(dx * 22.0, dv * 22.0), repeat=5)
         elif pick == "moon_back":
@@ -903,7 +971,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             return
         if not g["released"] and g["t"] > 0.5:
             return
-        g["kind"] = random.choice([k for k, w in CELE_KINDS for _ in range(w)])
+        g["kind"] = random.choice([k for k, w in match_config.CELE_KINDS for _ in range(w)])
         g.update(released=False, said=None, s={}, part=set(), pairs=None)
         g["t"] = 0.5
         for pl in self.players:
@@ -912,7 +980,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
 
     def air_options(self, p, shot=True, aim=None): # Calculate available actions for a player contesting an aerial ball.
         b = self.ball
-        if self.mode != "play" or b.owner is not None or b.z < AIR_MIN_Z:
+        if self.mode != "play" or b.owner is not None or b.z < match_config.AIR_MIN_Z:
             return []
         d = math.hypot(b.wx - p.wx, b.wv - p.wv)
         if d >= self.AIR_REACH:
@@ -925,7 +993,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         if shot and b.z >= 6.5 and d < 14.0:
             out.append("bicycle")
         if aim is not None and 5.0 <= b.z <= 14.0 and 10.0 <= d < self.AIR_REACH:
-            ux, uv = unit(b.wx - p.wx, b.wv - p.wv)
+            ux, uv = game_utils.unit(b.wx - p.wx, b.wv - p.wv)
             if ux * aim[0] + uv * aim[1] >= 0.6:
                 out.append("header_dive")
         return out
@@ -956,7 +1024,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
 
     def charge_level(self): # Return the current accumulated shot or pass charge.
         c = self.charge
-        return 0.0 if c is None else clamp((time.time() - c["t0"]) / self.CHARGE_FULL, 0.0, 1.0)
+        return 0.0 if c is None else game_utils.clamp((time.time() - c["t0"]) / self.CHARGE_FULL, 0.0, 1.0)
 
     def update_charge(self): # Advance charge accumulation while the action button is held.
         c = self.charge
@@ -967,7 +1035,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             self.charge = None
             return
         act = c["act"]
-        key = JOY_KEYS.get(act)
+        key = joystick.JOY_KEYS.get(act)
         held = self.joy.is_held(act) or bool(key and key[0] is not None and pygame.key.get_pressed()[key[0]])
         if held:
             self.idle_t = 0.0
@@ -977,11 +1045,11 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         self.user_action(act, None, False, f)
 
     def set_font_mode(self, modern): # Switch between the bitmap and modern text-rendering modes.
-        FONTS.modern = modern
-        self.font_s = FONTS.get(22)
-        self.font_m = FONTS.get(34)
-        self.font_t = FONTS.get(18)
-        self.font_l = FONTS.get(72)
+        fonts.FONTS.modern = modern
+        self.font_s = fonts.FONTS.get(22)
+        self.font_m = fonts.FONTS.get(34)
+        self.font_t = fonts.FONTS.get(18)
+        self.font_l = fonts.FONTS.get(72)
         self._fr = {}
         self._help_cache = None
 
@@ -1001,16 +1069,20 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         self.help_page = 0
         self.audio.silence()
         self.options_open = False
+        self.menu_page = "quick" # Back to the team selection the match was started from.
         self.mode = "intro"
 
 
+    def speed_top(self): # Index of the fastest preset allowed by the speed limit chosen in OPTIONS.
+        return max(i for i, v in enumerate(match_config.SPEEDS) if v <= self.speed_max or i == 0)
+
     def set_speed(self, idx): # Set the match simulation speed from the available presets.
-        self.speed_idx = int(clamp(idx, 0, len(SPEEDS) - 1))
-        self.say(tr("msg.speed", speed=self.speed_label), (150, 230, 160), 1.8)
+        self.speed_idx = int(game_utils.clamp(idx, 0, self.speed_top()))
+        self.say(i18n.tr("msg.speed", speed=self.speed_label), (150, 230, 160), 1.8)
 
     def change_speed(self, delta): # Move to the adjacent simulation-speed preset.
-        self.speed_idx = int(clamp(self.speed_idx + delta, 0, len(SPEEDS) - 1))
-        self.say(tr("msg.speed", speed=self.speed_label), (150, 230, 160), 1.8)
+        self.speed_idx = int(game_utils.clamp(self.speed_idx + delta, 0, self.speed_top()))
+        self.say(i18n.tr("msg.speed", speed=self.speed_label), (150, 230, 160), 1.8)
 
     def set_scroll(self, on): # Enable or disable field scrolling.
         mem = getattr(self, "zoom_mem", {})
@@ -1070,8 +1142,8 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
                 return
 
     def su_scale(self): # Calculate the scale factor for the substitution interface.
-        sc = min(self.W / float(SU_W), self.H / float(SU_H))
-        return sc, (self.W - SU_W * sc) / 2.0, (self.H - SU_H * sc) / 2.0
+        sc = min(self.W / float(layout.SU_W), self.H / float(layout.SU_H))
+        return sc, (self.W - layout.SU_W * sc) / 2.0, (self.H - layout.SU_H * sc) / 2.0
 
     def su_to_virtual(self, pos): # Convert screen coordinates to substitution-panel coordinates.
         sc, ox, oy = self.su_scale()
@@ -1103,7 +1175,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         for p in self.players:
             if p.state == "out":
                 continue
-            dd = math.hypot(p.sx - fx, (p.sy + Y_OFFSET + 5) - row)
+            dd = math.hypot(p.sx - fx, (p.sy + geometry.Y_OFFSET + 5) - row)
             if dd < 20 and (best is None or dd < best[0]):
                 best = (dd, p)
         if best:
@@ -1119,7 +1191,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             return
         if ln < 12:
             fx, row, (wx, wv) = self.screen_to_ground(x1, y1)
-            p.tx, p.tv = wx, clamp(wv, V_MIN_P, V_MAX_P)
+            p.tx, p.tv = wx, game_utils.clamp(wv, geometry.V_MIN_P, geometry.V_MAX_P)
             p.path = None
             self.click_mark = [fx, row, 2.0]
             return
@@ -1136,8 +1208,8 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         b = self.ball
         if self.mode == "goal":
             return 1.0
-        near = max(0.0, 1.0 - min(b.wx, L - b.wx) / 110.0)
-        return clamp(0.15 + 0.7 * near * (0.5 + 0.5 * min(1.0, math.hypot(b.vx, b.vv) / 200.0)), 0.0, 1.0)
+        near = max(0.0, 1.0 - min(b.wx, geometry.L - b.wx) / 110.0)
+        return game_utils.clamp(0.15 + 0.7 * near * (0.5 + 0.5 * min(1.0, math.hypot(b.vx, b.vv) / 200.0)), 0.0, 1.0)
 
     def update(self, dt): # Advance match state, input, physics, AI, camera, and timers for one frame.
         if self.mode == "intro":
@@ -1146,7 +1218,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             return
         self.t_all += dt
         self.idle_t += dt
-        self.audio.focus = clamp((self.ball.wx - L / 2.0) / (L / 2.0), -1.0, 1.0)
+        self.audio.focus = game_utils.clamp((self.ball.wx - geometry.L / 2.0) / (geometry.L / 2.0), -1.0, 1.0)
         self.update_clock(dt)
         if self.mode == "play" and self.ball.owner is not None:
             self.stats["poss"][self.ball.owner.team] += dt
@@ -1179,6 +1251,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         self.check_gk_handling(dt)
         self.update_agonism(dt)
         self.check_overlap_steal()
+        self.track_steal(dt)
         self.update_flags(dt)
         self.auto_select()
         self.ai_update(dt)
@@ -1213,8 +1286,8 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         if self.mode != "play" or o is None or o.role != "GK" or getattr(o, "feet", False) or o.state in ("out", "leaving"):
             self._gk_out_t = 0.0
             return
-        own_gx = 0.0 if self.att[o.team] > 0 else L
-        if in_box_fn(b.wx, b.wv, own_gx) or in_box_fn(o.wx, o.wv, own_gx):
+        own_gx = 0.0 if self.att[o.team] > 0 else geometry.L
+        if geometry.in_box_fn(b.wx, b.wv, own_gx) or geometry.in_box_fn(o.wx, o.wv, own_gx):
             self._gk_out_t = 0.0
             return
         self._gk_out_t += dt
@@ -1225,7 +1298,7 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         if not victims:
             return
         v = min(victims, key=lambda q: math.hypot(q.wx - o.wx, q.wv - o.wv))
-        spot = (clamp(o.wx, 3.0, L - 3.0), clamp(o.wv, V_TOP + 1.0, V_BOT - 1.0))
+        spot = (game_utils.clamp(o.wx, 3.0, geometry.L - 3.0), game_utils.clamp(o.wv, geometry.V_TOP + 1.0, geometry.V_BOT - 1.0))
         self.call_foul(o, v, 1.0, 0.0, fall=False, spot=spot)
 
     def check_gk_box_time(self, dt): # Update the goalkeeper-area timing rule for possession.
@@ -1234,24 +1307,24 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         if self.mode != "play" or o is None or o.role != "GK" or getattr(o, "feet", False) or o.state in ("out", "leaving"):
             self.box_t.clear()
             return
-        own_gx = 0.0 if self.att[o.team] > 0 else L
+        own_gx = 0.0 if self.att[o.team] > 0 else geometry.L
         seen = set()
         for q in self.team_p[1 - o.team]:
             if q.role == "GK" or q.state in ("out", "leaving") or q.red:
                 continue
             if q is getattr(self, "_gk_area_violator", None):
-                if in_box_fn(q.wx, q.wv, own_gx):
+                if geometry.in_box_fn(q.wx, q.wv, own_gx):
                     self.box_t.pop(id(q), None)
                     continue
                 self._gk_area_violator = None
-            if in_box_fn(q.wx, q.wv, own_gx):
+            if geometry.in_box_fn(q.wx, q.wv, own_gx):
                 k = id(q)
                 seen.add(k)
                 self.box_t[k] = self.box_t.get(k, 0.0) + dt
                 if self.box_t[k] > 2.0:
                     self.box_t.clear()
                     self.call_foul(q, o, 0.15, 0.0, fall=False)
-                    self.log_event(tr("ev.gk_danger"), secs=3, team=q.team)
+                    self.log_event(i18n.tr("ev.gk_danger"), secs=3, team=q.team)
                     return
         for k in list(self.box_t):
             if k not in seen:
@@ -1265,11 +1338,11 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         if tk is None or tk.state in ("out", "leaving"):
             return
         if tk.state == "free" and rs.get("ready"):
-            tk.sid = team_sprite_offset(tk.team) + 27
+            tk.sid = sprite_data.team_sprite_offset(tk.team) + 27
         elif not (tk.state == "action" and tk.act is not None and tk.act["key"] == "throw" and not tk.act["fired"]):
             return
         b = self.ball
-        b.wx, b.wv, b.z = tk.wx, tk.wv, THROW_HOLD_Z
+        b.wx, b.wv, b.z = tk.wx, tk.wv, match_config.THROW_HOLD_Z
         b.vx = b.vv = b.vz = 0.0
 
     def text(self, s, font, col, pos, center=False, shadow=True): # Draw text with alignment and optional shadow.
@@ -1311,6 +1384,8 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
         if split:
             self.draw_ground_arrow_fx(world, self._arrow, ak)
             world.blit(self.scale_world(self.sprite_surf, cx, cy, ox, oy), (0, 0))
+        if self.debug:
+            self.draw_debug(world, cx, cy, z)
         if not rp:
             self.draw_marker()
             self.draw_sweat(world, cx, cy)
@@ -1358,14 +1433,14 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             ln = math.hypot(x1 - x0, y1 - y0)
             if ln <= 6:
                 return None
-            (a, b), (c, d) = w2s_jac(p.wx, p.wv)
+            (a, b), (c, d) = geometry.w2s_jac(p.wx, p.wv)
             det = a * d - b * c
             if abs(det) < 1e-9:
                 return None
             sx, sy = (x1 - x0) / float(max(1, self.zoom)), (y1 - y0) / float(max(1, self.zoom))
             wdx, wdv = (d * sx - b * sy) / det, (-c * sx + a * sy) / det
-            ux, uv = unit(wdx, wdv)
-            return dict(dx=ux, dv=uv, length=clamp(math.hypot(wdx, wdv), 8.0, 110.0),
+            ux, uv = game_utils.unit(wdx, wdv)
+            return dict(dx=ux, dv=uv, length=game_utils.clamp(math.hypot(wdx, wdv), 8.0, 110.0),
                         f=self.gesture_intensity(ln), pid=id(p))
         if self.paused:
             return None
@@ -1375,8 +1450,8 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
             return dict(dx=dx, dv=dv, length=self.ARROW_MIN + f * (self.ARROW_MAX - self.ARROW_MIN), f=f, pid=id(p))
         a = self.joy.aim_vec()
         if a:
-            dx, dv = screen_to_world_dir(p.wx, p.wv, a[0], a[1])
-            f = clamp(self.joy.aim_mag(), 0.25, 1.0)
+            dx, dv = geometry.screen_to_world_dir(p.wx, p.wv, a[0], a[1])
+            f = game_utils.clamp(self.joy.aim_mag(), 0.25, 1.0)
             return dict(dx=dx, dv=dv, length=self.ARROW_MIN + f * 0.6 * (self.ARROW_MAX - self.ARROW_MIN), f=f * 0.6,
                         pid=id(p))
         return None
@@ -1409,11 +1484,11 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
 
 
     def set_language(self, code): # Change the interface language and refresh translated text.
-        if T.set_language(code):
+        if i18n.T.set_language(code):
             self._help_cache = None
-            pygame.display.set_caption(f"{tr('app.caption')} v{VERSION}")
-            for detail in T.take_problems():
-                self.notes.append(Note("note.lang_problem", True, detail=detail))
+            pygame.display.set_caption(f"{i18n.tr('app.caption')} v{VERSION}")
+            for detail in i18n.T.take_problems():
+                self.notes.append(i18n.Note("note.lang_problem", True, detail=detail))
 
     def fit_text(self, text, px, maxw): # Fit text into a maximum width using the requested font size.
         return self.board.fit(text, self.board.font(px), maxw)
@@ -1429,8 +1504,8 @@ class Game(IntroMixin, StatsMixin, AgonismMixin, AimMixin, RestartMixin, InputMi
     def help_columns(cls): # Calculate the column layout used by the help screen.
         return tuple(
             tuple(
-                (tr("help.%s.title" % sec),
-                 tuple((tr("help.%s.%d.k" % (sec, i)), tr("help.%s.%d.d" % (sec, i))) for i in range(1, n + 1)))
+                (i18n.tr("help.%s.title" % sec),
+                 tuple((i18n.tr("help.%s.%d.k" % (sec, i)), i18n.tr("help.%s.%d.d" % (sec, i))) for i in range(1, n + 1)))
                 for sec, n in col)
             for col in cls.HELP_LAYOUT)
 
@@ -1490,14 +1565,14 @@ def selftest(game, seconds, shots_dir=None): # Run the automated match self-test
 
 def main(): # Parse launch options, load resources, initialize the game, and run the main loop.
     ap = argparse.ArgumentParser(description="IL MISTER (pygame)")
-    ap.add_argument("--pic", help="cartella PIC con 27.VGA (sprite) e i loghi delle squadre")
+    ap.add_argument("--pic", help="cartella PIC originale (sprite, loghi delle squadre, immagini del tabellone)")
     ap.add_argument("--data", help="cartella con tore_actions.json")
     ap.add_argument("--mana", help="percorso di MANA.DAT (default: cartella del programma)")
     ap.add_argument("--geometria-originale", "--original-geometry", action="store_true", dest="orig_geom",
                     help="tela 320x112 come nell'editor TORE (default: tela estesa con gli angoli vicini)")
     ap.add_argument("--no-replay", action="store_true", help="replay automatico disattivato di default")
     ap.add_argument("--replay-secs", type=int, default=None, help="durata del replay in secondi (default: opzioni salvate, altrimenti 5)")
-    ap.add_argument("--tore-fps", type=int, default=TORE_FPS, help="frame al secondo dei file TORE (default %d: nel viewer imposta lo stesso fps)" % TORE_FPS)
+    ap.add_argument("--tore-fps", type=int, default=replay_system.TORE_FPS, help="frame al secondo dei file TORE (default %d: nel viewer imposta lo stesso fps)" % replay_system.TORE_FPS)
     ap.add_argument("--tore-dir", help="cartella dove salvare i file TORE dei replay (default: TORE_OUT accanto al programma)")
     ap.add_argument("--half", type=float, default=None, help="durata (minuti REALI) di ogni tempo (default: opzioni salvate, altrimenti 3)")
     ap.add_argument("--zoom", type=int, help="ingrandimento (default 5 con scroll, 3 a campo intero)")
@@ -1513,13 +1588,14 @@ def main(): # Parse launch options, load resources, initialize the game, and run
     exe_dir = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, "frozen", False) else app_dir
     cwd = os.getcwd()
     # Saved options (data/options.json); an explicit command-line flag always wins over them.
-    args.options_path = options_path([os.path.join(exe_dir, "data"), os.path.join(app_dir, "data"), os.path.join(cwd, "data")])
-    saved = load_options(args.options_path)
-    init_language(args.lang or saved.get("lang") or "en")
+    args.options_path = intro_system.options_path([os.path.join(exe_dir, "data"), os.path.join(app_dir, "data"), os.path.join(cwd, "data")])
+    saved = intro_system.load_options(args.options_path)
+    i18n.init_language(args.lang or saved.get("lang") or "en")
     if args.half is None:
         args.half = saved.get("half_min", 3.0)
     if args.replay_secs is None:
         args.replay_secs = saved.get("replay_secs", 5)
+    args.speed_max = saved.get("speed_max", 100)
     if saved.get("replay_auto") is False:
         args.no_replay = True
     if saved.get("slowmo") is False and not getattr(args, "no_slowmo", False):
@@ -1527,55 +1603,59 @@ def main(): # Parse launch options, load resources, initialize the game, and run
     if args.seed is not None:
         random.seed(args.seed)
     dirs = ([args.data] if args.data else []) + [os.path.join(exe_dir, "data"), exe_dir, os.path.join(app_dir, "data"), app_dir, os.path.join(cwd, "data"), cwd]
-    notes = load_data(dirs)
-    teams, team_note = load_teams([exe_dir, app_dir, cwd], args.mana)
-    pic = locate_pic(exe_dir, args.pic) or (locate_pic(app_dir, args.pic) if app_dir != exe_dir else None)
+    notes = sprite_data.load_data(dirs)
+    teams, team_note = resources.load_teams([exe_dir, app_dir, cwd], args.mana)
+    pic = resources.locate_pic(exe_dir, args.pic) or (resources.locate_pic(app_dir, args.pic) if app_dir != exe_dir else None)
     if pic is None and not (args.selftest or args.no_dialog):
-        pic = ask_pic_dir(exe_dir)
+        pic = resources.ask_pic_dir(exe_dir)
     asset_dirs = [exe_dir, os.path.join(exe_dir, "data"), app_dir, os.path.join(app_dir, "data"), cwd, os.path.join(cwd, "data")] + ([pic] if pic else [])
-    field_path = find_asset("campo.png", asset_dirs)
-    board_path = find_asset("tabellone.png", asset_dirs)
-    sheet_path = find_file(pic, "27") if pic else None
-    missing = [n for n, p in (("campo.png", field_path), ("tabellone.png", board_path), ("27.vga", sheet_path)) if p is None]
+    field_path = resources.find_asset("campo.png", asset_dirs)
+    board_path = resources.find_asset("tabellone.png", asset_dirs)
+    sheet_path = graphics_system.find_file(pic, "27") if pic else None
+    need_pic = [(stem + ".vga", graphics_system.find_file(pic, stem) if pic else None) for stem in ("27", graphics_system.PIC_EVENTS, graphics_system.PIC_DIGITS, graphics_system.PIC_ICONS, graphics_system.PIC_YESNO, graphics_system.PIC_BUTTON)] # 27 sprites, 8 events + clock, 38 digits, 1 roster icon.
+    missing = [n for n, p in (("campo.png", field_path), ("tabellone.png", board_path)) if p is None]
+    pic_missing = [n for n, p in need_pic if p is None]
+    if pic_missing:
+        missing.append("Original PIC Folder (" + ", ".join(pic_missing) + ")")
     if missing:
-        fatal(missing, [d for d in asset_dirs if d])
+        resources.fatal(missing, [d for d in asset_dirs if d])
     pygame.display.init()
     pygame.font.init()
-    FONTS.load([exe_dir, os.path.join(exe_dir, "data"), app_dir, os.path.join(app_dir, "data"), cwd, os.path.join(cwd, "data")])
+    fonts.FONTS.load([exe_dir, os.path.join(exe_dir, "data"), app_dir, os.path.join(app_dir, "data"), cwd, os.path.join(cwd, "data")])
     if "font_modern" in saved:
-        FONTS.modern = saved["font_modern"]
-    miss_fon = [n for n, f in (("MICRO4.FON", FONTS.micro), ("FLOW.FON", FONTS.flow)) if f is None]
+        fonts.FONTS.modern = saved["font_modern"]
+    miss_fon = [n for n, f in (("MICRO4.FON", fonts.FONTS.micro), ("FLOW.FON", fonts.FONTS.flow)) if f is None]
     if miss_fon:
-        fatal(miss_fon, [d for d in asset_dirs if d])
-    pygame.display.set_caption(f"{tr('app.caption')} v{VERSION}")
+        resources.fatal(miss_fon, [d for d in asset_dirs if d])
+    pygame.display.set_caption(f"{i18n.tr('app.caption')} v{VERSION}")
     args.zoom = args.zoom or (3 if args.noscroll else 5)
-    d = compute_layout(args.zoom, not args.noscroll)
+    d = layout.compute_layout(args.zoom, not args.noscroll)
     try:
         screen = pygame.display.set_mode((int(d["W"]), int(d["H"])), pygame.RESIZABLE)
     except pygame.error:
         screen = pygame.display.set_mode((d["W"], d["H"]))
-    set_match_log_dir(os.path.join(exe_dir, "log"))
+    match_log_system.set_match_log_dir(os.path.join(exe_dir, "log"))
     args.tore_dir = args.tore_dir or os.path.join(exe_dir, "TORE_OUT")
     try:
-        gfx = Graphics(pic, field_path, board_path, sheet_path, (FW, FH), FIELD_X0, Y_OFFSET, tr)
+        gfx = graphics_system.Graphics(pic, field_path, board_path, sheet_path, (geometry.FW, geometry.FH), geometry.FIELD_X0, geometry.Y_OFFSET, i18n.tr)
     except OSError as ex:
-        fatal([str(ex)], [])
+        resources.fatal([str(ex)], [])
     notes = [team_note] + notes
     print(team_note.text())
-    voc_path = find_original_sound("digi.voc", asset_dirs) # .\SOUND\DIGI.VOC: crowd chorus loop.
-    cmf_path = find_original_sound("bm2title.cmf", asset_dirs) # .\SOUNDS\BM2TITLE.CMF: intro music.
-    audio = Audio(not args.no_sound and not args.selftest, os.path.join(app_dir, ".tore_audio"), voc_path, cmf_path)
+    voc_path = resources.find_original_sound("digi.voc", asset_dirs) # .\SOUND\DIGI.VOC: crowd chorus loop.
+    cmf_path = resources.find_original_sound("bm2title.cmf", asset_dirs) # .\SOUNDS\BM2TITLE.CMF: intro music.
+    audio = audio_system.Audio(not args.no_sound and not args.selftest, os.path.join(app_dir, ".tore_audio"), voc_path, cmf_path)
     if saved.get("orig_audio") is False:
         audio.set_original(False)
     args.joy_dirs = [os.path.join(exe_dir, "data"), os.path.join(app_dir, "data"), os.path.join(cwd, "data"), exe_dir, app_dir, cwd]
     args.joy_write_dir = os.path.join(exe_dir, "data")
-    args.joy_img = find_asset(JOY_IMG, asset_dirs)
+    args.joy_img = resources.find_asset(joystick.JOY_IMG, asset_dirs)
     game = Game(args, gfx, audio, screen, notes, teams)
     if "user_team" in saved:
         game.user_team = saved["user_team"]
     if "hints" in saved:
         game.show_hints = saved["hints"]
-    game.notes.extend(Note("note.lang_problem", True, detail=d) for d in T.take_problems())
+    game.notes.extend(i18n.Note("note.lang_problem", True, detail=d) for d in i18n.T.take_problems())
     game.apply_view()
     if args.selftest:
         selftest(game, args.selftest, args.shots)
@@ -1599,9 +1679,9 @@ def main(): # Parse launch options, load resources, initialize the game, and run
             and now >= game.pan_return_at
         ):
             game.cam_manual = False
-            game.cam_glide = CAM_GLIDE_SECS
+            game.cam_glide = camera_system.CAM_GLIDE_SECS
             game.pan_return_at = 0
-            game.say(tr("msg.camera_ball"), (200, 220, 255), 1.5)
+            game.say(i18n.tr("msg.camera_ball"), (200, 220, 255), 1.5)
         while acc >= DT:
             if game.confirm_exit:
                 pass

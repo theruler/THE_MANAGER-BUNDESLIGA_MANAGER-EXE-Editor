@@ -3,15 +3,9 @@ import random
 
 from game_utils import clamp, unit
 from geometry import L, V_BOT, V_MID, V_MIN_P, V_SPOT, V_TOP
-from lang import tr
-from match_config import TEAM_NAMES
-from physics_system import PLAYER_SPEED
+from i18n import tr
+from match_config import CELE_KINDS, GOAL_FETCH_MAX, GOAL_RETURN_DELAY, PLAYER_SPEED, T_AFTER, T_CELE, TEAM_NAMES
 
-
-CELE_KINDS = (("huddle", 2), ("slide", 2), ("lift", 2), ("brawl", 2), ("train", 2), ("dance", 2)) # Celebration types and participant counts.
-T_CELE, T_AFTER = 5.6, 2.6 # T_CELE: celebration duration; T_AFTER: post-celebration delay.
-GOAL_RETURN_DELAY = 1.5 # Seconds after a goal before the conceding team starts to rearrange and its kickoff taker goes to fetch the ball from the net.
-GOAL_FETCH_MAX = 25.0 # Safety limit: seconds after the end of the goal sequence the kickoff is forced even if the ball has not reached the centre.
 
 class CelebrationMixin: # Player and team goal-celebration sequences.
     def goto(self, p, x, v): # Set a player's target position and movement speed for an animation.

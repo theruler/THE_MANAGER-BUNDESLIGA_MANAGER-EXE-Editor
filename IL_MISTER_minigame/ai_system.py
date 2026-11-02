@@ -2,44 +2,19 @@ import math
 import random
 import time
 
-from ball_model import G, step_ball_physics
-from formation_system import ROLE_ORDER
+from ball_model import step_ball_physics
 from game_utils import clamp, unit
 from geometry import BOX_D, BOX_V0, BOX_V1, GOAL_H, HALF_MOUTH, L, PITCH_W, POST_T, seg_dist, V_BOT, V_GC, V_TOP
-from lang import tr
-from physics_system import KEEPER_CATCH_HEIGHT, PLAYER_CATCH_RADIUS
+from i18n import tr
+from match_config import (AERIAL_BACK_MAX, AERIAL_CLEAR_DIST, AERIAL_EDGE, BICYCLE_MIN_Z, DIVE_HEADER_MAX,
+                          DIVE_HEADER_MIN, DIVE_HEADER_REACH, FWD_GOAL_MARGIN, FWD_LEAD_MAX, FWD_LEAD_MIN,
+                          FWD_RUN_BASE, FWD_RUN_SKILL, FWD_SIDE, GK_DRIBBLE_CHALLENGE_CHANCE,
+                          GK_DRIBBLE_CHALLENGE_DISTANCE, GK_DRIBBLE_CHALLENGE_RADIUS, GK_DRIBBLE_RETRY_SECS,
+                          IDLE_AI, BALL_GRAVITY, KEEPER_CATCH_HEIGHT, LEASH_U, LEASH_W, LONG_PASS_BIAS, LONG_PASS_FROM,
+                          LONG_PASS_FULL, LONG_SHOT_FROM, LONG_SHOT_PROB, LONG_SHOT_TO, MARK_DIST, MARK_MOVE_THRESHOLD,
+                          MARK_R, MARK_STICKY_MARGIN, MAX_MARK, PLAYER_CATCH_RADIUS, ROLE_ORDER, SAVE_HORIZON, SAVE_MAX_HEIGHT,
+                          SAVE_MAX_RUN, SAVE_REACTION, SAVE_SLACK, SELECT_LOOKAHEAD)
 from stats_system import norm
-
-
-SAVE_HORIZON = 1.5 # Seconds ahead scanned for a loose ball leaving over a touchline.
-SAVE_REACTION = 0.12 # Seconds a player needs before starting to run for a ball.
-SAVE_SLACK = 0.10 # A player counts as able to reach the ball if he is at most this late.
-SAVE_MAX_RUN = 55.0 # Longest run (world units) a player will attempt for a ball.
-SAVE_MAX_HEIGHT = 9.0 # Balls higher than this when they cross the line are out of reach.
-SELECT_LOOKAHEAD = 0.35 # Seconds of ball travel considered when auto-selecting the player nearest to a loose ball.
-IDLE_AI = 2.5 # Seconds without manual input before automatic player selection resumes.
-MARK_R, MARK_DIST, MAX_MARK = 45.0, 9.0, 2 # MARK_R: marking search radius; MARK_DIST: marking offset; MAX_MARK: max defenders per target.
-LEASH_U, LEASH_W = 0.08, 0.11 # Maximum extra longitudinal/lateral movement beyond a player's tactical zone.
-MARK_MOVE_THRESHOLD = 1.5 # Target movement required before a man-marker updates its destination.
-MARK_STICKY_MARGIN = 12.0 # Extra distance allowed to keep an existing marking assignment stable.
-GK_DRIBBLE_CHALLENGE_DISTANCE = 28.0 # Maximum goal depth at which the goalkeeper challenges a dribbler.
-GK_DRIBBLE_CHALLENGE_RADIUS = 23.0 # Maximum goalkeeper-to-carrier distance for a challenge.
-GK_DRIBBLE_CHALLENGE_CHANCE = 0.84 # Base probability that a goalkeeper wins a dribble challenge.
-LONG_SHOT_FROM, LONG_SHOT_TO = 105.0, 170.0 # Distance band (to the goal) of long shots: only taken from beyond the normal shooting range.
-LONG_SHOT_PROB = 0.07 # Chance per AI decision of a long shot at Skill 10 (about 0.2 of that at Skill 99).
-BICYCLE_MIN_Z = 9.0 # Ball height from which a bicycle kick is an option (otherwise a plain header).
-DIVE_HEADER_MIN, DIVE_HEADER_MAX = 10.0, 22.0 # Distance band from which a player may throw himself at the ball for a diving header.
-DIVE_HEADER_REACH = 17.0 # The ball (0.2 s ahead) must pass within this distance of the diver.
-AERIAL_BACK_MAX = 0.35 # A headed pass may not point more than this (cosine) back toward where the ball came from.
-AERIAL_CLEAR_DIST = 70.0 # Distance of the fallback clearance target when no teammate is usable.
-AERIAL_EDGE = 25.0 # Distance from a touchline inside which a header is never aimed toward that touchline.
-LONG_PASS_FROM, LONG_PASS_FULL = 110.0, 170.0 # Passes beyond LONG_PASS_FROM are 'long', fully weighted at LONG_PASS_FULL.
-LONG_PASS_BIAS = 40.0 # Score bonus for a long pass at Skill 99; at Skill 10 the same pass is penalised by this much.
-FWD_RUN_BASE, FWD_RUN_SKILL = 0.35, 0.60 # Chance per decision that a forward makes an advanced run while his team has the ball: 0.35 at Skill 10, 0.95 at Skill 99.
-FWD_LEAD_MIN, FWD_LEAD_MAX = 40.0, 75.0 # How far ahead of the ball carrier (world units) a forward runs; scaled by 0.6 (Skill 10) .. 1.0 (Skill 99).
-FWD_GOAL_MARGIN = 24.0 # Forwards never run closer than this to the goal line.
-FWD_SIDE = 0.22 # Lateral offsets (fraction of the pitch width) tried to find free space.
-GK_DRIBBLE_RETRY_SECS = 0.38 # Simulated seconds between failed goalkeeper challenge attempts.
 
 
 class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restarts, and attacks.
@@ -216,7 +191,7 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
                 t = i * 0.1
                 x, v = self.ball_pred(t)
                 if 0.0 < x < L and (v < V_TOP or v > V_BOT):
-                    z = b.z + b.vz * t - 0.5 * G * t * t if (b.z > 0.5 or b.vz > 0.0) else 0.0
+                    z = b.z + b.vz * t - 0.5 * BALL_GRAVITY * t * t if (b.z > 0.5 or b.vz > 0.0) else 0.0
                     if z <= SAVE_MAX_HEIGHT:
                         val = dict(t=t, x=x, v=v)
                     break
@@ -511,7 +486,7 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
                 kt = self.t_all - b.age
                 if abs(getattr(p, "gk_kt", -9.0) - kt) > 0.05:
                     p.gk_kt = kt
-                    p.gk_err = random.gauss(0.0, 1.0) * (1.0 - p.skill) * 4.5 * (1.0 - 0.8 * self.keeper_reading())
+                    p.gk_err = random.gauss(0.0, 1.0) * (1.0 - self.keeper_skill(p)) * 4.5 * (1.0 - 0.8 * self.keeper_reading(p))
                 T = fc["t"]
                 tv = clamp(fc["v"] + p.gk_err, V_GC - HALF_MOUTH - 3.0, V_GC + HALF_MOUTH + 3.0)
                 if b.pen and not b.pen_save:
@@ -522,7 +497,7 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
                 need = abs(tv - p.wv)
                 high = fc["z"] > KEEPER_CATCH_HEIGHT - 2.0
                 if not p.busy() and p.act_cd <= 0:
-                    lead = 0.12 * self.keeper_reading() # Well-read shots: the keeper commits earlier.
+                    lead = 0.12 * self.keeper_reading(p) # Well-read shots: the keeper commits earlier.
                     if (need > 3.5 and T < 0.30 + lead + min(0.14, need * 0.010)) or (high and T < 0.30 + lead) or T < 0.12:
                         p.act_cd = 0.9
                         self.start_dive(p, tv if need > 3.5 else p.wv + (1.0 if tv >= p.wv else -1.0) * 3.0)
@@ -707,7 +682,7 @@ class AIMixin: # AI decisions for player selection, tactics, goalkeepers, restar
                 return self.ai_shoot(p)
         elif LONG_SHOT_FROM <= to_goal < LONG_SHOT_TO and p.hold_t > 0.3: # Long shot: the lower the Skill, the more often.
             block = min(seg_dist(o.wx, o.wv, p.wx, p.wv, goalx, V_GC) for o in opp)
-            prob = LONG_SHOT_PROB * (0.2 + 0.8 * self.long_k(p)) * (0.4 if block < 6 else 1.0)
+            prob = LONG_SHOT_PROB * (0.45 + 0.55 * self.long_k(p)) * (0.4 if block < 6 else 1.0)
             if random.random() < prob:
                 return self.ai_shoot(p)
         press_r = 17.0 * self.agon_mul(p.team, 1.35, 0.8) # Agonism: a cautious team gets rid of the ball earlier under pressure.

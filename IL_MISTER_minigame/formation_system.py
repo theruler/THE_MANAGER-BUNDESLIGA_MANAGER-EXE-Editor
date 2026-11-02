@@ -2,24 +2,13 @@ import math
 
 from game_utils import clamp, unit
 from geometry import L, PITCH_W, V_TOP
-from lang import tr
-from match_config import TEAM_NAMES
+from i18n import tr
+from match_config import (AGON_LINE_PUSH, DEFAULT_FORMATION, DEF_LINE_U, DEF_MIN_U, FWD_LINE_U, LANE_MARGIN,
+                          KEEP_OFF, LAT_K, ROLE_K, ROLE_ORDER, ROLE_POOLS, TEAM_NAMES, WIDE_BONUS, ZONE_U, FORMATION_LAYOUTS)
 from stats_system import rating
 
 
-ROLE_K = {"GK": 0.0, "DEF": 0.55, "MID": 0.70, "FWD": 0.80} # Longitudinal home-position factors for each tactical role.
-AGON_LINE_PUSH = {"GK": 0.0, "DEF": 0.10, "MID": 0.22, "FWD": 0.16} # Longitudinal shift of the home position between agonism 0 % and 100 %.
-KEEP_OFF = 22.0 # Minimum distance an outfield player's home position should keep from the ball.
-LAT_K = 0.28 # Lateral correction factor used when positioning players relative to the ball.
-FORMATIONS = {} # Registry of available formations; each formation lists outfield players per line.
-DEFAULT_FORMATION = "4-4-2" # Formation assigned when a team has no explicit formation choice.
-ROLE_POOLS = {"GK": (0, 2), "DEF": (2, 7), "MID": (7, 15), "FWD": (15, 20)} # Player-index ranges eligible for each tactical role.
-ROLE_ORDER = ("GK", "DEF", "MID", "FWD") # Order used when sorting or assigning tactical roles.
-DEF_LINE_U, FWD_LINE_U = 0.13, 0.45 # Normalized longitudinal position of the defensive/forward line in a formation.
-ZONE_U = {"GK": (0.0, 0.12), "DEF": (0.10, 0.58), "MID": (0.10, 0.92), "FWD": (0.22, 1.0)} # Allowed normalized longitudinal zone for each role.
-DEF_MIN_U = 0.10 # Minimum normalized forward coordinate allowed for defenders.
-WIDE_BONUS = 0.10 # Extra longitudinal zone width given to wide players in broad lines.
-LANE_MARGIN = {1: 0.5, 2: 0.30, 3: 0.20, 4: 0.12, 5: 0.09, 6: 0.07} # Normalized lateral margin used to space players within a line of each size.
+FORMATIONS = {} # Runtime registry of available formations from match_config.py.
 _SLOT_CACHE = {}
 
 
@@ -63,12 +52,8 @@ def role_counts(name): # Count the goalkeeper, defender, midfielder, and forward
     return cnt
 
 
-register_formation("4-4-2", 4, 4, 2)
-register_formation("5-3-2", 5, 3, 2)
-register_formation("3-5-2", 3, 5, 2)
-register_formation("4-3-3", 4, 3, 3)
-register_formation("4-5-1", 4, 5, 1)
-register_formation("3-4-3", 3, 4, 3)
+for _name, _lines in FORMATION_LAYOUTS:
+    register_formation(_name, *_lines)
 
 
 class FormationMixin: # Formation slots, tactical zones, roles, and player positioning.

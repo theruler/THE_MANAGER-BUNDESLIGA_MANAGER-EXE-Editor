@@ -1,11 +1,11 @@
-"""Asset discovery, fatal-error screen, picture-directory dialog and team database loading."""
+"""Asset discovery, fatal-error screen, original-PIC-folder dialog and team database loading."""
 
 import os
 import sys
 import pygame
 
 from graphics_system import find_file
-from lang import Note, T, tr
+from i18n import Note, T, tr
 from replay_system import DE_TABLE
 from stats_system import make_player_stats, random_team_stats, STAT_MAX, STAT_MIN
 
@@ -91,7 +91,7 @@ def fatal(missing, searched): # Show a startup error in Pygame and print the ful
     sys.exit(1)
 
 
-def ask_pic_dir(start_dir=None): # Show the minimal Pygame folder picker for the directory containing 27.VGA.
+def ask_pic_dir(start_dir=None): # Show the minimal Pygame folder picker for the original PIC folder.
     try:
         pygame.display.init()
         pygame.font.init()
@@ -156,9 +156,9 @@ def ask_pic_dir(start_dir=None): # Show the minimal Pygame folder picker for the
             screen.fill((18, 22, 32))
             screen.blit(font.render(tr("dlg.pick_pic"), True, (255, 220, 110)), (18, 14))
             screen.blit(small.render(current[-86:], True, (210, 220, 235)), (18, 52))
-            status = "27.VGA trovato" if valid else "27.VGA non trovato: entra nella cartella PIC" 
+            status = "Cartella PIC originale trovata" if valid else "Cartella PIC originale non trovata: entra nella cartella PIC"
             if not italian:
-                status = "27.VGA found" if valid else "27.VGA not found: open the PIC folder"
+                status = "Original PIC Folder found" if valid else "Original PIC Folder not found: open the PIC folder"
             screen.blit(small.render(status, True, (70, 220, 150) if valid else (255, 175, 95)), (18, 82))
             pygame.draw.rect(screen, (32, 38, 52), (12, 112, 736, 324))
             for row, (name, path) in enumerate(entries[scroll:scroll + visible]):

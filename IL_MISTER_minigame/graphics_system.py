@@ -13,6 +13,7 @@ def _hex_palette(s, scale=1): # Decode a hexadecimal RGB palette and optionally 
 
 
 PAL_DEFAULT = _hex_palette("0000002828302020281C1C2418182014141C1010180C0C1400001C241C142C282034302C141804181C0818200C1C24101800042400042C0008301C082818081C10040C10303C3C002C281C24201420181018100C140C083C3C3C300C300000003F00003B00003800003500003200002F00002C00002900002600002200001F00001C00001900001600001300001000003F36363F2E2E3F27273F1F1F3F17173F10103F08083F00003F2A173F26103F22083F1E00391B003318002D15002713003F3F363F3F2E3F3F273F3F1F3F3E173F3D103F3D083F3D003936003331002D2B002727002121001C1B00161500101000343F17313F102D3F08283F002439002033001D2D00182700363F362F3F2E273F27203F1F183F17103F10083F08003F00003F00003B00003800003500013200012F00012C00012900012600012200011F00011C00011900011600011300011000363F3F2E3F3F273F3F1F3F3E173F3F103F3F083F3F003F3F003939003333002D2D002727002121001C1C001616001010172F3F102C3F082A3F00273F002339001F33001B2D00172736363F2E2F3F27273F1F203F17183F10103F08093F00013F00003F00003B00003800003500003200002F00002C00002900002600002200001F00001C0000190000160000130000103C363F392E3F36273F341F3F32173F2F103F2D083F2A003F2600392000331D002D18002714002111001C0D00160A00103F363F3F2E3F3F273F3F1F3F3F173F3F103F3F083F3F003F3800393200332D002D2700272100211B001C1600161000103F3A373F38343F36313F352F3F332C3F31293F2F273F2E243F2C203F291C3F27183C25173A2316372215342014321F132F1E122D1C112A1A1028190F27180E24170D22160C20140B1D130A1B1209171008150F07120E06100C060E0B050A0803000000000000000000000000000000000000000000000000310A0A31130A311D0A31270A31310A27310A1D310A13310A0A310C0A31170A31220A312D0A2A310A1F310A14310B0A31160A31210A312C0A31310A2B310A20310A15310A0A00000000", scale=4) # Fallback RGB palette used when an asset does not provide its own palette.
+PAL_TITLE = _hex_palette("000000F0F0F0D0E0F0B0D0F090C0F080A0E04070C03060B0105090103070001060001040001030608030407010406010305010304010809090606060304050203040706010F0C0B0F0B090F09070E08060C06040B04030903020701000501000", scale=1) # Palette of the main-menu picture 47.CP (32 colours; the rest is black).
 _ALPHA_LUT = bytes([0] + [255] * 255)
 
 CELL_W, CELL_H = 12, 11 # Sprite-sheet cell width/height in source pixels.
@@ -21,8 +22,23 @@ GOAL_Y0, GOAL_Y1 = 18, 28 # Upper/Lower source-image row of the goal opening.
 GOAL_FRONT_X = (23, 296) # Left and right source-image x coordinates of the goal front.
 BOARD_GOAL_L = (158, 82, 185, 101) # Source rectangle containing the left scoreboard goal display.
 BOARD_GOAL_R = (188, 82, 215, 101) # Source rectangle containing the right scoreboard goal display.
-BOARD_CLOCK = (141, 85, 153, 97) # Source rectangle containing the scoreboard clock.
-BOARD_ROSTER_ICON = (223, 84, 238, 99) # Source rectangle containing the roster toggle icon.
+PIC_EVENTS, PIC_DIGITS, PIC_ICONS = "8", "38", "1" # Required VGA files (besides the sprite sheet 27): event pictures + clock, scoreboard digits, roster icon.
+BOARD_CLOCK = (163, 102, 175, 114) # 8.VGA: rectangle (inclusive) containing the scoreboard clock.
+YELLOW_PIC = (1, 103, 38, 140) # 8.VGA: yellow card; shown instead of the logo of the team that caused it.
+RED_PIC = (42, 103, 79, 140) # 8.VGA: red card / sending off; shown instead of the logo of the team that caused it.
+FOUL_PIC = (83, 103, 120, 140) # 8.VGA: injury; shown instead of the logo of the team with the injured player.
+GOAL_PIC = (124, 103, 161, 140) # 8.VGA: goal; shown instead of the logo of the scoring team.
+BOARD_ROSTER_ICON = (21, 21, 36, 36) # 1.VGA: rectangle (inclusive) containing the roster toggle icon.
+PIC_YESNO, PIC_BUTTON = "33", "31" # Required VGA files of the OPTIONS page: YES / NO pictures, number button.
+YES_ON = (148, 0, 171, 16) # 33.VGA: YES lit.
+YES_OFF = (100, 0, 123, 16) # 33.VGA: YES unlit.
+NO_ON = (172, 0, 195, 16) # 33.VGA: NO lit.
+NO_OFF = (124, 0, 147, 16) # 33.VGA: NO unlit.
+BUTTON_SPEEDS = (0, 0, 99, 18) # 33.VGA: long button with "-" on the left and "+" on the right (the value is written in the middle).
+BUTTON_GENERIC = (96, 47, 143, 62) # 31.VGA: background of every other OPTIONS button (stretched in the middle to fit the width).
+BUTTON = (60, 0, 89, 22) # 31.VGA: empty button for the minute / second / speed numbers (no pressed version).
+UI_SCALE = 2 # Integer nearest-neighbour zoom of the OPTIONS pictures.
+MENU_BG = {"title": ("47", PAL_TITLE), "options": ("22", None)} # Menu backgrounds: PIC\\47.CP (own palette), PIC\\22.CP (default palette).
 GOAL_SCROLL_STEP = 2 # Pixel step used when scrolling the animated goal display.
 GOAL_SCROLL_INTERVAL = 0.05 # Seconds between goal-display scroll steps.
 CROWD_FRAMES = 8 # Number of animation frames available for the crowd.
@@ -79,10 +95,10 @@ def vga_surface(img, palette, transparent0): # Convert indexed VGA pixels into a
     out[3::4] = pix.translate(_ALPHA_LUT) if transparent0 else b"\xff" * (w * h)
     return pygame.image.frombuffer(bytes(out), (w, h), "RGBA").convert_alpha()
 
-def find_file(folder, stem): # Find a VGA asset by case-insensitive filename stem inside a folder.
+def find_file(folder, stem, ext=".vga"): # Find an asset by case-insensitive filename stem (and extension) inside a folder.
     if folder and os.path.isdir(folder):
         for fn in os.listdir(folder):
-            if fn.lower() == stem.lower() + ".vga":
+            if fn.lower() == stem.lower() + ext:
                 return os.path.join(folder, fn)
     return None
 
@@ -120,16 +136,88 @@ class Graphics: # VGA assets, field graphics, sprites, and crowd animation resou
             def crop(box): # Crop a rectangular region from the supplied image or pixel buffer.
                 return raw.subsurface(pygame.Rect(box[0], box[1], box[2] - box[0] + 1, box[3] - box[1] + 1)).copy()
             gl, gr = crop(BOARD_GOAL_L), crop(BOARD_GOAL_R)
-            self.clock_icon = crop(BOARD_CLOCK)
-            ri = crop(BOARD_ROSTER_ICON)
+        except (ValueError, pygame.error) as ex:
+            raise OSError(self.translate("err.board_area", reason=ex))
+        ev = self._load_pic(PIC_EVENTS, True) # 8.VGA: clock + event pictures (index 0 = transparent for the clock, opaque tiles for the pictures).
+        ev_opaque = self._load_pic(PIC_EVENTS, False)
+        dg = self._load_pic(PIC_DIGITS, True) # 38.VGA: scoreboard digits.
+        ic = self._load_pic(PIC_ICONS, True) # 1.VGA: roster icon.
+        box = lambda b: pygame.Rect(b[0], b[1], b[2] - b[0] + 1, b[3] - b[1] + 1) # Inclusive (x0, y0, x1, y1) -> Rect.
+        try:
+            self.clock_icon = ev.subsurface(box(BOARD_CLOCK)).copy()
+            self.event_pics = {"yellow": ev_opaque.subsurface(box(YELLOW_PIC)).copy(), "red": ev_opaque.subsurface(box(RED_PIC)).copy(),
+                               "injury": ev_opaque.subsurface(box(FOUL_PIC)).copy(), "goal": ev_opaque.subsurface(box(GOAL_PIC)).copy()}
+            self.digits = [dg.subsurface(pygame.Rect(i * DIGIT_PITCH, DIGIT_Y, DIGIT_W, DIGIT_H)).copy() for i in range(10)]
+            ri = ic.subsurface(box(BOARD_ROSTER_ICON)).copy()
             self.roster_icon = ri.subsurface(ri.get_bounding_rect()).copy()
         except (ValueError, pygame.error) as ex:
             raise OSError(self.translate("err.board_area", reason=ex))
+        yn = self._load_pic(PIC_YESNO, False) # 33.VGA / 31.VGA: OPTIONS widgets. Each entry is (normal, darkened).
+        bt = self._load_pic(PIC_BUTTON, False)
+        try:
+            self.ui = {}
+            for name, src, rc, scale in (
+                ("yes_on", yn, YES_ON, 3), ("yes_off", yn, YES_OFF, 3),
+                ("no_on", yn, NO_ON, 3), ("no_off", yn, NO_OFF, 3),
+                ("speeds", yn, BUTTON_SPEEDS, UI_SCALE),
+                ("button", bt, BUTTON, UI_SCALE),
+                ("generic", bt, BUTTON_GENERIC, UI_SCALE)
+            ):
+                im = src.subsurface(box(rc)).copy()
+                im = pygame.transform.scale(im, (im.get_width() * scale, im.get_height() * scale))
+                dark = im.copy()
+                dark.fill((85, 85, 85), special_flags=pygame.BLEND_RGB_MULT)
+                self.ui[name] = (im, dark)
+        except (ValueError, pygame.error) as ex:
+            raise OSError(self.translate("err.board_area", reason=ex))
+        self._menu_bg = {}
+        self._generic = {}
         gy = GOAL_Y1 + self.y_offset + 10 + 1
         self.goals = ((gl, (GOAL_FRONT_X[0] + self.field_x0 - gl.get_width(), gy - gl.get_height())),
                       (gr, (GOAL_FRONT_X[1] + self.field_x0, gy - gr.get_height())))
         self.shadow_top = self.sprite(145).get_bounding_rect().top
         self.crowd = self._build_crowd()
+
+    def _load_pic(self, stem, transparent0, palette=None): # Load a required VGA file of the PIC folder as a surface.
+        p = find_file(self.pic_dir, stem)
+        img = decode_vga(p) if p else None
+        if img is None:
+            raise OSError(self.translate("err.gfx_unreadable", path=p or (stem + ".vga")))
+        return vga_surface(img, palette or PAL_DEFAULT, transparent0)
+
+    def make_generic_button(self, w, dark=False): # BUTTON_GENERIC at width w: the two end caps stay as they are, the middle is stretched.
+        key = (int(w), bool(dark))
+        if key not in self._generic:
+            base = self.ui["generic"][1 if dark else 0]
+            bw, bh = base.get_size()
+            cap = min(8 * UI_SCALE, bw // 2)
+            if w <= bw:
+                out = pygame.transform.scale(base, (int(w), bh))
+            else:
+                out = pygame.Surface((int(w), bh), pygame.SRCALPHA)
+                out.blit(base, (0, 0), pygame.Rect(0, 0, cap, bh))
+                out.blit(base, (int(w) - cap, 0), pygame.Rect(bw - cap, 0, cap, bh))
+                mid = base.subsurface(pygame.Rect(cap, 0, bw - 2 * cap, bh))
+                out.blit(pygame.transform.scale(mid, (int(w) - 2 * cap, bh)), (cap, 0))
+            self._generic[key] = out
+        return self._generic[key]
+
+    def menu_background(self, which, size): # Menu picture ("title" = 47.CP, "options" = 22.CP) shown whole (letterboxed) in a size = (W, H) window with nearest-neighbour scaling; None when missing / unreadable. Returns the surface only; the caller centres it.
+        key = (which, size)
+        if self._menu_bg.get("key") == key:
+            return self._menu_bg["surf"]
+        stem, pal = MENU_BG[which]
+        surf = None
+        for ext in (".cp", ".vga"):
+            p = find_file(self.pic_dir, stem, ext)
+            img = decode_vga(p) if p else None
+            if img:
+                src = vga_surface(img, pal or PAL_DEFAULT, False)
+                k = min(size[0] / float(src.get_width()), size[1] / float(src.get_height()))
+                surf = pygame.transform.scale(src, (max(1, int(src.get_width() * k)), max(1, int(src.get_height() * k)))) # No smoothing: crisp pixels.
+                break
+        self._menu_bg = {"key": key, "surf": surf} # Only the last size is kept (the window can be resized).
+        return surf
 
     def _build_crowd(self): # Create the crowd animation frames from the loaded sprite sheet.
         rect = pygame.Rect(0, 0, min(480, self.field.get_width()), min(33, self.field.get_height()))
@@ -178,7 +266,7 @@ class Graphics: # VGA assets, field graphics, sprites, and crowd animation resou
         return surf
 
 BOARD_W, BOARD_H, BOARD_SRC = 320, 81, (320, 112) # BOARD_W: rendered width; BOARD_H: rendered height; BOARD_SRC: source dimensions.
-DIGIT_W, DIGIT_H, DIGIT_Y, DIGIT_PITCH = 11, 15, 84, 14 # DIGIT_W: digit width; DIGIT_H: height; DIGIT_Y: source y; DIGIT_PITCH: spacing.
+DIGIT_W, DIGIT_H, DIGIT_Y, DIGIT_PITCH = 11, 15, 114, 14 # Digits are read from 38.VGA. DIGIT_W: digit width; DIGIT_H: height; DIGIT_Y: source y; DIGIT_PITCH: spacing.
 BOARD_LOGO, LOGO_SZ = ((104, 35), (183, 35)), 38 # BOARD_LOGO: logo positions; LOGO_SZ: crop size.
 NAME_Y, NAME_MAXW, GOAL_Y = 8, 52, 16 # NAME_Y: team-name y; NAME_MAXW: max name width; GOAL_Y: score y.
 INFO_X, INFO_Y0, INFO_DY = (149, 172), 35, 8 # INFO_X: column x positions; INFO_Y0: first row y; INFO_DY: row spacing.
@@ -206,7 +294,7 @@ class Scoreboard: # Scoreboard, team roster, and match-information rendering.
         self._roster_icon_cache = {}
         self._clock_icon_cache = {}
         self._scaled_board_cache = {}
-        self.base, self.digits, self.goal_letters = self._load_board(board_path, translate)
+        self.base, self.goal_letters = self._load_board(board_path, translate)
         self.gfx_icon = None
 
 
@@ -254,10 +342,9 @@ class Scoreboard: # Scoreboard, team roster, and match-information rendering.
         if img.get_size() != BOARD_SRC:
             img = pygame.transform.smoothscale(img, BOARD_SRC)
         base = img.subsurface(pygame.Rect(0, 0, BOARD_W, BOARD_H)).copy()
-        digs = [img.subsurface(pygame.Rect(i * DIGIT_PITCH, DIGIT_Y, DIGIT_W, DIGIT_H)).copy() for i in range(10)]
         goal_letters = [img.subsurface(pygame.Rect(243 + i * DIGIT_PITCH, 84, DIGIT_W, DIGIT_H)).copy()
                         for i in range(4)]
-        return base, digs, goal_letters
+        return base, goal_letters
 
     def _logo_img(self, g, t): # Resolve the correct logo image for the supplied team.
         td = g.team_data[t]
@@ -275,6 +362,26 @@ class Scoreboard: # Scoreboard, team roster, and match-information rendering.
         self._logo[key] = im
         return im
 
+
+    @staticmethod
+    def event_pic(g, t): # Picture shown instead of team t's logo while an event it caused is on: goal, yellow / red card, injury; else None.
+        pics = getattr(g.gfx, "event_pics", None)
+        if not pics:
+            return None
+        m = g.mode
+        if m == "goal":
+            gl = getattr(g, "goal", None)
+            return pics["goal"] if gl and gl.get("team") == t else None
+        if m == "foul":
+            f = getattr(g, "foul", None)
+            if f and f.get("card") and f.get("shown") and f["off"].team == t:
+                return pics["red" if f["card"] == "R" else "yellow"]
+            return None
+        if m == "injury":
+            inj = getattr(g, "injury", None)
+            p = inj.get("p") if inj else None
+            return pics["injury"] if p is not None and p.team == t else None
+        return None
 
     def text_at(self, lo, f, text, color, x, y, cx=None): # Render aligned text on the scoreboard surface.
         if self.fonts.modern:
@@ -305,7 +412,7 @@ class Scoreboard: # Scoreboard, team roster, and match-information rendering.
         for t in (0, 1):
             x, y = BOARD_LOGO[t]
             lo.fill((8, 10, 24), (x, y, LOGO_SZ, LOGO_SZ))
-            im = self._logo_img(g, t)
+            im = self.event_pic(g, t) or self._logo_img(g, t)
             if im is not None:
                 lo.blit(im, im.get_rect(center=(x + LOGO_SZ // 2, y + LOGO_SZ // 2)))
         lo.blit(self.base, (0, 0))
@@ -338,7 +445,7 @@ class Scoreboard: # Scoreboard, team roster, and match-information rendering.
                 if t == 1:
                     x -= 1
                 for d in digs:
-                    lo.blit(self.digits[d], (x, GOAL_Y))
+                    lo.blit(g.gfx.digits[d], (x, GOAL_Y))
                     x += DIGIT_W + 1
         st = g.stats
         on = [sum(1 for p in g.team_p[t] if p.state != "out") for t in (0, 1)]

@@ -3,12 +3,10 @@
 import math
 import random
 
-from ball_model import G
 from game_utils import clamp, unit
 from geometry import ground_to_img, L, V_BOT, V_SPOT, V_TOP
-from lang import tr
-from match_config import FLAG_FLY_SPEED, FLAG_H
-from physics_system import PLAYER_SPEED
+from i18n import tr
+from match_config import BALL_GRAVITY, FLAG_FLY_SPEED, FLAG_H, PLAYER_SPEED
 
 
 class Flag: # Animated referee flag state and screen position.
@@ -57,7 +55,7 @@ class Flag: # Animated referee flag state and screen position.
             self.x = clamp(self.x + self.vx * dt, -14.0, L + 14.0)
             self.v = clamp(self.v + self.vv * dt, V_TOP - 10.0, V_BOT + 8.0)
             self.z += self.vz * dt
-            self.vz -= G * 0.9 * dt
+            self.vz -= BALL_GRAVITY * 0.9 * dt
             self.ang += self.spin * dt
             if self.z <= 0.0:
                 self.z = 0.0

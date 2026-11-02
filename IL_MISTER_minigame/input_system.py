@@ -4,12 +4,17 @@ import time
 import pygame
 
 from camera_system import CAM_GLIDE_SECS, PAN_DEAD_PX, PAN_HYSTERESIS_MS
-from celebration_system import T_AFTER, T_CELE
-from game_utils import clamp
-from geometry import L, SCROLL_MAX_X, SCROLL_MAX_Y, V_MAX_P, V_MIN_P
+from game_utils import clamp, unit
+from geometry import L, SCROLL_MAX_X, SCROLL_MAX_Y, V_MAX_P, V_MIN_P, Y_OFFSET, screen_to_world_dir
 from joystick import JOY_EVENTS, JOY_KEYS
-from lang import tr
-from match_config import SPEED_DEFAULT, SPEEDS
+from i18n import tr
+from match_config import SPEED_DEFAULT, SPEEDS, T_AFTER, T_CELE
+
+CURSOR_AIM_SECS = 1.5 # The mouse cursor is an aim source only if it moved recently.
+CURSOR_AIM_MIN_DIST = 3.0 # Minimum world distance from the player for a usable cursor aim.
+AIM_STEER_RATE = 14.0 # Responsiveness of live user aim steering (1/s).
+AI_STEER_RATE = 8.0 # Responsiveness of AI aim steering (1/s).
+AI_STEER_LEAD = 0.35 # Seconds of target movement predicted for an AI aerial pass.
 
 
 class InputMixin: # Keyboard, mouse, and joystick input handling.
@@ -328,3 +333,78 @@ class InputMixin: # Keyboard, mouse, and joystick input handling.
             return None
         mod = pygame.KMOD_SHIFT if self.joy.is_held("lob") else 0
         return self.handle_event(pygame.event.Event(pygame.KEYDOWN, key=k, unicode=uni, mod=mod))
+
+    # ---------- aiming ----------
+    def aim_input(self, p): # Explicit aim from the user, or None when nothing is being pointed at (no facing fallback).
+        if self.drag:
+            x0, y0, x1, y1 = self.drag
+            plan = self.gesture_plan(x0, y0, x1, y1)
+            if plan is not None:
+                return plan[1]
+
+        def scr(u): # Convert a screen-space direction to a world direction at the player's position.
+            return screen_to_world_dir(p.wx, p.wv, u[0], u[1])
+        a = self.joy.aim_vec()
+        if a:
+            return scr(a)
+        k = pygame.key.get_pressed()
+        x = (k[pygame.K_RIGHT] or k[pygame.K_d]) - (k[pygame.K_LEFT] or k[pygame.K_a])
+        v = (k[pygame.K_DOWN] or k[pygame.K_s]) - (k[pygame.K_UP] or k[pygame.K_w])
+        if x or v:
+            return scr(unit(float(x), float(v)))
+        m = self.joy.move_vec()
+        if m:
+            return scr(m)
+        return self.cursor_aim(p)
+    def aim_dir(self, p): # Calculate the aiming direction for a player action (explicit aim, then movement, then facing).
+        return self.aim_input(p) or p.kvec or (p.dx, p.dv)
+    def cursor_aim(self, p): # Direction from the player toward the mouse cursor, if the mouse was used recently.
+        if self.mouse_xy is None or self.paused or time.time() - self.mouse_moved_at > CURSOR_AIM_SECS:
+            return None
+        mx, my = self.mouse_xy[0], self.mouse_xy[1] - self.field_y
+        if not (0 <= mx < self.view_w and 0 <= my < self.view_h):
+            return None
+        _fx, _row, (wx, wv) = self.screen_to_ground(mx, my)
+        if math.hypot(wx - p.wx, wv - p.wv) < CURSOR_AIM_MIN_DIST:
+            return None
+        return unit(wx - p.wx, wv - p.wv)
+    def blend_action_aim(self, a, live, rate, dt): # Ease the pending action direction toward `live`.
+        kw = a["kw"]
+        r = 1.0 - math.exp(-rate * dt)
+        cur = (kw["dx"], kw["dv"])
+        kw["dx"], kw["dv"] = unit(cur[0] + (live[0] - cur[0]) * r, cur[1] + (live[1] - cur[1]) * r, cur)
+    def steer_action_aim(self, p, a, dt): # Let the user keep steering a spectacular action until its contact frame.
+        live = self.aim_input(p)
+        if live is not None:
+            self.blend_action_aim(a, live, AIM_STEER_RATE, dt)
+    def ai_steer_aim(self, p, a, dt): # AI counterpart: keep the ball pointed at the (moving) target teammate until contact.
+        q = a["kw"].get("target")
+        if q is None or q.state in ("out", "leaving"):
+            return
+        cur = (a["kw"]["dx"], a["kw"]["dv"])
+        live = unit(q.wx + q.vx * AI_STEER_LEAD - p.wx, q.wv + q.vv * AI_STEER_LEAD - p.wv, cur)
+        self.blend_action_aim(a, live, AI_STEER_RATE, dt)
+
+    # ---------- manual paths ----------
+    def follow_path(self, p): # Advance a player along its assigned manual or tactical path.
+        while p.path and math.hypot(p.wx - p.path[0][0], p.wv - p.path[0][1]) < 3.0:
+            p.path.pop(0)
+        if not p.path:
+            p.path = None
+            p.new_drift(0.5)
+            return False
+        p.tx, p.tv = p.path[0]
+        p.tag = None
+        return True
+    def path_player_at(self, mx, my): # Find the eligible player nearest to the supplied path-editing coordinates.
+        fx, row, _w = self.screen_to_ground(mx, my)
+        best = None
+        for p in self.players:
+            if p.state in ("out", "leaving", "subout", "subin"):
+                continue
+            if self.user_team is not None and p.team != self.user_team:
+                continue
+            dd = math.hypot(p.sx - fx, (p.sy + Y_OFFSET + 5) - row)
+            if dd < 14 and (best is None or dd < best[0]):
+                best = (dd, p)
+        return best[1] if best else None

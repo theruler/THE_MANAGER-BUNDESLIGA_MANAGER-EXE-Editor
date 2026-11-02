@@ -24,36 +24,13 @@ from game_utils import clamp
 from geometry import Y_OFFSET
 from graphics_system import BOARD_H, BOARD_W
 from stats_system import lerp, norm
+from match_config import (AGON_AI_RATE, AGON_AI_SWING, AGON_CHASE_BONUS, AGON_DEFAULT, AGON_INJURY_RANGE,
+                          AGON_INTERCEPT_RANGE, AGON_PACE_RANGE, AGON_RECOVERY_BONUS, AGON_STEP, FAT_BENCH_K,
+                          FAT_DEAD, FAT_EXHAUST_FROM, FAT_FITNESS_RANGE, FAT_FORM_RANGE, FAT_GK_WORK, FAT_HALF_RECOVER,
+                          FAT_INJURY_K, FAT_OFF_STATES, FAT_RATE_DOWN, FAT_RATE_UP, FAT_SHOW, FAT_SPEED_MAX,
+                          FAT_SWEAT_OFF, FAT_SWEAT_ON, FAT_WALK_K, FAT_WORK_REF)
 
 
-AGON_DEFAULT = 0.5 # Starting level of both teams (a new match resets it).
-AGON_AI_SWING = 0.15 # AI team: level change per goal of difference (trailing = up, leading = down), scaled by urgency.
-AGON_AI_RATE = 0.04 # AI team: how fast (level/s) it moves toward its target, so the change is gradual.
-AGON_STEP = 0.05 # Keyboard / mouse-wheel step.
-AGON_INJURY_RANGE = (0.35, 1.70) # Injury probability multiplier at 0 % / 100 % (average of both teams' levels: giving and taking).
-AGON_RECOVERY_BONUS = 0.10 # Extra running speed of a team without the ball at 0 % (fast recoveries); fades out at 50 %.
-AGON_CHASE_BONUS = 0.06 # Extra running speed of the player pressing the ball carrier at 100 % (and the same malus at 0 %).
-AGON_LINE_PUSH = {"GK": 0.0, "DEF": 0.10, "MID": 0.22, "FWD": 0.16} # Normalized longitudinal shift of the home positions between 0 % and 100 %.
-
-AGON_INTERCEPT_RANGE = (0.94, 1.08) # Interception radius multiplier of a team at 0 % / 100 % (alertness of an intense team).
-AGON_PACE_RANGE = (0.92, 1.08) # Running speed multiplier of a team at 0 % / 100 % (1.0 at 50 %), effective at once.
-FAT_RATE_UP = 0.024 # Fatigue (0..1) gained per match minute at 100 % bar, average Fitness/Form, average running effort.
-FAT_RATE_DOWN = 0.030 # Fatigue recovered per match minute at 0 % bar, standing still (recovery is faster than tiring).
-FAT_WORK_REF = 0.5 # Running effort (speed / top speed) that counts as "average work"; sprinting counts up to 2.2x, a keeper far less.
-FAT_GK_WORK = 0.15 # Goalkeepers get tired this much slower.
-FAT_DEAD = 0.02 # Dead zone around 50 % (in -1..1 units): inside it fatigue stays frozen.
-FAT_SHOW = 0.01 # Fatigue above which the arrow is shown (a few seconds of running at high bar).
-FAT_SPEED_MAX = 0.40 # Fraction of running speed / kick power lost at fatigue 1 (used by stats_system.fatigue).
-FAT_EXHAUST_FROM = 0.65 # Fatigue above which the player starts slowing down towards a walk.
-FAT_WALK_K = 0.45 # Extra speed multiplier at fatigue 1 (on top of FAT_SPEED_MAX): the exhausted player walks slowly.
-FAT_INJURY_K = 0.5 # Injury probability grows by this fraction at fatigue 1.
-FAT_HALF_RECOVER = (0.15, 0.25) # Fraction of the fatigue recovered during the half-time break (random per player).
-FAT_BENCH_K = 0.6 # Benched players rest at this fraction of the maximum recovery rate, whatever the bar.
-FAT_FITNESS_RANGE = (1.30, 0.70) # Tiring-speed multiplier at Fitness 10 / 99.
-FAT_FORM_RANGE = (1.15, 0.85) # Tiring-speed multiplier at Form 10 / 99.
-FAT_OFF_STATES = ("out", "leaving", "subin", "subout", "tunnel") # Not on the pitch: no fatigue change.
-
-FAT_SWEAT_ON, FAT_SWEAT_OFF = 0.25, 0.10 # Fatigue at which the sweat drops start / stop (until the player is rested again).
 SWEAT_HEAD_H = 1.0 # Field pixels from the feet row up to the top of the head.
 SWEAT_SPREAD = 2.0 # Sideways reach of the spray, in field pixels.
 SWEAT_COL = (150, 215, 255)

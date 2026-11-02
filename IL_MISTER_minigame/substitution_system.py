@@ -3,12 +3,10 @@ import random
 
 import pygame
 
-from formation_system import ROLE_ORDER, ROLE_POOLS
 from game_utils import clamp, unit
 from geometry import depth_k, depth_v_k, FH, FW, GATE_SPREAD, L, MAX_Y, pitch_v, V_BOT, w2s, WIN_H, WIN_W, Y_OFFSET
-from lang import tr
-from match_config import TEAM_NAMES
-from physics_system import PLAYER_SPEED
+from i18n import tr
+from match_config import INJURY_SLIDE_P, INJURY_TACKLE_P, PLAYER_SPEED, ROLE_ORDER, ROLE_POOLS, TEAM_NAMES
 from sprite_data import run_cycle
 
 
@@ -236,7 +234,7 @@ class SubstitutionMixin: # Substitutions, sideline transitions, and injury handl
         vw, vh = (WIN_W, WIN_H) if self.scroll else (FW, FH)
         if not (cx - 2 <= sx <= cx + vw + 2 and cy - 2 <= sy + Y_OFFSET <= cy + vh + 2):
             return False
-        chance = (0.035 if kind == "slide" else 0.012) * self.injury_k(p) # Fitness: injury proneness.
+        chance = (INJURY_SLIDE_P if kind == "slide" else INJURY_TACKLE_P) * self.injury_k(p) # Fitness: injury proneness.
         if random.random() < chance:
             self.begin_injury(p)
             return True

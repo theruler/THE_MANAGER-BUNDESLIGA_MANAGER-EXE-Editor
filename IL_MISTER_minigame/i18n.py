@@ -195,6 +195,7 @@ class _RoleLabels:
 T = Translator(prefix=DEFAULT_PREFIX)
 tr = T.tr
 ROLE_TAG = _RoleLabels("role.tag.")
+ROLE_LETTER = _RoleLabels("role.letter.")
 
 
 def init_language(code):

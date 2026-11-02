@@ -5,20 +5,20 @@ import time
 import pygame
 
 from fonts import FONTS, ScaledFont
-from formation_system import formation_slots, FORMATIONS, ROLE_POOLS
+from formation_system import formation_slots, FORMATIONS
 from game_utils import clamp, unit, wline
 from geometry import (
     BAR_HI, BOX_D, BOX_V0, BOX_V1, FIELD_ROW0, GA_D, GA_V0, GA_V1, GOAL_D, GOAL_H, GOAL_NET_H, ground_to_img,
     HALF_MOUTH, L, PITCH_W, POST_T, V_BOT, V_GC, V_TOP, Y_OFFSET,
 )
 from graphics_system import CELL_H, GOAL_Y1
-from intro_system import ROLE_COL, stat_color
 from joystick import JOY_ACTIONS, JOY_HOTSPOTS, JOY_IMG
-from lang import ROLE_LETTER, ROLE_TAG, T, tr
+from i18n import ROLE_LETTER, ROLE_TAG, T, tr
 from layout import HUD_H, SU_H, SU_W
-from match_config import FLAG_R, TEAM_COL, TEAM_NAMES
-from physics_system import KEEPER_CATCH_HEIGHT, KEEPER_CATCH_RADIUS, PLAYER_CATCH_RADIUS, REACH_FIRST
+from match_config import (FLAG_R, KEEPER_CATCH_HEIGHT, KEEPER_CATCH_RADIUS, PLAYER_CATCH_RADIUS, REACH_FIRST,
+                           ROLE_POOLS, TEAM_COL, TEAM_NAMES)
 from sprite_data import BALL_ROT
+from stats_system import ROLE_COL, stat_color
 
 
 class RenderingMixin: # Rendering of the pitch, HUD, menus, debug overlays, and help screens.
@@ -190,8 +190,7 @@ class RenderingMixin: # Rendering of the pitch, HUD, menus, debug overlays, and 
             x, y = int(self.click_mark[0]), int(self.click_mark[1])
             pygame.draw.line(fg, (255, 255, 255), (x - 2, y), (x + 2, y))
             pygame.draw.line(fg, (255, 255, 255), (x, y - 2), (x, y + 2))
-        if self.debug:
-            self.draw_debug(fg)
+
 
     def draw_flag(self, s, fl): # Draw the referee flag using its current animation frame.
         bx, by, tx, ty, sg = fl
@@ -201,10 +200,10 @@ class RenderingMixin: # Rendering of the pitch, HUD, menus, debug overlays, and 
         pts = [(tx, ty), (tx - ux * 3.2, ty - uy * 3.2), (tx - ux * 1.6 + nx * 4.2, ty - uy * 1.6 + ny * 4.2)]
         pygame.draw.polygon(s, (230, 40, 40), [(int(round(x)), int(round(y))) for x, y in pts])
 
-    def draw_debug(self, s): # Draw debug geometry and collision or movement overlays.
-        def gp(x, v, z=0.0): # Project a world field point onto screen coordinates.
+    def draw_debug(self, s, cam_x, cam_y, scale): # Draw debug geometry at final screen resolution.
+        def gp(x, v, z=0.0):
             ix, iy = ground_to_img(x, v)
-            return (ix, iy - z)
+            return (round((ix - cam_x) * scale), round((iy - z - cam_y) * scale))
 
         def pl(pts, col, closed=False): # Draw a polyline or closed polygon on the supplied surface.
             pygame.draw.lines(s, col, closed, [gp(*p) for p in pts], 1)
@@ -279,7 +278,7 @@ class RenderingMixin: # Rendering of the pitch, HUD, menus, debug overlays, and 
                     bh=BAR_HI, pt=POST_T, gd=GOAL_D, gn=GOAL_NET_H),
                  tr("dbg.legend1"),
                  tr("dbg.legend2", air=self.AIR_REACH, fr=FLAG_R),
-                 "Raggi: primo contatto (verde), controllo palla (bianco), gioco aereo (azzurro)"]
+                 tr("dbg.legend3")]
         for p in self.players:
             if p.role == "GK" and p.state != "out":
                 lines.append(tr("dbg.gk", team=p.team, name=p.label(), skill=p.skill,
@@ -516,180 +515,54 @@ class RenderingMixin: # Rendering of the pitch, HUD, menus, debug overlays, and 
             self.text(line, self.font_s, col, (self.W - margin - text_w, yy), shadow=False)
             yy += 18
 
-    def su_chip(self, s, r, label, active, hover, col=(120, 130, 210), px=18): # Draw one selectable chip in the substitution interface.
+    def draw_chip(self, s, r, label, active, hover, col=(120, 130, 210), px=18, fg=None): # Draw one selectable chip in the substitution interface (fg = forced text colour).
         bd = self.board
         pygame.draw.rect(s,tuple(int(v * 0.5) for v in col) if active else (30, 34, 66),r,border_radius=6,)
         pygame.draw.rect(s,(255, 224, 90) if active else (col if hover else (70, 78, 130)),r,2,border_radius=6,)
-        t = bd.font(px).render(label, True, (255, 255, 255) if active else (190, 196, 230))
+        t = bd.font(px).render(label, True, fg or ((255, 255, 255) if active else (190, 196, 230)))
         bd.put(s, t, cx=r.centerx, cy=r.centery)
 
-    def draw_intro(self): # Draw the match intro and team-selection screen.
-        if self.joymap_open:
-            return self.draw_joymap()
-        s = self.su_surf
-        s.fill((10, 12, 28))
-        bd = self.board
-        hits = self.su_hits = []
-        vx, vy = self.su_to_virtual(pygame.mouse.get_pos())
-        W = SU_W
-        bd.put(s, bd.font(58).render(tr("intro.title"), True, (232, 236, 255)), cx=W // 2, cy=32)
-        bd.put(s, bd.font(24).render(tr("intro.subtitle"), True, bd.LIT), cx=W // 2, cy=68)
-        note = " | ".join(n.text() for n in self.notes[:2]) if self.notes else ""
-        warn = any(n.warn for n in self.notes)
-        bd.put(s, bd.font(14).render(self.fit_text(note, 16, W - 40), True, (255, 170, 110) if warn else (130, 140, 190)), cx=W // 2, cy=92)
-        names_ctl = (tr("intro.team_home"), tr("intro.team_away"))
-        for c in (0, 1):
-            self._draw_intro_team(s, bd, hits, vx, vy, c, names_ctl)
+    def draw_generic_button(self, s, r, label, active, hover, px=18): # OPTIONS button on BUTTON_GENERIC.
+        img = self.gfx.make_generic_button(r.w)
+        pos = img.get_rect(center=r.center)
+        s.blit(img, pos)
+    
+        if active:
+            bg = pygame.Rect(0, 0, r.w-14, 18)
+            bg.center = r.center
+            pygame.draw.rect(s, (64, 64, 96), bg)
+            pygame.draw.line(s, (0, 0, 0), bg.topleft, bg.topright, 2)
+            pygame.draw.line(s, (0, 0, 0), bg.topleft, bg.bottomleft, 2)
+    
+        if hover:
+            pygame.draw.rect(s, (255, 224, 90), pos.inflate(4, 4), 2)
+    
+        txt = self.fit_text(label, px, r.w - 20)
+        font = self.board.font(px)
+        shadow = font.render(txt, True, (0, 0, 0))
+        t = font.render(txt, True, (192, 112, 32) if active else (255, 255, 255))
+        self.board.put(s, shadow, cx=r.centerx + 1, cy=r.centery + 1)
+        self.board.put(s, t, cx=r.centerx, cy=r.centery)
 
-        bd.put(s, bd.font(20).render(tr("intro.half_len"), True, bd.LIT), left=30, cy=526)
-        for i, m in enumerate((1, 2, 3, 5)):
-            r = pygame.Rect(330 + i * 54, 512, 46, 28)
-            self.su_chip(s, r, str(m), abs(self.half_secs - m * 60.0) < 1, r.collidepoint(vx, vy))
-            hits.append((r, ("half", m * 60.0)))
-        bd.put(s, bd.font(20).render(tr("intro.slowmo"), True, bd.LIT), left=650, cy=526)
-        r = pygame.Rect(790, 512, 70, 28)
-        self.su_chip(s, r, tr("intro.on") if self.slowmo_on else tr("intro.off"), self.slowmo_on, r.collidepoint(vx, vy), (90, 200, 120))
-        hits.append((r, ("slowmo",)))
-        bd.put(s, bd.font(20).render(tr("intro.controls"), True, bd.LIT), left=30, cy=564)
-        for i, (lab, val) in enumerate(((tr("intro.ctrl_home"), 0), (tr("intro.ctrl_away"), 1), (tr("intro.ctrl_spec"), None))):
-            r = pygame.Rect(330 + i * 150, 550, 142, 28)
-            self.su_chip(s, r, lab, self.user_team == val, r.collidepoint(vx, vy))
-            hits.append((r, ("ctrl", val)))
-        bd.put(s, bd.font(20).render(tr("intro.replay_auto"), True, bd.LIT), left=30, cy=602)
-        r = pygame.Rect(400, 588, 70, 28)
-        self.su_chip(s, r, tr("intro.on") if self.replay_auto else tr("intro.off"), self.replay_auto, r.collidepoint(vx, vy), (90, 200, 120))
-        hits.append((r, ("replay_auto",)))
-        bd.put(s, bd.font(20).render(tr("intro.replay_secs"), True, bd.LIT), left=530, cy=602)
-        for i, m in enumerate((3, 5, 8, 10, 15)):
-            r = pygame.Rect(690 + i * 54, 588, 46, 28)
-            self.su_chip(s, r, str(m), self.replay_secs == m, r.collidepoint(vx, vy))
-            hits.append((r, ("replay_secs", m)))
-        bd.put(s, bd.font(20).render(tr("intro.font"), True, bd.LIT), left=30, cy=660)
-        for i, (lab, val) in enumerate(((tr("intro.font_modern"), True), (tr("intro.font_old"), False))):
-            r = pygame.Rect(110 + i * 112, 646, 104, 28)
-            self.su_chip(s, r, lab, FONTS.modern == val, r.collidepoint(vx, vy))
-            hits.append((r, ("font", val)))
-        sb = pygame.Rect(W // 2 - 140, 636, 280, 46)
-        hov = sb.collidepoint(vx, vy)
-        pygame.draw.rect(s, (60, 150, 90) if hov else (44, 112, 70), sb, border_radius=8)
-        pygame.draw.rect(s, (200, 255, 210), sb, 2, border_radius=8)
-        bd.put(s, bd.font(28).render(tr("intro.start"), True, (255, 255, 255)), cx=sb.centerx, cy=sb.centery)
-        hits.append((sb, ("start",)))
-        jb = pygame.Rect(W // 2 + 200, 641, 220, 36)
-        self.su_chip(s, jb, tr("intro.joymap"), False, jb.collidepoint(vx, vy), (120, 170, 230), 20)
-        hits.append((jb, ("joymap",)))
-        bd.put(s, bd.font(20).render(tr("intro.footer"), True, (110, 118, 160)), cx=W // 2, cy=708)
-        self.draw_lang_dropdown(s, bd, hits, vx, vy)
+    def present_su(self, bg=None): # Show the virtual menu surface on the window; with bg ("title" / "options") the menu picture goes underneath, whole and pixel-exact, and su_surf must be transparent where it should show through.
+        if bg:
+            self.screen.fill((0, 0, 0))
+            img = self.gfx.menu_background(bg, (self.W, self.H))
+            if img is not None:
+                self.screen.blit(img, ((self.W - img.get_width()) // 2, (self.H - img.get_height()) // 2))
         sc, ox, oy = self.su_scale()
-        out = pygame.transform.smoothscale(s, (int(SU_W * sc), int(SU_H * sc)))
-        self.screen.blit(out, (int(ox), int(oy)))
-
-    def _draw_intro_team(self, s, bd, hits, vx, vy, c, names_ctl): # Draw one team card in the intro screen.
-        x0 = 30 + c * 495
-        col = TEAM_COL[c]
-        hb = pygame.Rect(x0, 108, 465, 28)
-        pygame.draw.rect(s, tuple(int(v * 0.55) for v in col), hb, border_radius=5)
-        if self.su_active == c:
-            pygame.draw.rect(s, (255, 224, 90), hb, 2, border_radius=5)
-        bd.put(s, bd.font(21).render(names_ctl[c], True, (255, 255, 255)), cx=hb.centerx, cy=hb.centery)
-
-        lr = pygame.Rect(x0, 142, 232, 360)
-        pygame.draw.rect(s, bd.BG, lr)
-        sc0 = int(clamp(self.su_scroll[c], 0, max(0, len(self.teams) - 15)))
-        self.su_scroll[c] = sc0
-        s.set_clip(lr)
-        for i in range(15):
-            idx = sc0 + i
-            if idx >= len(self.teams):
-                break
-            rr = pygame.Rect(x0, 142 + i * 24, 226, 24)
-            if idx == self.sel[c]:
-                pygame.draw.rect(s, tuple(int(v * 0.6) for v in col), rr)
-            elif rr.collidepoint(vx, vy):
-                pygame.draw.rect(s, (36, 44, 92), rr)
-            t = bd.font(20).render(self.fit_text(self.teams[idx]["name"], 20, 212), True, (255, 255, 255) if idx == self.sel[c] else bd.WHITE)
-            bd.put(s, t, left=x0 + 8, cy=rr.centery)
-            hits.append((rr, ("team", c, idx)))
-        s.set_clip(None)
-        if len(self.teams) > 15:
-            th = max(18, int(360 * 15 / len(self.teams)))
-            ty = 142 + int((360 - th) * sc0 / float(len(self.teams) - 15))
-            pygame.draw.rect(s, (80, 90, 150), (x0 + 226, ty, 5, th), border_radius=2)
-        pygame.draw.rect(s, bd.FRAME, lr, 2)
-
-        td = self.teams[self.sel[c]]
-        px0 = x0 + 248
-        lg = pygame.Rect(px0, 142, 110, 110)
-        pygame.draw.rect(s, (8, 10, 24), lg)
-        img = self.gfx.logo(td["logo"])
-        if img is not None:
-            k = min(98.0 / img.get_width(), 98.0 / img.get_height())
-            im = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * k)), max(1, int(img.get_height() * k))))
-            s.blit(im, im.get_rect(center=lg.center))
-        pygame.draw.rect(s, bd.FRAME, lg, 3)
-
-        mp = pygame.Rect(px0 + 118, 142, 98, 110)
-        pygame.draw.rect(s, (40, 104, 48), mp)
-        pygame.draw.rect(s, (220, 226, 220), mp, 1)
-        pygame.draw.line(s, (220, 226, 220), (mp.left, mp.top + 2), (mp.right, mp.top + 2), 1)
-        pygame.draw.arc(s, (220, 226, 220), (mp.left + 28, mp.top - 20, 42, 40), math.pi, 2 * math.pi, 1)
-        for sl in formation_slots(self.form_names[c]):
-            pygame.draw.circle(s, col, (int(mp.left + 6 + sl["w"] * (mp.w - 12)), int(mp.bottom - 8 - sl["u"] / 0.5 * (mp.h - 16))), 5)
-            pygame.draw.circle(s, (250, 250, 250), (int(mp.left + 6 + sl["w"] * (mp.w - 12)), int(mp.bottom - 8 - sl["u"] / 0.5 * (mp.h - 16))), 5, 1)
-        bd.put(s, bd.font(26).render(self.fit_text(td["name"].upper(), 26, 215), True, (232, 236, 255)), left=px0, cy=270)
-        for i, fname in enumerate(FORMATIONS):
-            r = pygame.Rect(px0 + (i % 3) * 72, 290 + (i // 3) * 33, 66, 28)
-            self.su_chip(s, r, fname, self.form_names[c] == fname, r.collidepoint(vx, vy), col)
-            hits.append((r, ("form", c, fname)))
-        rows = (len(FORMATIONS) + 2) // 3
-        ry = 290 + rows * 33 + 8
-        bd.put(s, bd.font(16).render(tr("intro.starters"), True, bd.DIM), left=px0, top=ry)
-        slots = self.lineup_slots(c)
-        for i, (role, ni) in enumerate(slots):
-            rr = pygame.Rect(px0 + (i // 6) * 110, ry + 18 + (i % 6) * 17, 108, 16)
-            sel = self.su_pick == (c, i)
-            if sel:
-                pygame.draw.rect(s, tuple(int(v * 0.6) for v in col), rr, border_radius=3)
-            elif rr.collidepoint(vx, vy):
-                pygame.draw.rect(s, (36, 44, 92), rr, border_radius=3)
-            nm = td["players"][ni] if ni < len(td["players"]) else ""
-            bd.put(s, bd.font(15).render(ROLE_LETTER[role], True, bd.DIM), left=rr.left + 2, cy=rr.centery)
-            bd.put(s, bd.font(15).render(self.fit_text(nm or "-", 15, 90), True, bd.WHITE), left=rr.left + 14, cy=rr.centery)
-            hits.append((rr, ("slot", c, i)))
-        if self.su_pick and self.su_pick[0] == c:
-            pi = self.su_pick[1]
-            role = slots[pi][0]
-            lo, hi = ROLE_POOLS[role]
-            used = set(self.lineup[c][role])
-            cands = [n for n in range(lo, hi) if n not in used]
-            ph = 30 + max(1, len(cands)) * 22
-            pr = pygame.Rect(px0 - 6, 286, 222, ph)
-            pygame.draw.rect(s, (14, 18, 44), pr, border_radius=6)
-            pygame.draw.rect(s, (255, 224, 90), pr, 2, border_radius=6)
-            lab = tr("role.long." + role)
-            bd.put(s, bd.font(16).render(tr("intro.pick_new", role=lab), True, bd.DIM), left=pr.left + 8, top=pr.top + 5)
-            if not cands:
-                bd.put(s, bd.font(17).render(tr("intro.no_other"), True, bd.LIT), left=pr.left + 10, top=pr.top + 28)
-            pops = []
-            for k2, ni in enumerate(cands):
-                cr = pygame.Rect(pr.left + 4, pr.top + 26 + k2 * 22, pr.w - 8, 21)
-                if cr.collidepoint(vx, vy):
-                    pygame.draw.rect(s, (46, 56, 112), cr, border_radius=3)
-                nm = td["players"][ni] if ni < len(td["players"]) else ""
-                bd.put(s, bd.font(18).render(self.fit_text("%s" % (nm or "-"), 18, pr.w - 24), True, bd.WHITE), left=cr.left + 6, cy=cr.centery)
-                pops.append((cr, ("cand", ni)))
-            hits[0:0] = pops
+        self.screen.blit(pygame.transform.smoothscale(self.su_surf, (int(SU_W * sc), int(SU_H * sc))), (int(ox), int(oy)))
 
     def draw_joymap(self): # Draw the joystick-mapping and control-assignment screen.
         s, bd, j = self.su_surf, self.board, self.joy
-        s.fill((10, 12, 28))
+        s.fill((0, 0, 0, 0)) # Transparent: PIC\\22.CP is drawn under it by present_su().
         hits = self.su_hits = []
         vx, vy = self.su_to_virtual(pygame.mouse.get_pos())
         W = SU_W
-        bd.put(s, bd.font(46).render(tr("intro.joymap"), True, (232, 236, 255)), cx=W // 2, cy=26)
+        bd.put(s, bd.font(46).render(tr("intro.joymap"), True, (255, 255, 255)), cx=W // 2, cy=26)
         pads = j.names()
         st = ", ".join(pads) if pads else tr("joy.none")
-        bd.put(s, bd.font(26).render(self.fit_text(st, 16, W - 40), True, (140, 220, 160) if pads else (255, 170, 110)), cx=W // 2, cy=58)
+        bd.put(s, bd.font(26).render(self.fit_text(st, 16, W - 40), True, (255, 255, 255)), cx=W // 2, cy=58)
         dt = 1.0 / 60.0
         self.jm_flash = {k: v - dt for k, v in self.jm_flash.items() if v - dt > 0}
         flash_ctrl = {j.control_of(t) for t in self.jm_flash}
@@ -706,9 +579,9 @@ class RenderingMixin: # Rendering of the pitch, HUD, menus, debug overlays, and 
             pygame.draw.rect(s, col, r, border_radius=4)
             if j.is_held(act):
                 pygame.draw.rect(s, (90, 220, 120), r, 2, border_radius=4)
-            bd.put(s, bd.font(16).render(tr("joy.act." + act), True, (255, 236, 150) if waiting else bd.WHITE), left=r.left + 8, cy=r.centery)
+            bd.put(s, bd.font(16).render(tr("joy.act." + act), True, (255, 236, 150) if waiting else (255, 255, 255)), left=r.left + 8, cy=r.centery)
             txt = tr("joy.press") if waiting else (", ".join(j.token_label(t) for t in toks) or "-")
-            bd.put(s, bd.font(16).render(self.fit_text(txt, 16, 150), True, (255, 224, 90) if waiting else bd.LIT), cx=r.right - 80, cy=r.centery)
+            bd.put(s, bd.font(16).render(self.fit_text(txt, 16, 150), True, (255, 224, 90) if waiting else (255, 255, 255)), cx=r.right - 80, cy=r.centery)
             hits.append((r, ("act", act)))
             y += 26
         bx, by0, bw, bh = 48, 0, 945, 800
@@ -766,40 +639,38 @@ class RenderingMixin: # Rendering of the pitch, HUD, menus, debug overlays, and 
             bd.put(s, bd.font(14).render(lab, True, (80, 84, 120)), cx=cx, cy=int(oy + (712 - by0) * sc))
         if self.jm_wait:
             msg = tr("joy.wait") + tr("joy.act." + self.jm_wait) + tr("joy.cancel_hint")
-            colr = (255, 224, 90)
+            colr = (255, 255, 255)
         else:
             msg = tr("joy.hint")
-            colr = bd.LIT
+            colr = (255, 255, 255)
         for i, line in enumerate(self._wrap(msg, bd.font(16), 560)):
             bd.put(s, bd.font(16).render(line, True, colr), cx=ox + 280, cy=oy + int(bh * sc) + 28 + i * 20)
         for rect, lab, tag in ((pygame.Rect(690, 660, 140, 34), tr("joy.reset"), ("reset",)),
                                (pygame.Rect(850, 660, 140, 34), tr("joy.close"), ("close",))):
-            self.su_chip(s, rect, lab, False, rect.collidepoint(vx, vy), (120, 170, 230), 18)
+            self.draw_chip(s, rect, lab, False, rect.collidepoint(vx, vy), (120, 170, 230), 18, fg=(255, 255, 255))
             hits.append((rect, tag))
         info = "File: " + os.path.abspath(j.write_path)
         if j.error:
             info += "   !  " + j.error
-        bd.put(s, bd.font(13).render(self.fit_text(info, 13, 640), True, (255, 170, 110) if j.error else (110, 118, 160)), left=450, cy=700)
-        sc_, ox_, oy_ = self.su_scale()
-        out = pygame.transform.smoothscale(s, (int(SU_W * sc_), int(SU_H * sc_)))
-        self.screen.blit(out, (int(ox_), int(oy_)))
+        bd.put(s, bd.font(13).render(self.fit_text(info, 13, 640), True, (255, 170, 110) if j.error else (255, 255, 255)), left=450, cy=700)
+        self.present_su("options")
 
     def draw_lang_dropdown(self, s, bd, hits, vx, vy): # Draw the language selection dropdown.
         if not self.langs:
             return
         cur = T.current_language()
         names = dict(self.langs)
-        btn = pygame.Rect(SU_W - 30 - 160, 12, 160, 26)
-        lab = bd.font(16).render(tr("intro.language"), True, bd.DIM)
+        btn = pygame.Rect(SU_W - 30 - 160, 12, 160, 32)
+        lab = bd.font(16).render(tr("intro.language"), True, (255, 255, 255))
         bd.put(s, lab, left=btn.left - lab.get_width() - 8, cy=btn.centery)
-        pygame.draw.rect(s, (30, 34, 66), btn, border_radius=6)
-        edge = (255, 224, 90) if self.lang_open else ((120, 130, 210) if btn.collidepoint(vx, vy) else (70, 78, 130))
-        pygame.draw.rect(s, edge, btn, 2, border_radius=6)
+        s.blit(self.gfx.make_generic_button(btn.w), btn)
+        if self.lang_open or btn.collidepoint(vx, vy):
+            pygame.draw.rect(s, (255, 224, 90), btn.inflate(4, 4), 2)
         shown = self.fit_text(names.get(cur, cur.upper()), 18, btn.w - 36)
         bd.put(s, bd.font(18).render(shown, True, (255, 255, 255)), left=btn.left + 8, cy=btn.centery)
         ax, ay = btn.right - 15, btn.centery
         arrow = [(ax - 5, ay + 3), (ax + 5, ay + 3), (ax, ay - 3)] if self.lang_open else [(ax - 5, ay - 3), (ax + 5, ay - 3), (ax, ay + 3)]
-        pygame.draw.polygon(s, (190, 196, 230), arrow)
+        pygame.draw.polygon(s, (255, 255, 255), arrow)
         hits.insert(0, (btn, ("lang_toggle",)))
         if not self.lang_open:
             return
@@ -813,7 +684,7 @@ class RenderingMixin: # Rendering of the pitch, HUD, menus, debug overlays, and 
                 pygame.draw.rect(s, (46, 56, 112), cr, border_radius=3)
             elif cr.collidepoint(vx, vy):
                 pygame.draw.rect(s, (36, 44, 92), cr, border_radius=3)
-            bd.put(s, bd.font(18).render(self.fit_text(name, 18, cr.w - 12), True, bd.WHITE), left=cr.left + 6, cy=cr.centery)
+            bd.put(s, bd.font(18).render(self.fit_text(name, 18, cr.w - 12), True, (255, 255, 255)), left=cr.left + 6, cy=cr.centery)
             pops.append((cr, ("lang", code)))
         hits[0:0] = pops
 

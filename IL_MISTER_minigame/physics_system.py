@@ -1,52 +1,23 @@
 import math
 import random
 
-from animation_config import ACT_SPEC, CELE_SLIDE, SLOWMO_KEYS, STOP_FLIP
-from ball_model import G, STANDING_BALL_OFFSET, step_ball_physics
+from ball_model import step_ball_physics
 from game_utils import clamp, dir8, unit
 from geometry import (
     BAR_HI, BOX_D, depth_k, depth_slow, depth_v_k, FW, GOAL_D, GOAL_H, GOAL_NET_H, HALF_MOUTH, in_box_fn, L,
     POST_T, s2w, screen_x_of, V_BOT, V_GC, V_MAX_P, V_MID, V_MIN_P, V_TOP, w2s,
 )
-from lang import tr
-from match_config import CARRY_TOL_T, CARRY_TOL_V, INJURED_SPEED_K, REF_NEAR, TEAM_NAMES
-from sprite_data import action_sids, run_cycle, stand_sid, team_sprite_offset
-
-
-PLAYER_SPEED = 52.0 # Base maximum movement speed for outfield players.
-TAKER_STALL_SECS = 1.0 # A restart taker that makes no progress towards his target for this long switches to "unstick" mode (never teleported).
-TAKER_UNSTICK_SECS = 2.5 # Duration of the unstick mode: faster pace and no repulsion from teammates, so he walks through the crowd.
-TAKER_UNSTICK_K = 1.3 # Speed multiplier while unsticking.
-BOX_EXIT_SPEED = 60.0 # Opponents inside a protected penalty area are walked out at this speed (units/s) instead of being moved to its edge.
-DRIBBLE_OFF = 6.0 # Offset between a player position and the ball while dribbling.
-REACH_FIRST = 9.0 # Initial reach distance used when evaluating ball control.
-PLAYER_CATCH_RADIUS = 4.5 # Normal ground-ball control radius for outfield players.
-PLAYER_INTERCEPT_RADIUS = 3.8 # Reduced control radius used by defenders intercepting a pass in flight.
-PLAYER_CATCH_HEIGHT = 5.0 # Maximum ball height for normal outfield-player control.
-AIR_MIN_Z = 3.0 # Minimum ball height treated as an aerial contest.
-THROW_HOLD_Z = 10.0 # Ball height used while a player is holding a throw-in.
-THROW_RELEASE_Z = 11.0 # Ball height at which a throw-in releases the ball.
-STRIKE_REACH = {  # Maximum contact distance by action type; tune individual entries to change reach.
-    "kick": (11.0, -1.0, 9.5),
-    "header": (11.0, 4.0, 24.0),
-    "bicycle": (13.0, 7.0, 28.0),
-    "header_dive": (13.0, 4.0, 18.0),
-}
-KEEPER_CATCH_RADIUS = 5.5 # Ground-space catch radius for goalkeeper saves.
-KEEPER_CATCH_HEIGHT = 10.5 # Maximum ball height for goalkeeper catching attempts.
+from i18n import tr
+from match_config import (AIR_MIN_Z, BALL_GRAVITY, BLOCK_CHANCE, BOX_EXIT_SPEED, CARRY_TOL_T, CARRY_TOL_V, DRIBBLE_OFF, FAST_BALL_SPEED,
+                          INJURED_SPEED_K, KEEPER_CATCH_HEIGHT, KEEPER_CATCH_RADIUS, KEEPER_CORNER_K, KEEPER_FAR_FULL,
+                          KEEPER_FAR_START, KEEPER_FREEKICK_READ, KEEPER_READ_BONUS, KEEPER_REACH_K, KEEPER_SAVE_BASE, KEEPER_READ_SKILL_RANGE,
+                          KEEPER_SAVE_MAX, KEEPER_SAVE_MIN, KEEPER_SPEED_K, PLAYER_CATCH_HEIGHT, PLAYER_CATCH_RADIUS, PENALTY_READ_BASE, PENALTY_READ_SKILL,
+                          PLAYER_INTERCEPT_RADIUS, PLAYER_SPEED, REACH_FIRST, REF_NEAR, STRIKE_REACH, TAKER_STALL_SECS,
+                          TAKER_UNSTICK_K, TAKER_UNSTICK_SECS, TEAM_NAMES, STANDING_BALL_OFFSET, THROW_HOLD_Z, THROW_RELEASE_Z)
+from sprite_data import ACT_SPEC, CELE_SLIDE, SLOWMO_KEYS, STOP_FLIP, action_sids, run_cycle, stand_sid, team_sprite_offset
 
 
 # ---- Goalkeeper save model (see PhysicsMixin.keeper_save_chance) ----
-KEEPER_SAVE_BASE = 0.86 # Save chance for a slow, central ball hit straight at a keeper of average skill.
-KEEPER_SPEED_K = 0.0017 # Chance lost per unit of ball speed above 140.
-KEEPER_REACH_K = 0.030 # Chance lost per world unit the keeper has to stretch.
-KEEPER_CORNER_K = 0.22 # Extra chance lost for a shot that crosses the goal line at the post (scaled by distance from centre).
-KEEPER_FAR_START, KEEPER_FAR_FULL = 45.0, 95.0 # Shot distance (world units) where foresight starts / is complete.
-KEEPER_READ_BONUS = 0.30 # Save chance gained at full foresight.
-KEEPER_FREEKICK_READ = 0.65 # Minimum foresight for free-kick shots (the keeper sees them coming).
-KEEPER_SAVE_MIN, KEEPER_SAVE_MAX = 0.12, 0.95 # Clamp for the final save chance.
-FAST_BALL_SPEED = 215.0 # Above this speed outfield players cannot simply take control of the ball.
-BLOCK_CHANCE = 0.25 # Probability that a defender touching a hard shot deflects it.
 
 class PhysicsMixin: # Ball motion, player movement, collisions, and action execution.
 
@@ -191,7 +162,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         b = self.ball
         if b.z < 0.5 and abs(b.vz) < 5:
             return 0.0
-        return max(0.0, (b.vz + math.sqrt(max(0.0, b.vz * b.vz + 2 * G * b.z))) / G)
+        return max(0.0, (b.vz + math.sqrt(max(0.0, b.vz * b.vz + 2 * BALL_GRAVITY * b.z))) / BALL_GRAVITY)
 
     def update_ball(self, dt): # Advance the ball physics state and resolve ball movement.
         b = self.ball
@@ -295,7 +266,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         b.wx += b.vx * h * kk
         b.wv += b.vv * h * kv
         b.z += b.vz * h
-        b.vz -= G * h
+        b.vz -= BALL_GRAVITY * h
         if b.z <= 0.0:
             b.z = 0.0
             if b.vz < -35.0:
@@ -862,8 +833,8 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         b.shot_set = self.restart["kind"] if (setp and self.restart is not None) else None
         if b.pen:
             gks = [q for q in self.team_p[1 - p.team] if q.role == "GK"]
-            gsk = gks[0].skill if gks else 0.5
-            b.pen_save = random.random() < 0.10 + 0.16 * gsk
+            gk = gks[0] if gks else None
+            b.pen_save = random.random() < self.keeper_reading(gk)
         if kind == "shot":
             self.stats["shots"][p.team] += 1
             if self.shot_is_on_target(p):
@@ -876,21 +847,25 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         self.audio.play("head" if key in ("header", "header_dive") else ("kick_hard" if power > 205 else "kick"), 0.5 + min(0.5, power / 400.0))
         return True
 
-    def keeper_reading(self): # 0..1: how well the keeper reads the current shot. Long shots and free kicks are read early; penalties stay a guess.
+    def keeper_reading(self, gk): # Shot-reading quality based on distance, shot type and goalkeeper Skill.
         b = self.ball
-        if b.shot_team is None or b.pen:
+        skill = self.keeper_skill(gk) if gk is not None else 0.5
+        if b.pen:
+            return clamp(PENALTY_READ_BASE + PENALTY_READ_SKILL * skill, 0.0, 1.0)
+        if b.shot_team is None:
             return 0.0
         r = clamp((b.shot_dist - KEEPER_FAR_START) / (KEEPER_FAR_FULL - KEEPER_FAR_START), 0.0, 1.0)
         if b.shot_set == "free":
             r = max(r, KEEPER_FREEKICK_READ)
-        return r
+        factor = KEEPER_READ_SKILL_RANGE[0] + (KEEPER_READ_SKILL_RANGE[1] - KEEPER_READ_SKILL_RANGE[0]) * skill
+        return clamp(r * factor, 0.0, 1.0)
 
     def keeper_save_chance(self, gk, speed, reach_d): # Single source of truth for save odds (standing saves and dives).
         p = KEEPER_SAVE_BASE - max(0.0, speed - 140.0) * KEEPER_SPEED_K
         p -= reach_d * KEEPER_REACH_K # The farther the keeper must stretch, the harder the save.
         if self.ball.shot_team is not None: # Corners are harder to reach than shots down the middle.
             p -= KEEPER_CORNER_K * min(1.0, abs(self.ball.wv - V_GC) / HALF_MOUTH)
-        p += KEEPER_READ_BONUS * self.keeper_reading() # Foresight: far shots and free kicks are easier to read.
+        p += KEEPER_READ_BONUS * self.keeper_reading(gk) # Foresight: far shots and free kicks are easier to read.
         return clamp(p * self.keeper_tech(gk), KEEPER_SAVE_MIN, KEEPER_SAVE_MAX) # Technique: the keeper's Skill scales the whole save chance.
 
     def try_block(self, p, sp): # A defender standing in the line of a hard shot may deflect it instead of letting it pass untouched.
@@ -1039,7 +1014,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
             return
         if b.owner is None and self.keeper_threat(p) and self.mode == "play":
             d = math.hypot(b.wx - p.wx, b.wv - p.wv)
-            if d < 10.5 + 5.0 * self.keeper_reading() and b.z < GOAL_H + 5: # A well-read (long) shot lets the keeper stretch farther.
+            if d < 10.5 + 5.0 * self.keeper_reading(p) and b.z < GOAL_H + 5: # A well-read (long) shot lets the keeper stretch farther.
                 a["resolved"] = True
                 sp = math.hypot(b.vx, b.vv)
                 is_shot = b.shot_team is not None
@@ -1109,4 +1084,4 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
 
     def lob_lift(self, dist, power, z_t=0.0): # Calculate the vertical lift needed for a lob over the supplied distance.
         T = max(0.15, dist / max(40.0, power * 0.82))
-        return clamp((z_t + 0.5 * G * T * T) / T, 0.0, 140.0)
+        return clamp((z_t + 0.5 * BALL_GRAVITY * T * T) / T, 0.0, 140.0)

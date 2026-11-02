@@ -7,7 +7,7 @@ from geometry import (
     BALL_Y_MIN, FIELD_X0, MAX_Y, ORIG_FW, ORIG_SCROLL_MAX_X, ORIG_SCROLL_MAX_Y, ORIG_WIN_H, ORIG_WIN_W, w2s,
     Y_OFFSET,
 )
-from lang import tr
+from i18n import tr
 from sprite_data import BALL_ROT
 
 

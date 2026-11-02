@@ -7,33 +7,19 @@ restart is resumed lives here (previously spread over ai_system, physics_system 
 import math
 import random
 
-from ball_model import STANDING_BALL_OFFSET
 from game_utils import clamp, unit
 from geometry import (
     BOX_D, BOX_V0, BOX_V1, FW, HALF_MOUTH, in_box_fn, L, PITCH_W, s2w, seg_dist, V_GC, V_MAX_P, V_MID, V_MIN_P, V_SPOT,
     V_TOP, w2s,
 )
-from lang import tr
-from match_config import TEAM_NAMES
+from i18n import tr
+from match_config import (FOOT_PX, GK_ADVANCE_U, GK_DEF_LINE_U, GK_MARK_GOALSIDE, GK_TARGET_DIST, GK_THREAT_U,
+                          KICKOFF_WALK_MAX, RESTART_JIT_U, RESTART_JIT_W, RESTART_MIN_GAP, RESTART_RELAX_ITERS,
+                          RESTART_SHIFT_V, RESTART_SHIFT_X, RESTART_SPREAD_W, STANDING_BALL_OFFSET, TEAM_NAMES, THROW_PX)
 
 
 # ---- Restart alignment: the only three knobs that place a taker next to the ball ----
 BALL_AHEAD = STANDING_BALL_OFFSET # World units behind the ball along the facing axis (same offset dribble() uses, so taking the ball causes no jump).
-FOOT_PX = {"E": (0.0, -2.0), "W": (0.0, -2.0)} # Screen-pixel offset (dx, dy) from the stand point to the ball's ground point, per kick-pose facing. Calibrate here with the F1 debug overlay.
-GK_ADVANCE_U = {"MID": (0.45, 0.70), "FWD": (0.62, 0.90)} # Goal kick, kicking team: normalized depth (from own goal) midfielders / forwards run up to.
-GK_DEF_LINE_U = 0.24 # Goal kick: depth of the line defenders hold when they have nobody to mark.
-GK_THREAT_U = 0.50 # Goal kick: opponents closer than this (normalized, from the kicking team's goal) to the goal being kicked from are marked.
-GK_MARK_GOALSIDE = 6.0 # Goal kick: distance a marker keeps from his man, on the side of his own goal.
-GK_TARGET_DIST = 140.0 # Goal kick: preferred distance to the receiver of the AI's kick.
-RESTART_SHIFT_X = 0.55 # Restart shape: fraction of the ball's longitudinal offset from the centre the team block follows.
-RESTART_SHIFT_V = 0.25 # Same for the lateral offset (small: the team stays spread over the whole width).
-RESTART_SPREAD_W = 1.06 # Lateral widening of the shape around the pitch axis.
-RESTART_JIT_U = 0.035 # Per-player longitudinal jitter (normalized depth), fixed for the whole restart.
-RESTART_JIT_W = 0.05 # Per-player lateral jitter (normalized width).
-RESTART_MIN_GAP = 15.0 # Minimum distance between two teammates' restart positions (world units).
-RESTART_RELAX_ITERS = 6 # Overlap-relaxation passes.
-KICKOFF_WALK_MAX = 30.0 # Seconds after which a walking kickoff starts even if somebody has not reached his spot.
-THROW_PX = {"N": 0.0, "S": 4.0} # Vertical pixel offset of a throw-in taker outside the north/south touchline.
 
 
 class RestartMixin: # Restart setup, taker placement, AI takers and resume logic.
@@ -304,8 +290,8 @@ class RestartMixin: # Restart setup, taker placement, AI takers and resume logic
             rs["area_stage"] = stage
             if stage == 1:
                 self.audio.play("whistle_long")
-                self.say("Esci dall'area di rigore!", (255, 230, 70), 4.0)
-                self.log_event("Richiamo arbitrale per permanenza nell'area di rigore: " + offender.label(),
+                self.say(tr("msg.gk_area_exit"), (255, 230, 70), 4.0)
+                self.log_event(tr("ev.gk_area_warning", p=offender.label()),
                                (255, 230, 70), secs=4.0, team=offender.team)
             elif stage == 2:
                 offender.yellow += 1
