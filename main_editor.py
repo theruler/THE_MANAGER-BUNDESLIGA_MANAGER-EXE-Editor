@@ -13,6 +13,7 @@ import extended_layout
 from mana_editor import ManaEditorPanel
 from vga_editor import PicEditorPanel
 from tore_editor import ToreEditorPanel
+import bmh_editor
 import newspaper_csv
 from newspaper_grammar import NewspaperGrammarError
 import newspaper_editor as _ne
@@ -84,6 +85,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.current_index = None
         self.profile_name = None
         self.profile = None
+        self.bmh_game = None
         self.is_supported = False
         self.relocation_sites = []
         self.integrity_valid = False
@@ -254,7 +256,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 pass
     
     def _update_translate_all_state(self):
-        enabled = bool(getattr(self, "is_supported", False)) and self.translate_enabled_var.get()
+        enabled = bool(getattr(self, "is_supported", False) or getattr(self, "bmh_game", None)) and self.translate_enabled_var.get()
         self._set_menu_state([(self.tools_menu, 12)], enabled)
 
     def _reg(self, widget, key):
@@ -639,6 +641,18 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.notebook.add(self.tab_tore, text="TORE Editor")
         self.tore_editor = ToreEditorPanel(self.tab_tore, standalone=False)
         self.tore_editor.pack(fill=tk.BOTH, expand=True)
+        self.tab_bmh = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_bmh, text="BMH Strings")
+        self.bmh_panel = bmh_editor.BMHStringsPanel(
+            self.tab_bmh,
+            reg=self._reg,
+            translate_var=self.translate_enabled_var,
+            on_translate_toggle=self.on_translate_toggle,
+            on_change=self._update_save_state,
+        )
+        self.bmh_panel.pack(fill=tk.BOTH, expand=True)
+        self.notebook.hide(self.tab_bmh)
+        self._apply_translation_defaults(target=True)
         self._set_supported_state(False)
         self.notebook.select(self.tab_strings)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_request)
@@ -781,9 +795,14 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             and bytes(self.exe_data) != bytes(self.last_saved_exe_data)
         )
 
+    def _bmh_unsaved(self) -> bool:
+        panel = getattr(self, "bmh_panel", None)
+        return bool(self.bmh_game and panel is not None and (panel.is_dirty() or panel.has_pending_edit()))
+
     def _has_unsaved_changes(self) -> bool:
         return bool(
-            self._has_committed_changes()
+            self._bmh_unsaved()
+            or self._has_committed_changes()
             or self._converted_to_extended
             or self._integrity_fixed
             or self.font_pending
@@ -827,6 +846,12 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         return payload, modified_from_source
 
     def _update_save_state(self):
+        if getattr(self, "bmh_game", None):
+            panel = self.bmh_panel
+            can_save = bool(panel.is_dirty() and not panel.has_pending_edit())
+            self.save_button.config(state=tk.NORMAL if can_save else tk.DISABLED)
+            self._set_menu_state(self.save_menu_entries, can_save)
+            return
         can_save      = self._can_save()
         can_exchange  = self._can_exchange_strings()
         has_selection = self.current_index is not None and self._supported_loaded()
@@ -973,9 +998,18 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             self.translation_bar.set_default_source_from_profile(self.profile_name)
         if target:
             self.translation_bar.set_default_target_from_language(self.language)
+        bmh_panel = getattr(self, "bmh_panel", None)
+        if bmh_panel is not None:
+            bmh_panel.apply_defaults(
+                source_label=self.bmh_game["label"] if (source and self.bmh_game) else None,
+                target_language=self.language if target else None,
+            )
 
     def on_translate_toggle(self):
         self._update_translate_all_state()
+        if self.bmh_game:
+            self.bmh_panel.set_translate_enabled(self.translate_enabled_var.get())
+            return
         panel = self._active_newspaper_panel()
         if panel is not None:
             enabled = self.translate_enabled_var.get()
@@ -1513,6 +1547,9 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         return result["ids"]
 
     def translate_all(self):
+        if self.bmh_game:
+            self.bmh_panel.translate_all(self.root)
+            return
         if not self._supported_loaded() or not self.entries:
             messagebox.showinfo(self.tr("dlg.translate_all.title"), self.tr("dlg.translate_all.none"))
             return
@@ -2033,6 +2070,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._set_filter_status(None)
         self.font_editor.reset_state()
         self.mana_editor_panel.show_placeholder()
+        self.bmh_panel.clear()
+        self.notebook.hide(self.tab_bmh)
         self._set_supported_state(False)
 
     def _prepare_load_content(self, data: bytearray, profile: dict):
@@ -2127,9 +2166,93 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             pass
         return None
 
+    def _try_load_bmh(self, filepath) -> bool:
+        """Bundesliga Manager Hattrick: FLTD.EXE (ENG) / BMH.EXE (GER) + TEXTE.BLK / TEXTD.BLK.
+        Returns True when the file was a BMH executable (handled, successfully or not)."""
+        game = bmh_editor.detect_game(filepath)
+        if game is None:
+            return False
+        exe_dir = os.path.dirname(os.path.abspath(filepath))
+        blk_path = bmh_editor.find_file_ci(exe_dir, game["blk"])
+        if blk_path is None:
+            blk_path = filedialog.askopenfilename(
+                title=f"{game['blk']} not found in {exe_dir} - locate it",
+                initialdir=exe_dir,
+                filetypes=[("BLK", "*.BLK"), ("All Files", "*.*")])
+            if not blk_path:
+                return True
+        try:
+            with open(blk_path, "rb") as handle:
+                data = handle.read()
+            probe = bmh_editor.TextDb.from_bytes(data)
+        except (OSError, bmh_editor.BMHFormatError) as exc:
+            messagebox.showerror(self.tr("dlg.load.failed"), self.tr("dlg.load.failed_msg", error=exc))
+            return True
+        del probe
+        self._reset_state()
+        self.bmh_game = game
+        self.source_path = os.path.abspath(filepath)
+        self.bmh_panel.load(os.path.abspath(blk_path), data)
+        self.notebook.add(self.tab_bmh, text="BMH Strings")
+        self.notebook.select(self.tab_bmh)
+        self.filename_label.config(text=f"({os.path.basename(filepath)} + {os.path.basename(blk_path)})")
+        self._set_profile(value=game["label"])
+        self._apply_translation_defaults(source=True)
+        self.bmh_panel.set_translate_enabled(self.translate_enabled_var.get())
+        self._set_menu_state([(self.tools_menu, 11)], True)
+        self._update_translate_all_state()
+        self._update_save_state()
+        self._set_status(None)
+        return True
+
+    def _save_bmh(self):
+        panel = self.bmh_panel
+        if panel.has_pending_edit():
+            messagebox.showwarning(self.tr("dlg.save.blocked"), self.tr("block.text_pending"))
+            return False
+        try:
+            payload = panel.payload()
+        except bmh_editor.BMHFormatError as exc:
+            messagebox.showerror(self.tr("dlg.save.blocked"), str(exc))
+            return False
+        filepath = filedialog.asksaveasfilename(
+            title=self.tr("fd.save_exe"),
+            defaultextension=".BLK",
+            filetypes=[("BLK", "*.BLK"), ("All Files", "*.*")],
+            initialfile=os.path.basename(panel.path),
+            initialdir=os.path.dirname(panel.path),
+        )
+        if not filepath:
+            return False
+        backup_original = False
+        if paths_equal(filepath, panel.path):
+            try:
+                with open(panel.path, "rb") as handle:
+                    current = handle.read()
+            except OSError as exc:
+                messagebox.showerror(self.tr("dlg.save.blocked"), self.tr("dlg.save.verify", error=exc))
+                return False
+            if current != panel.disk_bytes:
+                messagebox.showerror(self.tr("dlg.save.blocked"), self.tr("dlg.save.external"))
+                return False
+            if not messagebox.askyesno(self.tr("dlg.save.overwrite_title"), self.tr("dlg.save.overwrite_msg")):
+                return False
+            backup_original = True
+        try:
+            backup_path = atomic_save_bytes(filepath, payload, backup_original=backup_original)
+        except OSError as exc:
+            messagebox.showerror(self.tr("dlg.save.failed"), self.tr("dlg.save.failed_msg", error=exc))
+            return False
+        panel.mark_saved(os.path.abspath(filepath), payload)
+        backup_note = self.tr("dlg.save.backup", path=backup_path) if backup_path else ""
+        messagebox.showinfo(self.tr("dlg.save.done"), self.tr("dlg.save.done_msg", path=filepath, backup=backup_note))
+        return True
+
     def load_exe(self):
         filepath = filedialog.askopenfilename(title=self.tr("fd.open_exe"), filetypes=[("DOS Executable", "*.exe"), ("All Files", "*.*")])
         if not filepath or not self._confirm_discard_for_load():
+            return
+        if self._try_load_bmh(filepath):
             return
 
         converted_to_extended = False
@@ -2288,6 +2411,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._copied_after_id = self.root.after(2000, lambda: self._copied_label.config(text=""))
 
     def save_exe(self):
+        if self.bmh_game:
+            return self._save_bmh()
         if not self._supported_loaded():
             messagebox.showwarning(self.tr("dlg.save.unsupported"), self.tr("dlg.save.unsupported_msg"))
             return False

@@ -24,6 +24,15 @@ _PAL_NORMAL20       = _hex_palette("0000002828302020281C1C2418182014141C1010180C
 
 _PAL_ADVERTISEMENTS20 = _hex_palette("0000002828302020281C1C2418182014141C1010180C0C1400001C241C142C282034302C141804181C0818200C1C24101800042400042C0008301C082818081C10040000143030382018101008081C140C18100C140C083C3C3C2820180808103F00003B00003800003500003200002F00002C00002900002600002200001F00001C00001900001600001300001000003F36363F2E2E3F27273F1F1F3F17173F10103F08083F00003F2A173F26103F22083F1E00391B003318002D15002713003F3F363F3F2E3F3F273F3F1F3F3E173F3D103F3D083F3D003936003331002D2B002727002121001C1B00161500101000343F17313F102D3F08283F002439002033001D2D00182700363F362F3F2E273F27203F1F183F17103F10083F08003F00003F00003B00003800003500013200012F00012C00012900012600012200011F00011C00011900011600011300011000363F3F2E3F3F273F3F1F3F3E173F3F103F3F083F3F003F3F003939003333002D2D002727002121001C1C001616001010172F3F102C3F082A3F00273F002339001F33001B2D00172736363F2E2F3F27273F1F203F17183F10103F08093F00013F00003F00003B00003800003500003200002F00002C00002900002600002200001F00001C0000190000160000130000103C363F392E3F36273F341F3F32173F2F103F2D083F2A003F2600392000331D002D18002714002111001C0D00160A00103F363F3F2E3F3F273F3F1F3F3F173F3F103F3F083F3F003F3800393200332D002D2700272100211B001C1600161000103F3A373F38343F36313F352F3F332C3F31293F2F273F2E243F2C203F291C3F27183C25173A2316372215342014321F132F1E122D1C112A1A1028190F27180E24170D22160C20140B1D130A1B1209171008150F07120E06100C060E0B050A0803000000000000000000000000000000000000000000000000310A0A31130A311D0A31270A31310A27310A1D310A13310A0A310C0A31170A31220A312D0A2A310A1F310A14310B0A31160A31210A312C0A31310A2B310A20310A15310A0A00000000", scale=4) 
 
+# Bundesliga Manager Hattrick palette (from bmh_palette.h, 256 entries).
+# The header stores the values as positional RGBQUAD initialisers; they are
+# read here as R, G, B. If the colours ever look red/blue swapped, set this
+# flag to True.
+_BMH_PALETTE_IS_BGR = True
+_PAL_BMH = _hex_palette("0000006894D43068A000346C686864404040B0C4E44C649C1818744C48BC00680000BC0400FC00D4B428A888009458000000006894D43068A000346C686864404040B0C4E44C649C000C1028283000680000BC0400FC0000DCF800A8FC0074E40054800060900070A00080B40098C800ACD800C0EC00DCFC58E0FC90F0FC8000C0F00070606060E000C0744800905800643C00FCF0D8F4E4C0ECD4ACE8C898E0C088D8B478D0A864C89C54C49448BC8838B4802CAC7820A46C149C6808985C001414002424003030003C3C004C4C045858006464107070187878207C8028848430888C3C00002060B00000F0806000EC0000FC004C2C3C3C3C4444445858586868687C7C7C8C8C8CA0A0A0ACACACB8B8B8C8C4C4D4D4D4E0E0E0F0F0F0FFFFFF2020200C0C101C1C20282C30383C444448545458646068747078847C84988894A898A4B8A4B4C8B4C0DCC0D0ECD0E0FCC0C0C0A8A8A80C640C1070141C7C1C24882830943440A0404CAC505CB8606CC47080CC8094D894A8E4ACBCF0C0D8FCD8D8DCFC043060084854005C4414486808685C0C3C8014785C4C606008607C245880087470104098446078000044000030D8FCFCC0ECF0A8DCE494CCD880B8CC6CA4C05C90B44C7CA8406CA03058942444881C347C10247008186404085800004C0C640C145C081C5404244C042840002838002C3000282400707070D0D0002050E0F00000F0A0000C6C14086810086410006010005C100058100C20A41830A82844AC3454B04464B85474BC6884C07894C88CA8CC045C0400500040787408807C9CE0F800342880D4FC64D0FC84CCE84CCCF86CC0F04CC0F480C4D86CC4DC50BCE02CC0E834ACE820A4E854A4DC68B0C450B8C830ACD018B0D05090D43090D81C90D850A8B834A8BC14ACBC54A8A42878D42CC0F8308CC45084BC1494BC207CC454909C3894A41C6CC40898A0587CA01C909C1080AC38949040789C1458BC3864A40884906070780C8884205CA00C5CA04460FC4460DC00005C00007000008400009C0000B00000C40000DC1C28E03848E85464EC7480F0909CF4B4BCF8000000", scale=1)
+if _BMH_PALETTE_IS_BGR:
+    _PAL_BMH = [(b, g, r) for r, g, b in _PAL_BMH]
+
 BUILTIN_PALETTES: dict[str, list[tuple[int, int, int]]] = {
     "Default":          _PAL_NORMAL,
     "Default 2.0":      _PAL_NORMAL20,
@@ -32,6 +41,7 @@ BUILTIN_PALETTES: dict[str, list[tuple[int, int, int]]] = {
     "Sponsors 2.0":     _PAL_ADVERTISEMENTS20,
     "Title":            _PAL_TITLE,
     "Loader":           _PAL_LOADER,
+    "BMH":              _PAL_BMH,
 }
 
 def _palette_to_flat_rgb(pal: list[tuple[int, int, int]], size: int = 256) -> list[int]:
@@ -42,7 +52,170 @@ def _palette_to_flat_rgb(pal: list[tuple[int, int, int]], size: int = 256) -> li
         flat.extend((0, 0, 0))
     return flat[:size * 3]
 
-def load_vga_image(vga_path: str, palette: list[tuple[int, int, int]]) -> Image.Image | None:
+# ---------------------------------------------------------------------------
+# File formats
+#
+#   BMP (Bundesliga Manager Professional / Eishockey Manager):
+#       [W:2][H:2][payload length:2][RLE payload ... offset byte]
+#   BMH (Bundesliga Manager Hattrick):
+#       [W:2][H:2][payload length:4][RLE payload ... offset byte]
+#
+# The RLE payload is identical in both. The payload length includes the final
+# offset byte. Anything after the payload is an embedded palette (3 bytes/entry).
+# ---------------------------------------------------------------------------
+FMT_BMP = "BMP"
+FMT_BMH = "BMH"
+
+_VGA_FORMATS: dict[str, dict[str, int]] = {
+    FMT_BMP: {"header_len": 6, "len_bytes": 2},
+    FMT_BMH: {"header_len": 8, "len_bytes": 4},
+}
+
+DEFAULT_PALETTE_FOR_FORMAT = {
+    FMT_BMP: "Default 2.0",
+    FMT_BMH: "BMH",
+}
+
+EMBEDDED_PALETTE_NAME = "Embedded (file)"
+
+# BMH sprites without a palette of their own use the palette embedded in another
+# file of the same folder: (first number, last number, source file number).
+SHARED_PALETTE_RULES_BMH = [
+    (40, 46, 128),
+    (47, 47, 131),
+    (48, 48, 128),
+]
+
+_MAX_IMG_W = 1280
+_MAX_IMG_H = 960
+
+
+class VgaFile:
+    """Result of loading a .VGA/.CP file."""
+
+    def __init__(self, image: Image.Image, fmt: str, trailer: bytes,
+                 embedded_palette: list[tuple[int, int, int]] | None):
+        self.image = image
+        self.fmt = fmt
+        self.trailer = trailer                    # raw bytes after the payload
+        self.embedded_palette = embedded_palette  # parsed trailer, if a palette
+
+
+def _decode_vga(data: bytes, fmt: str):
+    """Strictly decode `data` as `fmt`.
+
+    Returns (width, height, pixels, trailer) or None when the data is not a
+    valid file of that format.
+    """
+    spec = _VGA_FORMATS[fmt]
+    header_len = spec["header_len"]
+    if len(data) < header_len + 1:
+        return None
+
+    width = data[0] | (data[1] << 8)
+    height = data[2] | (data[3] << 8)
+    payload_len = int.from_bytes(data[4:header_len], "little")
+
+    if width <= 0 or height <= 0 or width > _MAX_IMG_W or height > _MAX_IMG_H:
+        return None
+    if payload_len < 1:
+        return None
+
+    payload_end = header_len + payload_len - 1
+    if payload_end >= len(data):
+        return None
+
+    offset = data[payload_end] - 1
+    if offset < 1:
+        return None
+
+    pixels = bytearray()
+    i = header_len
+    target = width * height
+
+    while i < payload_end and len(pixels) < target:
+        b = data[i]
+
+        if b > offset + 1:
+            if i + 1 >= payload_end:
+                return None
+            count = b - offset
+            value = data[i + 1]
+            pixels.extend((value,) * count)
+            i += 2
+
+        elif b == offset + 1:
+            i += 1
+
+        else:
+            count = b + 1
+            if i + count >= payload_end:
+                return None
+            pixels.extend(data[i + 1:i + 1 + count])
+            i += count + 1
+
+    if len(pixels) != target:
+        return None
+
+    return width, height, bytes(pixels), bytes(data[payload_end + 1:])
+
+
+def _trailer_to_palette(trailer: bytes) -> list[tuple[int, int, int]] | None:
+    """Interpret trailing bytes as an embedded palette (None if they are not one)."""
+    n = len(trailer)
+    if n == 0 or n % 3 != 0 or n > 256 * 3:
+        return None
+    entries = n // 3
+    if entries < 2:
+        return None
+    # VGA DAC palettes are 6-bit (0..63) and need scaling up to 8-bit.
+    scale = 4 if max(trailer) <= 63 else 1
+    return [
+        (min(255, trailer[i] * scale),
+         min(255, trailer[i + 1] * scale),
+         min(255, trailer[i + 2] * scale))
+        for i in range(0, n, 3)
+    ]
+
+
+def _decode_vga_auto(data: bytes, prefer: str | None = None):
+    """Try BMH and BMP decoding and pick the one that is valid.
+
+    Returns (fmt, (width, height, pixels, trailer)) or None.
+    """
+    found: dict[str, tuple] = {}
+    for fmt in (FMT_BMH, FMT_BMP):
+        res = _decode_vga(data, fmt)
+        if res is not None:
+            found[fmt] = res
+
+    if not found:
+        return None
+    if len(found) == 1:
+        fmt = next(iter(found))
+        return fmt, found[fmt]
+
+    # Both decode (practically never happens): prefer the one that leaves no
+    # stray bytes / a well-formed palette, then the folder hint, then BMP.
+    def score(fmt: str) -> int:
+        trailer = found[fmt][3]
+        if not trailer:
+            return 2
+        return 1 if _trailer_to_palette(trailer) is not None else 0
+
+    best = max(found, key=lambda f: (score(f), f == prefer, f == FMT_BMP))
+    return best, found[best]
+
+
+def detect_vga_format(data: bytes, prefer: str | None = None) -> str | None:
+    """Return FMT_BMP / FMT_BMH for the given file contents, or None."""
+    res = _decode_vga_auto(data, prefer)
+    return res[0] if res else None
+
+
+def load_vga_file(vga_path: str, palette: list[tuple[int, int, int]] | None = None,
+                  prefer_fmt: str | None = None) -> VgaFile | None:
+    """Load a .VGA/.CP file, auto-detecting BMP vs BMH."""
     if not os.path.isfile(vga_path):
         return None
 
@@ -50,59 +223,25 @@ def load_vga_image(vga_path: str, palette: list[tuple[int, int, int]]) -> Image.
         with open(vga_path, "rb") as f:
             data = f.read()
 
-        header_len = 6
-        if len(data) < header_len:
+        res = _decode_vga_auto(data, prefer_fmt)
+        if res is None:
             return None
+        fmt, (width, height, pixels, trailer) = res
 
-        width = data[0] | (data[1] << 8)
-        height = data[2] | (data[3] << 8)
-        payload_len = data[4] | (data[5] << 8)
-
-        if width <= 0 or height <= 0 or width > 1280 or height > 960:
-            return None
-
-        payload_end = header_len + payload_len - 1
-        if payload_end < header_len or payload_end >= len(data):
-            return None
-
-        offset = data[payload_end] - 1
-        if offset < 1:
-            return None
-
-        pixels = bytearray()
-        i = header_len
-        target = width * height
-
-        while i < payload_end and len(pixels) < target:
-            b = data[i]
-
-            if b > offset + 1:
-                if i + 1 >= payload_end:
-                    return None
-                count = b - offset
-                value = data[i + 1]
-                pixels.extend((value,) * count)
-                i += 2
-
-            elif b == offset + 1:
-                i += 1
-
-            else:
-                count = b + 1
-                if i + count >= payload_end:
-                    return None
-                pixels.extend(data[i + 1:i + 1 + count])
-                i += count + 1
-
-        if len(pixels) != target:
-            return None
-
-        img = Image.frombytes("P", (width, height), bytes(pixels))
-        img.putpalette(_palette_to_flat_rgb(palette))
-        return img
+        img = Image.frombytes("P", (width, height), pixels)
+        embedded = _trailer_to_palette(trailer)
+        pal = palette if palette is not None else (embedded or _PAL_NORMAL20)
+        img.putpalette(_palette_to_flat_rgb(pal))
+        return VgaFile(img, fmt, trailer, embedded)
 
     except (OSError, ValueError, IndexError):
         return None
+
+
+def load_vga_image(vga_path: str, palette: list[tuple[int, int, int]]) -> Image.Image | None:
+    """Backward-compatible wrapper: returns only the image."""
+    vf = load_vga_file(vga_path, palette)
+    return vf.image if vf is not None else None
 
 _RLE_OFFSET = 127
 _RLE_SENTINEL = _RLE_OFFSET + 1
@@ -151,9 +290,13 @@ def _rle_encode_indices(indices: list[int]) -> bytearray:
     out.append(_RLE_SENTINEL)
     return out
 
-def save_vga_image(img: Image.Image, dest_path: str) -> None:
+def save_vga_image(img: Image.Image, dest_path: str,
+                   fmt: str = FMT_BMP, trailer: bytes = b"") -> None:
     if img is None:
         raise VgaEncodeError("No image to save.")
+
+    if fmt not in _VGA_FORMATS:
+        raise VgaEncodeError(f"Unknown file format: {fmt}")
 
     if img.mode != "P":
         raise VgaEncodeError("Internal image is not in indexed format.")
@@ -161,23 +304,26 @@ def save_vga_image(img: Image.Image, dest_path: str) -> None:
     w, h = img.size
     if w <= 0 or h <= 0:
         raise VgaEncodeError(f"Invalid image dimensions: {w}x{h}")
+    if w > 0xFFFF or h > 0xFFFF:
+        raise VgaEncodeError(f"Image dimensions too large: {w}x{h}")
+
+    spec = _VGA_FORMATS[fmt]
+    len_bytes = spec["len_bytes"]
+    max_payload = (1 << (8 * len_bytes)) - 1
 
     indices = list(img.tobytes())
     payload = _rle_encode_indices(indices)
 
-    if len(payload) > 0xFFFF:
+    if len(payload) > max_payload:
         raise VgaEncodeError(
-            f"Payload too large ({len(payload)} bytes > 65535). "
+            f"Payload too large ({len(payload)} bytes > {max_payload}). "
             "Reduce image dimensions or complexity."
         )
 
-    header = bytearray(6)
-    header[0] = w & 0xFF
-    header[1] = (w >> 8) & 0xFF
-    header[2] = h & 0xFF
-    header[3] = (h >> 8) & 0xFF
-    header[4] = len(payload) & 0xFF
-    header[5] = (len(payload) >> 8) & 0xFF
+    header = bytearray()
+    header += w.to_bytes(2, "little")
+    header += h.to_bytes(2, "little")
+    header += len(payload).to_bytes(len_bytes, "little")
 
     tmp_path = dest_path + ".tmp"
 
@@ -185,6 +331,8 @@ def save_vga_image(img: Image.Image, dest_path: str) -> None:
         with open(tmp_path, "wb") as f:
             f.write(header)
             f.write(payload)
+            if trailer:
+                f.write(trailer)   # keep an embedded palette, if the file had one
 
         os.replace(tmp_path, dest_path)
 
@@ -1184,6 +1332,15 @@ class PicEditorPanel(ttk.Frame):
         self._current_path: str         = ""
         self._active_palette_name: str  = "Default 2.0"
         self._active_palette: list[tuple[int,int,int]] = list(_PAL_NORMAL20)
+        self._base_palette_name: str    = "Default 2.0"   # last non-embedded palette
+        self._palette_auto: bool        = True            # follow the detected format
+        self._folder_format: str | None = None            # BMP / BMH (auto-detected)
+        self._current_format: str       = FMT_BMP         # format of the open file
+        self._embedded_palette: list[tuple[int,int,int]] | None = None
+        self._embedded_trailer: bytes   = b""
+        # Embedded palettes seen in this folder, reusable by files without one
+        # (e.g. 41.VGA has no palette of its own and uses the one of 128.VGA).
+        self._extra_palettes: dict[str, list[tuple[int,int,int]]] = {}
         self._modified  = False
         self._undo_stack: list[Image.Image] = []
         self._apply_style()
@@ -1229,7 +1386,7 @@ class PicEditorPanel(ttk.Frame):
         f_file = ttk.LabelFrame(parent, text="File", padding=(4, 4))
         f_file.pack(fill=tk.X, pady=(0, 6))
         if self._standalone:
-            ttk.Button(f_file, text="📁 PIC Folder…", command=self._browse_dir).pack(fill=tk.X, pady=(0, 4))
+            ttk.Button(f_file, text="📁 VGA Folder…", command=self._browse_dir).pack(fill=tk.X, pady=(0, 4))
         self._btn_save = ttk.Button(f_file, text="Save As…", command=self._save_as, state="disabled")
         self._btn_save.pack(fill=tk.X, pady=2)
         io_row = ttk.Frame(f_file)
@@ -1253,6 +1410,8 @@ class PicEditorPanel(ttk.Frame):
         self._info_lbl.pack(side=tk.LEFT, anchor="w")
         self._dirty_lbl = ttk.Label(info_row, text="", foreground=RED, font=("Segoe UI", 9, "bold"))
         self._dirty_lbl.pack(side=tk.RIGHT, anchor="e")
+        self._fmt_lbl = ttk.Label(f_file, text="", foreground=MUTED)
+        self._fmt_lbl.pack(fill=tk.X, anchor="w")
         f_tools = ttk.LabelFrame(parent, text="Tools", padding=(4, 2))
         f_tools.pack(fill=tk.X, pady=3)
         f_tools.columnconfigure(0, weight=1)
@@ -1407,12 +1566,17 @@ class PicEditorPanel(ttk.Frame):
             self._set_status(f"Folder not found: {path}")
             return
         self._pic_dir = path
+        self._palette_auto = True
+        self._extra_palettes.clear()
         self._scan_files()
         if self._pic_files:
+            self._apply_palette_name(
+                DEFAULT_PALETTE_FOR_FORMAT.get(self._folder_format or FMT_BMP,
+                                               "Default 2.0"))
             self._load_index(0)
 
     def _browse_dir(self):
-        d = filedialog.askdirectory(title="Select PIC Folder")
+        d = filedialog.askdirectory(title="Select VGA Folder")
         if d:
             self.set_pic_dir(d)
 
@@ -1423,7 +1587,38 @@ class PicEditorPanel(ttk.Frame):
         self._pic_files = sorted(files, key=_natural_key)
         n = len(self._pic_files)
         self._file_combo.config(values=self._pic_files)
-        self._set_status(f"{n} .VGA/.CP files found in {self._pic_dir}")
+        self._folder_format, mixed = self._detect_folder_format()
+        if self._folder_format is None:
+            fmt_txt = "format not recognised"
+        else:
+            fmt_txt = f"format: {self._folder_format} (auto-detected"
+            fmt_txt += ", mixed folder)" if mixed else ")"
+        self._set_status(f"{n} .VGA/.CP files found in {self._pic_dir}  [{fmt_txt}]")
+
+    def _detect_folder_format(self) -> tuple[str | None, bool]:
+        """Sample the files of the folder and vote for BMP or BMH.
+
+        Returns (majority format or None, folder_is_mixed).
+        """
+        files = self._pic_files
+        if not files:
+            return None, False
+        step = max(1, len(files) // 24)
+        votes = {FMT_BMP: 0, FMT_BMH: 0}
+        for fname in files[::step][:24]:
+            try:
+                with open(os.path.join(self._pic_dir, fname), "rb") as f:
+                    data = f.read()
+            except OSError:
+                continue
+            fmt = detect_vga_format(data)
+            if fmt:
+                votes[fmt] += 1
+        if not any(votes.values()):
+            return None, False
+        best = max(votes, key=lambda k: votes[k])
+        mixed = votes[FMT_BMP] > 0 and votes[FMT_BMH] > 0
+        return best, mixed
 
     def _load_index(self, idx: int):
         if not self._pic_files:
@@ -1433,12 +1628,20 @@ class PicEditorPanel(ttk.Frame):
         fname = self._pic_files[idx]
         fpath = os.path.join(self._pic_dir, fname)
 
-        img = load_vga_image(fpath, self._active_palette)
-        if img is None:
-            self._set_status(f"Failed to load {fname}")
+        vf = load_vga_file(fpath, None, prefer_fmt=self._folder_format)
+        if vf is None:
+            self._set_status(f"Failed to load {fname} (neither valid BMP nor BMH format)")
             return
+        img = vf.image
         self._current_path = fpath
+        self._current_format = vf.fmt
+        self._embedded_trailer = vf.trailer
+        self._embedded_palette = vf.embedded_palette
+        self._extra_palettes.clear()      # shared palette only lives for this file
         self._undo_stack.clear()
+        pal_name = self._palette_for_loaded_file()
+        self._refresh_palette_choices()
+        self._apply_palette_name(pal_name)
         self._canvas_frame.set_palette(self._active_palette)
         self._canvas_frame.set_image(img)
         self._canvas_frame.set_zoom(self._zoom_var.get())
@@ -1446,9 +1649,71 @@ class PicEditorPanel(ttk.Frame):
         self._file_var.set(fname)
         self._info_lbl.config(
             text=f"{w}×{h}  ({os.path.getsize(fpath):,} B)")
+        extra = ""
+        if self._embedded_palette:
+            extra = f"  +palette ({len(self._embedded_palette)})"
+        self._fmt_lbl.config(text=f"Format: {vf.fmt} (auto){extra}")
         self._set_dirty(False)
         self._enable_file_buttons(True)
-        self._set_status(f"Loaded: {fpath}  [displayed palette: {self._active_palette_name}]")
+        self._set_status(f"Loaded: {fpath}  [{vf.fmt}, palette: {self._active_palette_name}]")
+
+    def _shared_palette_name(self, fname: str) -> str | None:
+        """Name of the shared palette for `fname` (loading its source file), if any."""
+        stem = os.path.splitext(fname)[0]
+        if not stem.isdigit() or self._current_format != FMT_BMH:
+            return None
+        num = int(stem)
+        for lo, hi, src in SHARED_PALETTE_RULES_BMH:
+            if not (lo <= num <= hi):
+                continue
+            src_name = next(
+                (f for f in self._pic_files
+                 if os.path.splitext(f)[0].isdigit()
+                 and int(os.path.splitext(f)[0]) == src), None)
+            if src_name is None:
+                return None
+            label = f"From {src_name}"
+            if label not in self._extra_palettes:
+                vf = load_vga_file(os.path.join(self._pic_dir, src_name),
+                                   None, prefer_fmt=FMT_BMH)
+                if vf is None or not vf.embedded_palette:
+                    return None
+                self._extra_palettes[label] = list(vf.embedded_palette)
+            return label
+        return None
+
+    def _palette_for_loaded_file(self) -> str:
+        """Pick the palette to show for the file that was just loaded."""
+        if self._embedded_palette:
+            return EMBEDDED_PALETTE_NAME
+        shared = self._shared_palette_name(os.path.basename(self._current_path))
+        if shared:
+            return shared
+        return DEFAULT_PALETTE_FOR_FORMAT.get(self._current_format, "Default 2.0")
+
+    def _refresh_palette_choices(self):
+        names = list(BUILTIN_PALETTES.keys()) + list(self._extra_palettes.keys())
+        if self._embedded_palette:
+            names.append(EMBEDDED_PALETTE_NAME)
+        self._pal_combo.config(values=names)
+
+    def _apply_palette_name(self, name: str):
+        """Activate a palette by name (built-in or the file's embedded one)."""
+        if name == EMBEDDED_PALETTE_NAME and self._embedded_palette:
+            pal = self._embedded_palette
+        elif name in BUILTIN_PALETTES:
+            pal = BUILTIN_PALETTES[name]
+            self._base_palette_name = name
+        elif name in self._extra_palettes:
+            pal = self._extra_palettes[name]
+            self._base_palette_name = name
+        else:
+            return
+        self._active_palette_name = name
+        self._active_palette = list(pal)
+        self._pal_var.set(name)
+        self._canvas_frame.set_palette(self._active_palette)
+        self._draw_swatch()
 
     def _confirm_discard(self) -> bool:
         if not self._modified:
@@ -1507,7 +1772,7 @@ class PicEditorPanel(ttk.Frame):
         dest = filedialog.asksaveasfilename(
             title="Save Image As…",
             defaultextension=".VGA",
-            filetypes=[("VGA/CP Image", "*.VGA *.vga *.CP *.cp"), ("All files", "*.*")],
+            filetypes=[(f"VGA/CP Image ({self._current_format})", "*.VGA *.vga *.CP *.cp"), ("All files", "*.*")],
             initialdir=self._pic_dir or ".",
             initialfile=current_fname,
         )
@@ -1519,11 +1784,12 @@ class PicEditorPanel(ttk.Frame):
         self._set_status("Saving…")
         self.update_idletasks()
         try:
-            save_vga_image(img, dest)
+            save_vga_image(img, dest, fmt=self._current_format,
+                           trailer=self._embedded_trailer)
             self._set_dirty(False)
             sz = os.path.getsize(dest)
             self._info_lbl.config(text=f"{img.width}×{img.height}  ({sz:,} B)")
-            self._set_status(f"Saved: {dest}  ({sz:,} B)")
+            self._set_status(f"Saved: {dest}  ({sz:,} B, {self._current_format})")
         except VgaEncodeError as exc:
             messagebox.showerror("VGA Save Error", str(exc))
             self._set_status("Save failed.")
@@ -1734,14 +2000,15 @@ class PicEditorPanel(ttk.Frame):
 
     def _on_palette_changed(self, _event=None):
         name = self._pal_var.get()
-        if name in BUILTIN_PALETTES:
-            self._active_palette_name = name
-            self._active_palette = list(BUILTIN_PALETTES[name])
+        if name == EMBEDDED_PALETTE_NAME and self._embedded_palette:
+            pass
+        elif name in BUILTIN_PALETTES or name in self._extra_palettes:
+            # A manual choice stops the palette from following the file format.
+            self._palette_auto = False
         else:
             self._pal_var.set(self._active_palette_name)
             return
-        self._draw_swatch()
-        self._canvas_frame.set_palette(self._active_palette)
+        self._apply_palette_name(name)
         self._set_status(f"Palette: {self._active_palette_name}")
 
     def _draw_swatch(self):
