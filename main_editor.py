@@ -47,8 +47,8 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.9.6"
-APP_TITLE = f"THE MANAGER / Bundesliga Manager Professional Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
+APP_VERSION = "2.9.7"
+APP_TITLE = f"THE MANAGER/BMP-FLTD/BMH Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
 
@@ -66,6 +66,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._apply_window_icon()
         self.root.geometry("1280x880")
         self.root.minsize(780, 600)
+        self.root.withdraw()
         self._init_document_state()
         self.diff_preview_cache    = PreviewCache()
         self._filter_callbacks_suspended = False
@@ -76,6 +77,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._init_language()
         self.cfg = load_config()
         self._build_gui()
+        self._reset_state()
+        self.root.deiconify()
 
     def _init_document_state(self):
         self.exe_data = bytearray()
@@ -642,7 +645,6 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.tore_editor = ToreEditorPanel(self.tab_tore, standalone=False)
         self.tore_editor.pack(fill=tk.BOTH, expand=True)
         self.tab_bmh = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_bmh, text="BMH Strings")
         self.bmh_panel = bmh_editor.BMHStringsPanel(
             self.tab_bmh,
             reg=self._reg,
@@ -651,7 +653,12 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             on_change=self._update_save_state,
         )
         self.bmh_panel.pack(fill=tk.BOTH, expand=True)
-        self.notebook.hide(self.tab_bmh)
+        self.bmh_vga = {}
+        for folder in ("KB", "W"):
+            tab = ttk.Frame(self.notebook)
+            panel = PicEditorPanel(tab, standalone=False)
+            panel.pack(fill=tk.BOTH, expand=True)
+            self.bmh_vga[folder] = (tab, panel)
         self._apply_translation_defaults(target=True)
         self._set_supported_state(False)
         self.notebook.select(self.tab_strings)
@@ -2071,7 +2078,10 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.font_editor.reset_state()
         self.mana_editor_panel.show_placeholder()
         self.bmh_panel.clear()
-        self.notebook.hide(self.tab_bmh)
+        self._hide_tab(self.tab_bmh)
+        for tab, panel in self.bmh_vga.values():
+            self._clear_vga_panel(panel, "")
+            self._hide_tab(tab)
         self._set_supported_state(False)
 
     def _prepare_load_content(self, data: bytearray, profile: dict):
@@ -2166,6 +2176,21 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             pass
         return None
 
+    def _hide_tab(self, tab):
+        if str(tab) in self.notebook.tabs():
+            self.notebook.hide(tab)
+
+    @staticmethod
+    def _clear_vga_panel(panel, message):
+        try:
+            panel._pic_dir = ""
+            panel._pic_files = []
+            panel._file_combo.config(values=[])
+            if message:
+                panel._set_status(message)
+        except Exception:
+            pass
+
     def _try_load_bmh(self, filepath) -> bool:
         """Bundesliga Manager Hattrick: FLTD.EXE (ENG) / BMH.EXE (GER) + TEXTE.BLK / TEXTD.BLK.
         Returns True when the file was a BMH executable (handled, successfully or not)."""
@@ -2194,6 +2219,13 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.source_path = os.path.abspath(filepath)
         self.bmh_panel.load(os.path.abspath(blk_path), data)
         self.notebook.add(self.tab_bmh, text="BMH Strings")
+        for folder, (tab, panel) in self.bmh_vga.items():
+            pic_dir = bmh_editor.find_dir_ci(exe_dir, folder)
+            if pic_dir:
+                panel.set_pic_dir(pic_dir)
+            else:
+                self._clear_vga_panel(panel, f"Cartella {folder} non trovata in: {exe_dir}")
+            self.notebook.add(tab, text=f"VGA {folder}")
         self.notebook.select(self.tab_bmh)
         self.filename_label.config(text=f"({os.path.basename(filepath)} + {os.path.basename(blk_path)})")
         self._set_profile(value=game["label"])

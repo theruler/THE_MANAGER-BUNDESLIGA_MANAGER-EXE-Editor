@@ -42,6 +42,17 @@ def find_file_ci(directory, name):
     return None
 
 
+def find_dir_ci(directory, name):
+    try:
+        for entry in os.listdir(directory):
+            full = os.path.join(directory, entry)
+            if entry.lower() == name.lower() and os.path.isdir(full):
+                return full
+    except OSError:
+        pass
+    return None
+
+
 # ---------------------------------------------------------------- codec ----
 # DIN 66003 / ISO 646-DE: the 7-bit German national variant.
 _DE_DECODE = {0x40: "§", 0x5B: "Ä", 0x5C: "Ö", 0x5D: "Ü",
