@@ -9,6 +9,11 @@ LANG_NAME = 'Deutsch'
 
 TEXTS_DE = {
 
+    # --- Hauptmenü
+    'menu.championship': 'MEISTERSCHAFT',
+    'menu.quick_match': 'SCHNELLES SPIEL',
+    'menu.championship_soon': 'Demnächst verfügbar',
+
     # --- Applicazione / avvio
     'app.caption': 'DER MANAGER von TheRuler76',
     'fatal.missing': 'Fehlende Grafikdateien:',
@@ -92,7 +97,10 @@ TEXTS_DE = {
     'intro.attr_skill_short': 'TEC',
     'intro.attr_form_short': 'FOR',
     'intro.footer': 'WÄHREND DES SPIELS: H = HILFE - LEERTASTE = TAKTIKPAUSE - R = WIEDERHOLUNG - F2 GANZES FELD - F3/F4 ZOOM',
-
+    'intro.speed': 'Maximale Spielgeschwindigkeit:',
+    'intro.orig_audio': 'Originalaudio:',
+    'intro.orig_missing': 'DIGI.VOC / BM2TITLE.CMF nicht gefunden',
+    
     # --- Tabellone / HUD
     'hud.half_1': '1. HALBZEIT',
     'hud.half_2': '2. HALBZEIT',
@@ -160,7 +168,8 @@ TEXTS_DE = {
     'msg.replay_short': 'Wiederholung: erst wenige Sekunden aufgezeichnet',
     'msg.replay_saved': 'Wiederholung gespeichert unter: {path}',
     'msg.save_failed': 'Speichern fehlgeschlagen: {reason}',
-
+    'msg.gk_area_exit': 'Verlasse den Strafraum!',
+    
     # --- Eventi di gioco (log_event)
     'ev.match_start': 'SPIEL: {home} - {away}  (Aufstellungen {fh} / {fa})',
     'ev.kickoff': 'Anstoß: {team}',
@@ -205,7 +214,8 @@ TEXTS_DE = {
     'ev.taker.free': 'Freistoß ausgeführt von {p} ({team})',
     'ev.taker.penalty': 'Elfmeter ausgeführt von {p} ({team})',
     'ev.taker.no_gol': 'Chance vergeben von {p} ({team})',
-
+    'ev.gk_area_warning': 'Schiedsrichter-Ermahnung wegen Verbleibs im Strafraum: {p}',
+    
     # --- Aiuto (F1/H)
     'help.mf.title': 'MAUS - SPIELFELD',
     'help.mf.1.k': 'Rechtsklick auf einen Spieler',
@@ -353,6 +363,7 @@ TEXTS_DE = {
     'dbg.goal': 'TOR: V_GC={vgc:.1f} halbe Torbreite={hm:.1f} (v {v0:.1f}..{v1:.1f})  GOAL_H={gh:.1f} +BAR_HI={bh:.1f}  POST_T={pt:.1f}  Netz: D={gd:.1f} H={gn:.1f}',
     'dbg.legend1': 'Cyan=Toröffnung (Tor wenn z<GOAL_H)  Rot=Oberkante Latte  Weiß=Pfosten  Hellblau=Netz  Orange=Torwart-Fanggriff  Violett=Vorhersage',
     'dbg.legend2': 'Grün=REACH_FIRST  Himmelblau=AIR_REACH({air:.0f})  kleines Orange=Eckfahnen (FLAG_R={fr:.1f})',
+    'dbg.legend3': 'Radien: erster Ballkontakt (grün), Ballkontrolle (weiß), Luftspiel (hellblau)',
     'dbg.gk': 'TW{team} {name} Können={skill:.2f} Alarm={alert} Zustand={state} Wartezeit={cd:.2f}',
     'dbg.cp': 'cp {name} Zustand={state}  mögliche Luftaktionen jetzt: {opts}',
 }

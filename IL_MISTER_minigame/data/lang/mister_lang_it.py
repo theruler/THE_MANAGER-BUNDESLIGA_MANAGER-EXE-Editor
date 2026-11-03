@@ -9,6 +9,11 @@ LANG_NAME = 'Italiano'
 
 TEXTS_IT = {
 
+    # --- Menu principale
+    'menu.championship': 'CAMPIONATO',
+    'menu.quick_match': 'PARTITA VELOCE',
+    'menu.championship_soon': 'Prossimamente',
+
     # --- Applicazione / avvio
     'app.caption': 'IL MISTER by TheRuler76',
     'fatal.missing': 'File grafici mancanti:',
@@ -92,7 +97,10 @@ TEXTS_IT = {
     'intro.attr_skill_short': 'TEC',
     'intro.attr_form_short': 'FOR',
     'intro.footer': 'DURANTE LA PARTITA PREMI H PER AIUTO - SPAZIO ATTIVA LA PAUSA TATTICA - R IL REPLAY - F2 CAMPO COMPLETO - F3/F4 ZOOM',
-
+    'intro.speed': 'Velocità massima:',
+    'intro.orig_audio': 'Audio originale:',
+    'intro.orig_missing': 'DIGI.VOC / BM2TITLE.CMF non trovati',
+    
     # --- Tabellone / HUD
     'hud.half_1': '1° TEMPO',
     'hud.half_2': '2° TEMPO',
@@ -160,7 +168,8 @@ TEXTS_IT = {
     'msg.replay_short': 'Replay: ancora pochi secondi registrati',
     'msg.replay_saved': 'Replay salvato in: {path}',
     'msg.save_failed': 'Salvataggio fallito: {reason}',
-
+    'msg.gk_area_exit': "Esci dall'area di rigore!",
+    
     # --- Eventi di gioco (log_event)
     'ev.match_start': 'PARTITA: {home} - {away}  (moduli {fh} / {fa})',
     'ev.kickoff': "Calcio d'inizio: {team}",
@@ -205,7 +214,8 @@ TEXTS_IT = {
     'ev.taker.free': 'Punizione battuta da {p} ({team})',
     'ev.taker.penalty': 'Rigore battuto da {p} ({team})',
     'ev.taker.no_gol': 'Occasione mancata da {p} ({team})',
-
+    'ev.gk_area_warning': "Richiamo arbitrale per permanenza nell'area di rigore: {p}",
+    
     # --- Aiuto (F1/H)
     'help.mf.title': 'MOUSE - CAMPO',
     'help.mf.1.k': 'Clic destro su un giocatore',
@@ -353,6 +363,8 @@ TEXTS_IT = {
     'dbg.goal': 'PORTA: V_GC={vgc:.1f} mezza-bocca={hm:.1f} (v {v0:.1f}..{v1:.1f})  GOAL_H={gh:.1f} +BAR_HI={bh:.1f}  POST_T={pt:.1f}  rete: D={gd:.1f} H={gn:.1f}',
     'dbg.legend1': 'ciano=bocca (gol se z<GOAL_H)  rosso=tetto traversa  bianco=pali  azzurro=rete  arancio=presa portiere  viola=previsione',
     'dbg.legend2': 'verde=REACH_FIRST  cielo=AIR_REACH({air:.0f})  arancio piccolo=bandierine (FLAG_R={fr:.1f})',
+    'dbg.legend3': 'Raggi: primo contatto (verde), controllo palla (bianco), gioco aereo (azzurro)',
     'dbg.gk': 'GK{team} {name} abilita={skill:.2f} allerta={alert} stato={state} attesa={cd:.2f}',
     'dbg.cp': 'cp {name} stato={state}  gesti aerei possibili ora: {opts}',
+
 }

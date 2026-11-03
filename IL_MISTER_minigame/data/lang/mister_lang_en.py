@@ -9,6 +9,11 @@ LANG_NAME = 'English'
 
 TEXTS_EN = {
 
+    # --- Menu principale
+    'menu.championship': 'CHAMPIONSHIP',
+    'menu.quick_match': 'QUICK MATCH',
+    'menu.championship_soon': 'Coming soon',
+
     # --- Applicazione / avvio
     'app.caption': 'THE MANAGER by TheRuler76',
     'fatal.missing': 'Missing graphics files:',
@@ -92,7 +97,10 @@ TEXTS_EN = {
     'intro.attr_skill_short': 'SKI',
     'intro.attr_form_short': 'FOR',
     'intro.footer': 'DURING THE MATCH PRESS H FOR HELP - SPACE TOGGLES THE TACTICAL PAUSE - R REPLAY - F2 FULL FIELD - F3/F4 ZOOM',
-
+    'intro.speed': 'Max speed:',
+    'intro.orig_audio': 'Original audio:',
+    'intro.orig_missing': 'DIGI.VOC / BM2TITLE.CMF not found',
+    
     # --- Tabellone / HUD
     'hud.half_1': '1st HALF',
     'hud.half_2': '2nd HALF',
@@ -160,7 +168,8 @@ TEXTS_EN = {
     'msg.replay_short': 'Replay: only a few seconds recorded so far',
     'msg.replay_saved': 'Replay saved to: {path}',
     'msg.save_failed': 'Save failed: {reason}',
-
+    'msg.gk_area_exit': 'Leave the penalty area!',
+    
     # --- Eventi di gioco (log_event)
     'ev.match_start': 'MATCH: {home} - {away}  (formations {fh} / {fa})',
     'ev.kickoff': 'Kick-off: {team}',
@@ -205,7 +214,8 @@ TEXTS_EN = {
     'ev.taker.free': 'Free kick taken by {p} ({team})',
     'ev.taker.penalty': 'Penalty taken by {p} ({team})',
     'ev.taker.no_gol': 'Chance missed by {p} ({team})',
-
+    'ev.gk_area_warning': 'Referee warning for remaining in the penalty area: {p}',
+    
     # --- Aiuto (F1/H)
     'help.mf.title': 'MOUSE - FIELD',
     'help.mf.1.k': 'Right-click on a player',
@@ -353,6 +363,7 @@ TEXTS_EN = {
     'dbg.goal': 'GOAL: V_GC={vgc:.1f} half-mouth={hm:.1f} (v {v0:.1f}..{v1:.1f})  GOAL_H={gh:.1f} +BAR_HI={bh:.1f}  POST_T={pt:.1f}  net: D={gd:.1f} H={gn:.1f}',
     'dbg.legend1': 'cyan=mouth (goal if z<GOAL_H)  red=crossbar top  white=posts  light blue=net  orange=keeper catch  purple=prediction',
     'dbg.legend2': 'green=REACH_FIRST  sky=AIR_REACH({air:.0f})  small orange=corner flags (FLAG_R={fr:.1f})',
+    'dbg.legend3': 'Radii: first contact (green), ball control (white), aerial play (light blue)',
     'dbg.gk': 'GK{team} {name} skill={skill:.2f} alert={alert} state={state} wait={cd:.2f}',
     'dbg.cp': 'cp {name} state={state}  aerial moves possible now: {opts}',
 }

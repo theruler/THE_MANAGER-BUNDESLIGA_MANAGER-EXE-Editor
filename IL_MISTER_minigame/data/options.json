@@ -1,11 +1,12 @@
 {
   "lang": "it",
-  "half_min": 3.0,
-  "slowmo": true,
-  "replay_auto": true,
-  "replay_secs": 5,
+  "half_min": 5.0,
+  "slowmo": false,
+  "replay_auto": false,
+  "replay_secs": 8,
   "font_modern": false,
   "hints": false,
-  "user_team": 0,
-  "orig_audio": true
+  "user_team": null,
+  "orig_audio": false,
+  "speed_max": 30
 }
