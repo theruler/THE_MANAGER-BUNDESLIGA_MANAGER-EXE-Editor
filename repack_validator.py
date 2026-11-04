@@ -377,16 +377,35 @@ def repack_transaction(data, profile, entries, relocation_sites):
 
     groups = [[] for _ in profile["valid_ranges"]]
     pool_group = []
+    
     for entry in work_entries:
         if entry.get("fixed"):
             continue
-        range_index = _range_index(profile, entry["str_addr"])
+    
+        address = entry["str_addr"]
+        range_index = _range_index(profile, address)
+    
         if range_index is not None:
             groups[range_index].append(entry)
-        elif extended is not None and extended.in_pool(entry["str_addr"]):
-            pool_group.append(entry)
-        else:
-            return None, None, {"ok": False, "errors": [f"Entry outside valid ranges: {entry['str_addr']:#x}"], "stage": "layout"}
+            continue
+    
+        if extended is not None and extended.in_pool(address):
+            home_index = extended.home_range_index(entry)
+    
+            if (
+                home_index is not None
+                and 0 <= home_index < len(groups)
+                and extended.is_spillable(entry)
+            ):
+                # Return the string to its original pointer group.
+                groups[home_index].append(entry)
+            else:
+                # Keep strings without a safe home mapping in the extended pool.
+                pool_group.append(entry)
+    
+            continue
+    
+        errors.append(f"String {entry.get('string_id', '?')} is outside valid ranges and extended pool")
 
     suffix_parents = {id(entry["_shared_parent"]) for entry in work_entries
                       if entry.get("_shared_parent")}
@@ -432,7 +451,15 @@ def repack_transaction(data, profile, entries, relocation_sites):
     for range_start, range_end, writable, group in plans:
         work_data[range_start:range_end] = b"\x00" * (range_end - range_start)
         write_ptr = range_start
-        for entry in sorted(writable, key=lambda item: item["str_addr"]):
+        for entry in sorted(
+            writable,
+            key=lambda item: (
+                item.get("original_str_addr")
+                if isinstance(item.get("original_str_addr"), int)
+                else item["str_addr"],
+                item["str_addr"],
+            ),
+        ):
             encoded = _strict_text_bytes(entry) + b"\x00"
             work_data[write_ptr:write_ptr + len(encoded)] = encoded
             entry["str_addr"] = write_ptr
