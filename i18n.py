@@ -1,30 +1,12 @@
 # -*- coding: utf-8 -*-
 """Runtime UI translation for THE MANAGER - Bundesliga Manager String-Editor.
 
-Language tables live in plain Python files under ``data/lang/`` next to the
-program, so a translation can be corrected, replaced or added without
-rebuilding the editor.  Loading deliberately uses an explicit absolute path
-(``importlib.util.spec_from_file_location``) and never ``sys.path``: under
-PyInstaller onefile ``sys.path`` points into the temporary extraction area, so
-an import by name would silently ignore a file the user dropped next to the
-executable.
-
-Two base directories are involved, and keeping them apart is the whole point:
-
-``_program_dir()``
-    The folder holding the program.  Frozen: the folder of the executable.
-    From source: the folder of this module.  This is where the five external,
-    user-replaceable language files live, and it always wins.
-
 ``_bundle_dir()``
     The folder holding resources embedded in the executable.  Frozen:
     ``sys._MEIPASS``, the temporary extraction area.  From source: the folder
     of this module.  Only English lives here, as the guaranteed fallback for
     the case where the external English file is missing or damaged.
 
-Running from source both resolve to the same folder, so there is exactly one
-English file and no duplication.  Only a frozen build has two copies, and they
-are produced by the same build step from the same source file.
 
 Several programs can share this module in one process (the main editor and the
 embedded TORE panel, for instance).  Each one owns a :class:`Translator` with
@@ -49,32 +31,9 @@ DEFAULT_PREFIX = "lang_"
 _SUFFIX = ".py"
 
 
-def _program_dir() -> str:
-    """Directory of the running program, for source and frozen operation alike.
-
-    Frozen (PyInstaller): the folder holding the executable, never the
-    temporary extraction area.  From source: the folder holding this module.
-    The current working directory is deliberately never used.  This mirrors
-    ``utils._program_dir()`` exactly; both must stay in step.
-    """
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
-
 
 def _bundle_dir() -> str:
-    """Directory of resources embedded in the executable.
-
-    Frozen (PyInstaller onefile): ``sys._MEIPASS``, the temporary folder the
-    bootloader extracts the bundle into.  Anything added with ``--add-data``
-    lives there and nowhere else -- in particular it is *not* next to the
-    executable.  From source there is no bundle, so this falls back to the
-    module folder and coincides with :func:`_program_dir`.
-    """
-    base = getattr(sys, "_MEIPASS", None)
-    if base:
-        return base
-    return os.path.dirname(os.path.abspath(__file__))
+    return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 
 
 def _load_module(path: str, modname: str):
@@ -134,70 +93,59 @@ class Translator:
             return None
 
     def _external(self, code: str):
-        """External table for ``code``, loaded once; ``None`` when unusable."""
+        """Load an embedded language table once."""
         if code in self._tables:
             return self._tables[code]
         if code in self._failed:
             return None
-        table = self._read_table(self._lang_file(_program_dir(), code), code)
+    
+        table = self._read_table(
+            self._lang_file(_bundle_dir(), code), code
+        )
+    
         if table is None:
             self._failed.add(code)
             return None
+    
         self._tables[code] = table
         return table
 
-    def _embedded_english(self):
-        """Embedded English table from the bundle; ``None`` when unavailable."""
-        if self._embedded_tried:
-            return self._embedded
-        self._embedded_tried = True
-        external = self._lang_file(_program_dir(), FALLBACK_LANGUAGE)
-        path = self._lang_file(_bundle_dir(), FALLBACK_LANGUAGE)
-        # Running from source both paths are the same file.  It already failed as
-        # the external table, so retrying it would only duplicate the message.
-        if os.path.normcase(os.path.abspath(path)) == os.path.normcase(
-                os.path.abspath(external)):
-            return None
-        self._embedded = self._read_table(path, FALLBACK_LANGUAGE)
-        return self._embedded
-
     def _english(self):
-        """English table: external first, embedded copy as guaranteed fallback."""
-        return self._external(FALLBACK_LANGUAGE) or self._embedded_english()
+        return self._external(FALLBACK_LANGUAGE)
 
     def available_languages(self) -> set:
-        """Codes that can actually be loaded right now (English always included)."""
+        """Return all loadable embedded languages."""
         codes = set()
-        folder = os.path.join(_program_dir(), LANG_SUBDIR)
+        folder = os.path.join(_bundle_dir(), LANG_SUBDIR)
+    
         try:
             names = os.listdir(folder)
-        except Exception:                         # noqa: BLE001
+        except OSError:
             names = []
+    
         for name in names:
             if not (name.startswith(self.prefix) and name.endswith(_SUFFIX)):
                 continue
+    
             code = name[len(self.prefix):-len(_SUFFIX)]
             if code and self._external(code) is not None:
                 codes.add(code)
-        if self._english() is not None:
-            codes.add(FALLBACK_LANGUAGE)
+    
         return codes
 
     def discover_languages(self):
-        """Loadable languages as ``[(code, display name)]``, English first.
-
-        The display name is the ``LANG_NAME`` of the language file itself, so a
-        new translation names itself and needs no editor change.
-        """
+        """Loadable languages as [(code, display name)], English first."""
         result = []
+    
         for code in self.available_languages():
-            name = None
-            if self._external(code) is not None:
-                name = self._lang_name(self._lang_file(_program_dir(), code), code)
-            if not name and code == FALLBACK_LANGUAGE:
-                name = "English"
+            name = self._lang_name(
+                self._lang_file(_bundle_dir(), code), code
+            )
             result.append((code, name or code.upper()))
-        result.sort(key=lambda item: (item[0] != FALLBACK_LANGUAGE, item[0]))
+    
+        result.sort(key=lambda item: (
+            item[0] != FALLBACK_LANGUAGE, item[0]
+        ))
         return result
 
     def _lang_name(self, path: str, code: str):
