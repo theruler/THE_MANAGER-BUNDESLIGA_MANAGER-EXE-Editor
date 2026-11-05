@@ -185,6 +185,12 @@ class Graphics: # VGA assets, field graphics, sprites, and crowd animation resou
             raise OSError(self.translate("err.gfx_unreadable", path=p or (stem + ".vga")))
         return vga_surface(img, palette or PAL_DEFAULT, transparent0)
 
+    def pic_surface(self, stem): # Whole VGA file of the PIC folder (default palette, opaque) for cutting button pictures out of it; None when missing / unreadable.
+        try:
+            return self._load_pic(stem, False)
+        except OSError:
+            return None
+
     def make_generic_button(self, w, dark=False): # BUTTON_GENERIC at width w: the two end caps stay as they are, the middle is stretched.
         key = (int(w), bool(dark))
         if key not in self._generic:

@@ -16,6 +16,8 @@ from match_config import (AIR_MIN_Z, BALL_GRAVITY, BLOCK_CHANCE, BOX_EXIT_SPEED,
                           TAKER_UNSTICK_K, TAKER_UNSTICK_SECS, TEAM_NAMES, STANDING_BALL_OFFSET, THROW_HOLD_Z, THROW_RELEASE_Z)
 from sprite_data import ACT_SPEC, CELE_SLIDE, SLOWMO_KEYS, STOP_FLIP, action_sids, run_cycle, stand_sid, team_sprite_offset
 
+PUSH_TICKS = 3 # Fast championship simulation only: engine steps the team-mates' push on a player is reused for.
+
 
 # ---- Goalkeeper save model (see PhysicsMixin.keeper_save_chance) ----
 
@@ -566,6 +568,11 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
         s = spd * min(1.0, d / 9.0 + 0.15)
         vx, vv = dx / d * s, dv / d * s
         if not p.ctrl and not unstick:
+            if getattr(self, "champ_headless", False): # Fast championship simulation: the push of the team-mates is recomputed every PUSH_TICKS steps.
+                r = getattr(p, "_push", None)
+                if r is None or not 0 <= self.tick - r[0] < PUSH_TICKS:
+                    r = p._push = (self.tick,) + self.team_push(p)
+                return vx + r[1], vv + r[2]
             for q in self.team_p[p.team]:
                 if q is p or q.state == "out":
                     continue
@@ -575,6 +582,19 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
                     vx += ex / dd * (12.0 - dd) * 2.2
                     vv += ev / dd * (12.0 - dd) * 2.2
         return vx, vv
+
+    def team_push(self, p): # Velocity added to p to keep him away from his team-mates (the loop of desired_velocity, with a cheap distance test).
+        px, pv, rx, rv = p.wx, p.wv, 0.0, 0.0
+        for q in self.team_p[p.team]:
+            if q is p or q.state == "out":
+                continue
+            ex, ev = px - q.wx, pv - q.wv
+            if ex * ex + ev * ev < 144.0:
+                dd = math.hypot(ex, ev)
+                if dd > 0.01:
+                    rx += ex / dd * (12.0 - dd) * 2.2
+                    rv += ev / dd * (12.0 - dd) * 2.2
+        return rx, rv
 
     def step_player(self, p, dt): # Advance one player simulation step including movement and action contacts.
         if p.state == "out":

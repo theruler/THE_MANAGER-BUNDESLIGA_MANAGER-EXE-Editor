@@ -144,8 +144,11 @@ class SingleMatchMixin: # Team / formation / roster selection for the quick matc
         self._put(tr("intro.title"), 56, (232, 236, 255), 26, cx=W // 2)
         self._put(tr("intro.subtitle"), 15, (130, 140, 190), 58, cx=W // 2, w=W - 300)
         back = pygame.Rect(30, 16, 190, 32)
-        self.draw_chip(s, back, tr("intro.back"), False, back.collidepoint(vx, vy), (120, 170, 230), 20)
-        hits.append((back, ("back",)))
+        if self.art("back", 0, 2) is not None: # INDIETRO picture (3.VGA); the old chip when it is missing.
+            self.back_button(s, hits, vx, vy, 30, 8, 2)
+        else:
+            self.draw_chip(s, back, tr("intro.back"), False, back.collidepoint(vx, vy), (120, 170, 230), 20)
+            hits.append((back, ("back",)))
         names_ctl = (tr("intro.team_home"), tr("intro.team_away"))
         for c in (0, 1):
             self._draw_single_team(s, bd, hits, vx, vy, c, names_ctl)

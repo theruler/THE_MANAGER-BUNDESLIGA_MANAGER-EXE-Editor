@@ -11,6 +11,7 @@ import ai_system
 import audio_system
 import camera_system
 import celebration_system
+import championship_system
 import entities
 import fonts
 import formation_system
@@ -34,9 +35,9 @@ import sprite_data
 import stats_system
 import substitution_system
 
-VERSION = "1.5.4"
+VERSION = "1.5.6"
 
-class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_system.StatsMixin, agonism_system.AgonismMixin,
+class Game(intro_system.IntroMixin, championship_system.ChampionshipMixin, single_match_system.SingleMatchMixin, stats_system.StatsMixin, agonism_system.AgonismMixin,
              restart_system.RestartMixin, input_system.InputMixin, match_log_system.MatchLogMixin, replay_system.ReplayMixin,
              substitution_system.SubstitutionMixin, formation_system.FormationMixin, physics_system.PhysicsMixin,
              ai_system.AIMixin, rendering_system.RenderingMixin, camera_system.CameraMixin, celebration_system.CelebrationMixin): # Main match state, rule sequencing, user control, and frame coordination.
@@ -360,6 +361,7 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
     def start_match(self): # Initialize and start a new match (needs 11 numbered players per team).
         if not self.lineup_ready():
             return
+        self.championship_match_started() # A match that is not the championship's drops an interrupted championship match.
         self.ctrl_choice = self.user_team if self.user_team in (0, 1) else None
         self.reset_match()
         self.begin_walkon(self.first_kick)
@@ -389,6 +391,7 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
         self.log_event(i18n.tr("ev.end_first" if self.half == 1 else "ev.end_full", a=self.score[0], b=self.score[1]), show=False)
         if self.half == 2:
             self.save_log("finale")
+            self.championship_match_done() # No-op unless the match belongs to a championship.
         self.audio.play("whistle_end")
         self.mode = "half" if self.half == 1 else "full"
         self.half_t = 0.0
@@ -570,6 +573,7 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
         else:
             self.log_event(i18n.tr("ev.goal", p=sc.label(), team=match_config.TEAM_NAMES[team], a=self.score[0], b=self.score[1]), secs=6, team=team)
         self.last_scorer = sc.name
+        self.championship_goal(sc, own_goal) # Goals of the championship squad.
         b.owner = None
         b.vx *= 0.25
         b.vv *= 0.25
@@ -718,6 +722,8 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
 
     @property
     def speed(self): # Return the current match simulation speed multiplier.
+        if self.replay and getattr(self, "champ_session", False) and getattr(self, "champ_kind", None) == "sim":
+            return match_config.SPEEDS[self._champ_speed_idx(1)] * match_config.SPEED_UNIT # Replay of a goal in the normal championship simulation: always 1x, whatever the match speed.
         base = match_config.SPEEDS[self.speed_idx] * match_config.SPEED_UNIT
         sp = getattr(self, "slowmo_p", None)
         if sp is not None:
@@ -1053,11 +1059,17 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
         self._fr = {}
         self._help_cache = None
 
-    def abort_match(self): # Abort the current match and clean up its transient state.
+    def handle_event(self, ev): # Championship matches first: at full time only ENTER (continue) and S (save) are accepted.
+        if self.championship_event(ev):
+            return None
+        return super().handle_event(ev)
+
+    def abort_match(self, log=True): # Abort the current match and clean up its transient state (log=False: the match was already logged).
         self.confirm_exit = False
         self.slowmo_p = None
         self._gk_dribble_attempted = None
-        self.save_log("interrotta")
+        if log:
+            self.save_log("interrotta")
         self.replay = None
         self.paused = False
         self.paused_gesture = self.paused_traj_data = None
@@ -1071,6 +1083,7 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
         self.options_open = False
         self.menu_page = "quick" # Back to the team selection the match was started from.
         self.mode = "intro"
+        self.championship_match_closed() # A championship match returns to the championship page instead.
 
 
     def speed_top(self): # Index of the fastest preset allowed by the speed limit chosen in OPTIONS.
@@ -1218,6 +1231,7 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
             return
         self.t_all += dt
         self.idle_t += dt
+        self.championship_tick() # A championship simulation is not driven by hand.
         self.audio.focus = game_utils.clamp((self.ball.wx - geometry.L / 2.0) / (geometry.L / 2.0), -1.0, 1.0)
         self.update_clock(dt)
         if self.mode == "play" and self.ball.owner is not None:
@@ -1264,7 +1278,8 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
             self.update_ball(dt)
         self.update_ref(dt)
         self.update_cam(dt)
-        self.rec.append((self.tick, self.snapshot(), (self.cam[0], self.cam[1])))
+        if not self.champ_headless: # The fast championship simulation shows no replay: no frame to record.
+            self.rec.append((self.tick, self.snapshot(), (self.cam[0], self.cam[1])))
         self.tick += 1
         self.audio.update(dt, self.intensity(), self.mode)
         for m in self.msgs:
@@ -1353,7 +1368,7 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
         else:
             r.topleft = pos
         if shadow:
-            self.target.blit(font.render(s, True, (0, 0, 0)), r.move(2, 2))
+            self.target.blit(font.render(s, True, (0, 0, 0)), r.move(3, 3))
         self.target.blit(img, r)
 
     def img_to_screen(self, ix, iy): # Convert an image coordinate into screen coordinates.
@@ -1373,8 +1388,15 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
         rp = self.replay
         ak = 0.0 if rp else self.update_arrow_state()
         split = ak > 0.0
-        self.draw_field(rp["frames"][min(rp["i"], len(rp["frames"]) - 1)][1] if rp else None, split)
-        cx, cy, ox, oy = self.cam_view()
+        hide = self.champ_hide_play() # Championship simulation: the pitch alone (the replays of the goals show the players).
+        if hide:
+            hidden = self.champ_hide_begin()
+        try:
+            self.draw_field(rp["frames"][min(rp["i"], len(rp["frames"]) - 1)][1] if rp else None, split)
+        finally:
+            if hide:
+                self.champ_hide_end(hidden)
+        cx, cy, ox, oy = self.champ_hide_cam() if hide else self.cam_view() # Simulated championship match: the pitch does not scroll.
         self.screen.fill((6, 6, 12))
         vs, z = self.vsurf, self.zoom
         # World layer: normally drawn straight into vs; with sub-pixel scrolling it is one native pixel larger and shifted on blit.
@@ -1386,10 +1408,10 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
             world.blit(self.scale_world(self.sprite_surf, cx, cy, ox, oy), (0, 0))
         if self.debug:
             self.draw_debug(world, cx, cy, z)
-        if not rp:
+        if not rp and not hide:
             self.draw_marker()
             self.draw_sweat(world, cx, cy)
-        if self.paused and not rp:
+        if self.paused and not rp and not hide:
             self.draw_tactics()
         if self.drag and self.cp and not rp:
             x0, y0, x1, y1 = self.drag
@@ -1406,6 +1428,8 @@ class Game(intro_system.IntroMixin, single_match_system.SingleMatchMixin, stats_
             self.text(self.big[0], self.font_l, (255, 255, 255), (self.view_w // 2, self.view_h // 3), True)
         if self.mode in ("half", "full") and not rp:
             self.draw_summary()
+            if self.mode == "full" and self.champ_session:
+                self.draw_championship_footer() # Covers the hints of the summary: in a championship only ENTER and S work.
         if rp:
             self.draw_replay_badge()
         if not rp:

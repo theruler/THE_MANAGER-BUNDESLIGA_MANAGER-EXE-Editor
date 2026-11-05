@@ -2,7 +2,7 @@
 
 Pages (self.menu_page):  "main"   three buttons on PIC\\47.CP
                          "quick"  single match: team / roster selection   -> single_match_system.py
-                         "champ"  championship (placeholder)              -> IntroMixin
+                         "champ"  championship                            -> championship_system.py
 OPTIONS is an overlay flag (self.options_open) opened from the main menu, drawn on PIC\\22.CP; the joypad mapping opens from it.
 
 Everything is drawn on the virtual surface self.su_surf (SU_W x SU_H) and scaled to the window with su_scale();
@@ -19,6 +19,7 @@ from fonts import FONTS
 from i18n import Note, T, tr
 from layout import SU_H, SU_W
 from match_config import SPEED_MAX_CHOICES
+from ui_art import ART_RECTS, ART_SHEET, ART_SHEET_OF, art_size
 
 OPTIONS_FILE = "options.json"
 
@@ -71,14 +72,20 @@ def save_options(path, opts): # Write the options; returns an error text or None
         return str(ex)
     return None
 
-NOTICE_SECS = 3.0 # Duration of the temporary championship notice on the main menu.
 MENU_BTN_W, MENU_BTN_H, MENU_BTN_GAP = 420, 64, 26 # Main-menu buttons.
 OPT_WHITE = (255, 255, 255) # Every font of the OPTIONS page is white (22.CP is a dark-ish marble); only warnings keep their orange.
 OPT_WARN = (255, 170, 110)
 OPT_RULE = (70, 76, 110)
 
 
+def _tr_fb(key, fb): # Text of the language files, or fb while the entry is missing.
+    v = tr(key)
+    return fb if not isinstance(v, str) or not v or key in v else v
+
+
 class IntroMixin: # Main menu + OPTIONS and the click / key dispatch of every intro page.
+    exit_ask = False # The main menu asks "Sei sicuro?" before closing the program.
+    _txt_shadow = False # True while a page wants a shadow under every text (championship).
 
     # ---------- persistent options (DATA/options.json) ----------
     def options_snapshot(self): # Current values of everything saved in options.json.
@@ -117,6 +124,12 @@ class IntroMixin: # Main menu + OPTIONS and the click / key dispatch of every in
             self.menu_page = "quick"
         elif k == "menu_options":
             self.options_open, self.lang_open = True, False
+        elif k == "menu_exit":
+            self.exit_ask = True
+        elif k == "exit_no":
+            self.exit_ask = False
+        elif k == "exit_yes":
+            pygame.event.post(pygame.event.Event(pygame.QUIT)) # The main loop closes the program.
         elif k == "back":
             if self.options_open:
                 self.options_open, self.lang_open = False, False
@@ -164,6 +177,11 @@ class IntroMixin: # Main menu + OPTIONS and the click / key dispatch of every in
             self.single_key(k)
         elif self.menu_page == "champ":
             self.championship_key(k)
+        elif self.exit_ask:
+            if k in (pygame.K_s, pygame.K_y, pygame.K_RETURN, pygame.K_KP_ENTER):
+                pygame.event.post(pygame.event.Event(pygame.QUIT))
+            elif k in (pygame.K_n, pygame.K_ESCAPE):
+                self.exit_ask = False
         else:
             if k == pygame.K_o:
                 self.options_open, self.lang_open = True, False
@@ -172,10 +190,12 @@ class IntroMixin: # Main menu + OPTIONS and the click / key dispatch of every in
             elif k in (pygame.K_p, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                 self.menu_page = "quick"
 
-    def _put(self, txt, px, col, cy, left=None, cx=None, w=None): # Text with the scoreboard font, optionally cut to w pixels.
+    def _put(self, txt, px, col, cy, left=None, cx=None, w=None, shadow=False): # Text with the scoreboard font, optionally cut to w pixels, optionally with a shadow.
         bd = self.board
         if w is not None:
             txt = self.fit_text(txt, px, w)
+        if shadow or self._txt_shadow:
+            bd.put(self.su_surf, bd.font(px).render(txt, True, (0, 0, 0)), left=None if left is None else left + 1, cx=None if cx is None else cx + 1, cy=cy + 1)
         bd.put(self.su_surf, bd.font(px).render(txt, True, col), left=left, cx=cx, cy=cy)
 
     # ---------- drawing ----------
@@ -193,7 +213,8 @@ class IntroMixin: # Main menu + OPTIONS and the click / key dispatch of every in
         elif self.menu_page == "quick":
             self.draw_single_match(s, bd, hits, vx, vy)
         elif self.menu_page == "champ":
-            s.fill((10, 12, 28))
+            bg = "options" # Same picture (22.CP) as the OPTIONS page.
+            s.fill((0, 0, 0, 0))
             self.draw_championship(s, bd, hits, vx, vy)
         else:
             bg = "title"
@@ -201,25 +222,87 @@ class IntroMixin: # Main menu + OPTIONS and the click / key dispatch of every in
             self.draw_main_menu(s, bd, hits, vx, vy)
         self.present_su(bg)
 
-    def draw_main_menu(self, s, bd, hits, vx, vy): # Three buttons: CAMPIONATO / PARTITA VELOCE / OPZIONI.
-        items = (("menu_champ", tr("menu.championship")),
-                 ("menu_quick", tr("menu.quick_match")),
-                 ("menu_options", tr("intro.options")))
-        total = len(items) * MENU_BTN_H + (len(items) - 1) * MENU_BTN_GAP
-        y = SU_H - total - 70
+    def draw_main_menu(self, s, bd, hits, vx, vy): # Four pictures in a row at the bottom (3.VGA), the text under them; USCITA asks "Sei sicuro?" first.
+        W, H = SU_W, SU_H
+        items = (("menu_champ", tr("menu.championship")), ("menu_quick", tr("menu.quick_match")), ("menu_options", tr("intro.options")),
+                 ("menu_exit", _tr_fb("menu.exit", "USCITA")))
+        sc = 4 if W >= 900 else 3
+        bw, bh = art_size("menu_champ")
+        w, h, gap = bw * sc, bh * sc, 7 * sc
+        x = (W - (len(items) * w + (len(items) - 1) * gap)) // 2
+        y = H - 70 - 28 - h
+        msg = self.championship_main_notice() # "PARTITA INTERROTTA" while a championship match waits for RIPRENDI.
+        if msg:
+            self._put(msg, 30, (255, 224, 90), y - 30, cx=W // 2, w=W - 60, shadow=True)
         for tag, label in items:
-            r = pygame.Rect((SU_W - MENU_BTN_W) // 2, y, MENU_BTN_W, MENU_BTN_H)
-            hov = r.collidepoint(vx, vy)
-            panel = pygame.Surface(r.size, pygame.SRCALPHA)
-            pygame.draw.rect(panel, (8, 14, 40, 205 if hov else 160), panel.get_rect(), border_radius=10)
-            s.blit(panel, r)
-            pygame.draw.rect(s, (255, 224, 90) if hov else (190, 215, 245), r, 3, border_radius=10)
-            self._put(label, 32, (255, 255, 255) if hov else (225, 235, 250), r.centery, cx=r.centerx, w=r.w - 24)
-            hits.append((r, (tag,)))
-            y += MENU_BTN_H + MENU_BTN_GAP
-        notice = getattr(self, "menu_notice", None)
-        if notice and time.time() < notice[1]:
-            self._put(notice[0], 20, (255, 224, 90), y - MENU_BTN_GAP + 24, cx=SU_W // 2, w=SU_W - 60)
+            r = pygame.Rect(x, y, w, h)
+            hov = r.collidepoint(vx, vy) and not self.exit_ask
+            img = self.art("menu_exit_sure" if tag == "menu_exit" and self.exit_ask else tag, 0, sc)
+            if img is not None:
+                s.blit(img, r)
+                if hov:
+                    pygame.draw.rect(s, (255, 224, 90), r.inflate(6, 6), 3)
+            else: # No picture: the old panel with the text inside.
+                panel = pygame.Surface(r.size, pygame.SRCALPHA)
+                pygame.draw.rect(panel, (8, 14, 40, 205 if hov else 160), panel.get_rect(), border_radius=10)
+                s.blit(panel, r)
+                pygame.draw.rect(s, (255, 224, 90) if hov else (190, 215, 245), r, 3, border_radius=10)
+            self._put(label, 24, (255, 255, 255) if hov else (225, 235, 250), r.bottom + 18, cx=r.centerx, w=w + gap - 4, shadow=True)
+            if not self.exit_ask:
+                hits.append((r, (tag,)))
+            x += w + gap
+        if self.exit_ask: # Question in the middle of the screen.
+            box = pygame.Rect(W // 2 - 240, H // 2 - 100, 480, 200)
+            panel = pygame.Surface(box.size, pygame.SRCALPHA)
+            pygame.draw.rect(panel, (8, 14, 40, 235), panel.get_rect(), border_radius=12)
+            s.blit(panel, box)
+            pygame.draw.rect(s, (255, 224, 90), box, 3, border_radius=12)
+            self._put(_tr_fb("menu.sure", "Sei sicuro?"), 40, (255, 255, 255), box.y + 62, cx=box.centerx, w=box.w - 30, shadow=True)
+            for j, (tag, lab) in enumerate((("exit_yes", _tr_fb("menu.yes", "SÌ")), ("exit_no", _tr_fb("menu.no", "NO")))):
+                r = pygame.Rect(box.centerx + (-150 if j == 0 else 20), box.y + 118, 130, 46)
+                hov = r.collidepoint(vx, vy)
+                pygame.draw.rect(s, (60, 150, 90) if (hov and j == 0) else (44, 112, 70) if j == 0 else (150, 60, 60) if hov else (112, 44, 44), r, border_radius=8)
+                pygame.draw.rect(s, (230, 235, 245), r, 2, border_radius=8)
+                self._put(lab, 28, (255, 255, 255), r.centery, cx=r.centerx, w=r.w - 12, shadow=True)
+                hits.append((r, (tag,)))
+
+    # ---------- button pictures (3.VGA) ----------
+    def art(self, name, idx=0, scale=1): # Picture `name` (see ui_art.py) scaled by an integer factor, opaque (no alpha); None when its sheet is not available.
+        cache = self.__dict__.setdefault("_art_cache", {})
+        stem = ART_SHEET_OF.get(name, ART_SHEET)
+        if ("sheet", stem) not in cache:
+            cache[("sheet", stem)] = None
+            try: # The VGA file of the PIC folder, decoded by Graphics.pic_surface().
+                fn = getattr(self.gfx, "pic_surface", None)
+                cache[("sheet", stem)] = fn(stem) if fn else None
+            except Exception:
+                cache[("sheet", stem)] = None
+        sheet = cache[("sheet", stem)]
+        if sheet is None or name not in ART_RECTS:
+            return None
+        key = (name, idx, scale)
+        if key not in cache:
+            x1, y1, x2, y2 = ART_RECTS[name][min(idx, len(ART_RECTS[name]) - 1)]
+            try:
+                img = sheet.subsurface(pygame.Rect(x1, y1, x2 - x1 + 1, y2 - y1 + 1)).copy().convert() # convert(): drops the alpha channel.
+                cache[key] = pygame.transform.scale(img, (img.get_width() * scale, img.get_height() * scale)) if scale != 1 else img
+            except (ValueError, pygame.error):
+                cache[key] = None
+        return cache[key]
+
+    def back_button(self, s, hits, vx, vy, x, y, scale=2, fb=None): # INDIETRO: the picture, or the old generic button when 3.VGA is missing.
+        w, h = art_size("back")
+        img = self.art("back", 0, scale)
+        if img is None:
+            r = fb if fb is not None else pygame.Rect(x, y + 8, 190, 32)
+            self.draw_generic_button(s, r, tr("intro.back"), False, r.collidepoint(vx, vy), px=20)
+        else:
+            r = pygame.Rect(x, y, w * scale, h * scale)
+            s.blit(img, r)
+            if r.collidepoint(vx, vy):
+                pygame.draw.rect(s, (255, 224, 90), r.inflate(4, 4), 2)
+        hits.append((r, ("back",)))
+        return r
 
     def _yes_no(self, s, hits, vx, vy, x, y, value, tag, enabled=True): # YES / NO picture pair (33.VGA): the lit one is the current value; disabled = darkened, no click.
         ui = self.gfx.ui
@@ -265,15 +348,13 @@ class IntroMixin: # Main menu + OPTIONS and the click / key dispatch of every in
             pygame.draw.line(s, (0, 0, 0), bg.topleft, bg.topright, 2)
             pygame.draw.line(s, (0, 0, 0), bg.topleft, bg.bottomleft, 2)
     
-        self._put(text, 30, (0, 0, 0), r.centery + 2, cx=r.centerx + 2)
+        self._put(text, 30, (0, 0, 0), r.centery + 3, cx=r.centerx + 3)
         self._put(text, 30, col, r.centery, cx=r.centerx)
 
     def draw_options(self, s, bd, hits, vx, vy): # OPTIONS page (background 22.cp, marble grey -> dark text).
         W = SU_W
         self._put(tr("intro.options_title"), 46, OPT_WHITE, 40, cx=W // 2)
-        back = pygame.Rect(30, 16, 190, 32)
-        self.draw_generic_button(s, back, tr("intro.back"), False, back.collidepoint(vx, vy), px=20)
-        hits.append((back, ("back",)))
+        self.back_button(s, hits, vx, vy, 30, 8, 2)
         pygame.draw.line(s, OPT_RULE, (30, 76), (W - 30, 76), 2)
         x_lab, x_chip, y = 60, 450, 120
         rows = 0
@@ -327,13 +408,3 @@ class IntroMixin: # Main menu + OPTIONS and the click / key dispatch of every in
         if note:
             self._put(note, 15, OPT_WARN if any(n.warn for n in self.notes) else OPT_WHITE, SU_H - 18, cx=W // 2, w=W - 60)
         self.draw_lang_dropdown(s, bd, hits, vx, vy) # Language selector (top right, as before); its pop-up goes in front of the hits.
-
-    # ---------- championship placeholder ----------
-    def championship_open(self): # Called by the CAMPIONATO button.
-        self.menu_notice = (tr("menu.championship_soon"), time.time() + NOTICE_SECS)
-    def championship_click(self, hit, button=1): # Tags of future championship screens. Returns True when handled.
-        return False
-    def championship_key(self, k): # Keyboard of future championship screens.
-        pass
-    def draw_championship(self, s, bd, hits, vx, vy): # Future championship screen.
-        pass

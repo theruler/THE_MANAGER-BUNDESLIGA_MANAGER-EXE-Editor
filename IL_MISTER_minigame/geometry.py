@@ -40,6 +40,13 @@ def _edge_model(pts): # Build an interpolated model of the field edges from cali
     sxy = sum(p[0] * p[1] for p in pts)
     slope = (n * sxy - sx * sy) / (n * sxx - sx * sx)
 
+    if all(abs((p[1] - pts[0][1]) - slope * (p[0] - pts[0][0])) < 1e-9 for p in pts): # Collinear calibration: the model is one straight line.
+        c = pts[0][1] - slope * pts[0][0]
+        def line(y): # Same values as the piecewise model below, in one multiply-add.
+            return c + slope * y
+        line.coef = (c, slope)
+        return line
+
     def f(y): # Interpolate a calibration value along the field-edge model.
         if y <= pts[0][0]:
             return pts[0][1] + slope * (y - pts[0][0])
@@ -86,9 +93,18 @@ def _persp_v(y): # Convert a projected screen row into world-depth coordinates.
     return _PV[i] + (_PV[i + 1] - _PV[i]) * (t - i)
 
 
+_PV_INV = [1.0 / (_PV[i + 1] - _PV[i]) for i in range(_PV_N - 1)] # Reciprocal of each table step (multiplying is cheaper than dividing).
+_PV_LAST = _PV_N - 2
+_bisect_right = bisect.bisect_right
+
+
 def _persp_y(v): # Convert world depth into its projected screen row.
-    i = min(max(bisect.bisect_right(_PV, v) - 1, 0), _PV_N - 2)
-    return _PV_Y0 + (i + (v - _PV[i]) / (_PV[i + 1] - _PV[i])) * _PV_STEP
+    i = _bisect_right(_PV, v) - 1
+    if i < 0:
+        i = 0
+    elif i > _PV_LAST:
+        i = _PV_LAST
+    return _PV_Y0 + (i + (v - _PV[i]) * _PV_INV[i]) * _PV_STEP
 
 
 def persp_to_world(x, y): # Convert projected field coordinates into world coordinates.
@@ -98,10 +114,28 @@ def persp_to_world(x, y): # Convert projected field coordinates into world coord
     return (x - left) / max(20.0, right - left) * _PERSP_WREF, _persp_v(y)
 
 
-def persp_from_world(wx, wv): # Project world coordinates onto the field image.
+def _persp_from_world_generic(wx, wv): # Project world coordinates onto the field image (any edge model).
     y = _persp_y(wv) - PERSP_Y_SHIFT
     left, right = persp_edges(y + PERSP_Y_SHIFT)
     return FIELD_X0 + left + wx / _PERSP_WREF * max(20.0, right - left), y
+
+
+if hasattr(_edge_l, "coef") and hasattr(_edge_r, "coef"):
+    _CL, _SL = _edge_l.coef
+    _CR, _SR = _edge_r.coef
+
+    def persp_from_world(wx, wv): # Project world coordinates onto the field image (straight edges: everything inlined).
+        i = _bisect_right(_PV, wv) - 1
+        if i < 0:
+            i = 0
+        elif i > _PV_LAST:
+            i = _PV_LAST
+        yr = _PV_Y0 + (i + (wv - _PV[i]) * _PV_INV[i]) * _PV_STEP
+        left = _CL + _SL * yr
+        w = _CR + _SR * yr - left
+        return FIELD_X0 + left + wx / _PERSP_WREF * (w if w > 20.0 else 20.0), yr - PERSP_Y_SHIFT
+else:
+    persp_from_world = _persp_from_world_generic
 
 
 w2s = persp_from_world
@@ -170,11 +204,16 @@ def depth_k(v): # Return the perspective scaling factor for a given field depth.
 
 
 def depth_v_k(v, x=None): # Match vertical movement speed to horizontal speed at the same field position.
-    x = L * 0.5 if x is None else clamp(x, 0.0, L)
-    key = (int(round(x * 2.0)), int(round(v * 2.0)))
+    if x is None:
+        x = L * 0.5
+    elif x < 0.0:
+        x = 0.0
+    elif x > L:
+        x = L
+    key = int(x * 2.0 + 0.5) * 8192 + int(v * 2.0 + 2048.5) # Quantised to half a unit; one integer instead of a tuple.
     k = _DVK.get(key)
     if k is None:
-        x0, v0 = key[0] / 2.0, key[1] / 2.0
+        x0, v0 = (key >> 13) / 2.0, ((key & 8191) - 2048) / 2.0
         left_x, left_y = persp_from_world(x0 - 0.5, v0)
         right_x, right_y = persp_from_world(x0 + 0.5, v0)
         top_x, top_y = persp_from_world(x0, v0 - 0.5)

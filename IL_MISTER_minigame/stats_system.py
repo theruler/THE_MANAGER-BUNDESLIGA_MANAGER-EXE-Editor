@@ -20,6 +20,8 @@ from match_config import (AERIAL_ERR_RANGE, BLOCK_FATIGUE_K, DEFAULT_STATS, ERR_
                           SHOT_ERR_MIN, SKILL_RANGE, SPEED_RANGE, STAT_MAX, STAT_MIN, TOUCH_FATIGUE_K,
                           TOUCH_RATE, TURN_RATE_FULL, TURN_RATE_MIN)
 
+SPEED_MOD_TICKS = 6 # Fast championship simulation only: engine steps a player's speed multiplier is reused for.
+
 ROLE_COL = {"GK": (90, 150, 255), "DEF": (90, 210, 120), "MID": (240, 200, 80), "FWD": (240, 90, 90)} # Shared colours for tactical roles in roster and match panels.
 
 
@@ -84,6 +86,16 @@ class StatsMixin: # Effects of Fitness / Skill / Form on the simulation.
         return fn(p) if fn else 0.0
 
     def speed_mod(self, p): # Running speed multiplier.
+        if getattr(self, "champ_headless", False): # Fast championship simulation: fatigue and agonism change slowly, the value is kept for SPEED_MOD_TICKS steps.
+            c = getattr(p, "_smc", None)
+            if c is not None and 0 <= self.tick - c[0] < SPEED_MOD_TICKS and c[2] == p.sq and c[3] == self.mode:
+                return c[1]
+            v = self._speed_mod(p)
+            p._smc = (self.tick, v, p.sq, self.mode)
+            return v
+        return self._speed_mod(p)
+
+    def _speed_mod(self, p): # The running speed multiplier itself.
         return lerp(SPEED_RANGE, norm(self.pstats(p)[0])) * (1.0 - self.fatigue(p))\
             * (self.agon_pace_k(p) * self.agon_exhaust_k(p) if hasattr(self, "agon_pace_k") else 1.0) # Agonism pace and exhaustion (agonism_system).
 

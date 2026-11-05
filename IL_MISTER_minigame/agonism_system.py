@@ -31,6 +31,9 @@ from match_config import (AGON_AI_RATE, AGON_AI_SWING, AGON_CHASE_BONUS, AGON_DE
                           FAT_SWEAT_OFF, FAT_SWEAT_ON, FAT_WALK_K, FAT_WORK_REF)
 
 
+FAT_SKIP = 6 # Fast championship simulation only: engine steps per fatigue update.
+FAST_FAT_RATE = 0.30 # Fast championship simulation only: fatigue (0..1) an average player (Fitness / Form resistance 1.0) piles up over 90 minutes of play, whatever the agonism bars say.
+FAST_FAT_VAR = (0.6, 1.5) # Fast championship simulation only: each player draws his own multiplier at the start of the match (some are tired at the end, most are not).
 SWEAT_HEAD_H = 1.0 # Field pixels from the feet row up to the top of the head.
 SWEAT_SPREAD = 2.0 # Sideways reach of the spray, in field pixels.
 SWEAT_COL = (150, 215, 255)
@@ -94,6 +97,7 @@ class AgonismMixin: # Per-team agonism level: state, behaviour multipliers, slid
         if getattr(self, "_fat_key", None) is not self.agon_lv:
             self._fat_key = self.agon_lv
             self.agon_fat = [{}, {}]
+            self._fast_k = {}
             self._fat_half = False
         return self.agon_fat
 
@@ -138,8 +142,17 @@ class AgonismMixin: # Per-team agonism level: state, behaviour multipliers, slid
         self._fat_half = False
         if self.mode == "full":
             return
+        if self.mode == "play" and getattr(self, "champ_headless", False): # Fast championship simulation: integrate every FAT_SKIP steps with the time of all of them.
+            self._fat_acc = getattr(self, "_fat_acc", 0.0) + dt
+            self._fat_n = getattr(self, "_fat_n", 0) + 1
+            if self._fat_n % FAT_SKIP:
+                return
+            dt, self._fat_acc = self._fat_acc, 0.0
         mdt = dt / max(1.0, self.half_secs) * 45.0 # Match minutes elapsed (works with any half length / simulation speed).
         playing = self.mode == "play"
+        if getattr(self, "champ_headless", False): # Fast championship simulation: its own fatigue model, independent of the agonism bars.
+            self._fast_fatigue(fat, mdt)
+            return
         for team in (0, 1):
             e = 2.0 * self.agon(team) - 1.0
             up = max(0.0, e - FAT_DEAD) / (1.0 - FAT_DEAD) # 0..1 above 50 %.
@@ -161,6 +174,28 @@ class AgonismMixin: # Per-team agonism level: state, behaviour multipliers, slid
                 elif down > 0.0:
                     f -= FAT_RATE_DOWN * down * (1.0 - 0.4 * min(work, 1.0)) / resist * mdt
                 d[sq] = clamp(f, 0.0, 1.0)
+            for sq in list(d): # Bench: always resting.
+                if sq not in on:
+                    d[sq] = max(0.0, d[sq] - FAT_RATE_DOWN * FAT_BENCH_K * mdt)
+
+    def _fast_fatigue(self, fat, mdt): # Fast simulation: every player on the pitch tires at a steady, personal rate (Fitness / Form resist it); the bench recovers.
+        kd = self.__dict__.setdefault("_fast_k", {})
+        running = self.mode in ("play", "restart", "outball")
+        for team in (0, 1):
+            d, on = fat[team], set()
+            for p in self.team_p[team]:
+                if p.state in FAT_OFF_STATES or p.red:
+                    continue
+                sq = getattr(p, "sq", -1)
+                on.add(sq)
+                if not running:
+                    continue
+                k = kd.get((team, sq))
+                if k is None:
+                    k = kd[(team, sq)] = random.uniform(FAST_FAT_VAR[0], FAST_FAT_VAR[1])
+                st = self.pstats(p)
+                resist = lerp(FAT_FITNESS_RANGE, norm(st[0])) * lerp(FAT_FORM_RANGE, norm(st[2]))
+                d[sq] = clamp(d.get(sq, 0.0) + FAST_FAT_RATE * k * resist * (FAT_GK_WORK if p.role == "GK" else 1.0) * mdt / 90.0, 0.0, 1.0)
             for sq in list(d): # Bench: always resting.
                 if sq not in on:
                     d[sq] = max(0.0, d[sq] - FAT_RATE_DOWN * FAT_BENCH_K * mdt)
