@@ -6,8 +6,9 @@ BMP_V2_EXTENDED = {
     "profile_name": "BUNDESLIGA MANAGER PROFESSIONAL",
     "ds_start": 0x537E0,
     "base_const": bytes.fromhex("B34C"),
-    "pool": (0x5ED70, 0x637B9),
+    "pool": (0x5ED40, 0x637DD),
     "pool_fill": POOL_FILL,
+    "extra_pools": ((0x5DD40, 0x5E601, POOL_FILL),),
     "min_file_size": 0x637DF,
     "header_minalloc": 0x0381,
     "header_ss": 0x5CD8,
@@ -72,15 +73,21 @@ class ExtendedLayout:
         self.profile_name = descriptor["profile_name"]
         self.pool_start, self.pool_end = descriptor["pool"]
         self.fill = descriptor["pool_fill"]
+        self.extra_pools = tuple(descriptor.get("extra_pools", ()))
+        self.pool_regions = ((self.pool_start, self.pool_end, self.fill),*self.extra_pools,)
+        self.allocation_pool_regions = (*self.extra_pools,(self.pool_start, self.pool_end, self.fill),)
         self.ptr_range_home = dict(descriptor["ptr_range_home"])
         self.newspaper_sources = tuple(descriptor["newspaper_sources"])
 
     @property
     def pool_size(self):
-        return self.pool_end - self.pool_start
+        return sum(end - start for start, end, _ in self.pool_regions)
 
     def in_pool(self, address):
-        return self.pool_start <= address < self.pool_end
+        return any(
+            start <= address < end
+            for start, end, _fill in self.pool_regions
+        )
 
     def ptr_range_index(self, source):
         for index, (start, end) in enumerate(self.profile.get("ptr_ranges", ())):
@@ -173,10 +180,27 @@ def detect(data, profile):
             continue
         if _read_u16(data, 0x0E) != descriptor["header_ss"]:
             continue
-        pool_start, pool_end = descriptor["pool"]
-        if pool_end > len(data):
+        pools = (
+            (descriptor["pool"][0], descriptor["pool"][1], descriptor["pool_fill"]),
+            *descriptor.get("extra_pools", ()),
+        )
+
+        if any(
+            start < 0 or end <= start or end > len(data)
+            or not 0 <= fill <= 0xFF
+            for start, end, fill in pools
+        ):
             continue
-        return ExtendedLayout(descriptor, profile)
+
+        for index, (start, end, _fill) in enumerate(pools):
+            for other_start, other_end, _other_fill in pools[index + 1:]:
+                if start < other_end and other_start < end:
+                    break
+            else:
+                continue
+            break
+        else:
+            return ExtendedLayout(descriptor, profile)
     return None
 
 
@@ -205,11 +229,21 @@ def convert_to_extended(data, profile):
         raise ExtendedLayoutError("This EXE is not convertible to extended layout")
 
     result = bytearray(data)
-    pool_start, pool_end = descriptor["pool"]
-    needed = descriptor["min_file_size"]
+    pools = (
+        (descriptor["pool"][0], descriptor["pool"][1], descriptor["pool_fill"]),
+        *descriptor.get("extra_pools", ()),
+    )
+
+    needed = max(
+        descriptor["min_file_size"],
+        *(end for _start, end, _fill in pools),
+    )
+
     if len(result) < needed:
         result.extend(b"\x00" * (needed - len(result)))
-    result[pool_start:pool_end] = bytes([descriptor["pool_fill"]]) * (pool_end - pool_start)
+
+    for start, end, fill in pools:
+        result[start:end] = bytes([fill]) * (end - start)
     _write_u16(result, 0x0A, descriptor["header_minalloc"])
     _write_u16(result, 0x0E, descriptor["header_ss"])
     total_size = len(result)

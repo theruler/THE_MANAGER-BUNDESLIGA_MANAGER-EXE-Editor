@@ -464,6 +464,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.current_range_label.pack(side=tk.LEFT)
         self.space_stats_label = ttk.Label(info_frame, text="", font=("Segoe UI", 9, "italic"), foreground="#2980B9")
         self.space_stats_label.pack(side=tk.RIGHT)
+        self.pool_free_label = ttk.Label(edit_frame,text="", font=("Segoe UI", 9), foreground="#566573", anchor=tk.E, justify=tk.RIGHT,)
+        self.pool_free_label.pack(anchor=tk.W, fill=tk.X, pady=(3, 0))
         ctrl_row = ttk.Frame(edit_frame)
         ctrl_row.pack(fill=tk.X, pady=(10, 0))
         self.apply_edit_button = ttk.Button(ctrl_row, command=self.apply_edit)
@@ -1479,6 +1481,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             return False
 
         self._commit_text_transaction(work_data, work_entries, validation)
+        self.update_extended_pool_free_label()
         self.refresh_table(force=True, refresh_active_fields=True)
         self._update_save_state()
         return True
@@ -1632,6 +1635,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             return
 
         self._commit_text_transaction(work_data, work_entries, validation)
+        self.update_extended_pool_free_label()
         self.refresh_table(force=True, refresh_active_fields=True)
 
         summary = self.tr("dlg.translate_all.summary", translated=stats["translated"], unchanged=stats["unchanged"], blank=stats["blank"])
@@ -1702,6 +1706,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
     def _commit_import(self, staged):
         self._commit_text_transaction(*staged)
+        self.update_extended_pool_free_label()
         self.translation_pending = False
         self.refresh_table(force=True, refresh_active_fields=True)
         self._update_save_state()
@@ -2110,6 +2115,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.space_stats_label.config(text="")
         self.translate_status_label.config(text="")
         self.current_range_label.config(text="")
+        self.pool_free_label.config(text="")
         self._set_profile("header.profile_none")
         self.filename_label.config(text="")
         self._set_status("header.no_file")
@@ -2194,6 +2200,78 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._cancel_free_space_update()
         self.root.destroy()
 
+    def update_extended_pool_free_label(self):
+        label = getattr(self, "pool_free_label", None)
+        if label is None:
+            return
+        if not self.profile or not self.exe_data:
+            label.config(text="")
+            return
+        data = self.exe_data
+        string_spans = []
+        for entry in self.entries:
+            address = entry.get("str_addr")
+            if not isinstance(address, int) or not 0 <= address < len(data):
+                continue
+            nul = data.find(b"\x00", address)
+            string_end = nul + 1 if nul >= 0 else len(data)
+            string_spans.append((address, string_end))
+    
+        def count_free(start, end, fill):
+            if start < 0 or end <= start or start >= len(data):
+                return 0, 0
+            end = min(end, len(data))
+            capacity = end - start
+            occupied = bytearray(capacity)
+            for str_start, str_end in string_spans:
+                lo = max(str_start, start)
+                hi = min(str_end, end)
+                if lo < hi:
+                    occupied[lo - start:hi - start] = b"\x01" * (hi - lo)
+            raw = data[start:end]
+            free = sum(
+                1 for i, value in enumerate(raw)
+                if not occupied[i] and value == fill
+            )
+            return free, capacity
+        standard_stats = [
+            count_free(start, end, 0x00)
+            for start, end in self.profile.get("valid_ranges", ())
+        ]
+        standard_free = sum(free for free, _ in standard_stats)
+        standard_capacity = sum(capacity for _, capacity in standard_stats)
+        extended_stats = []
+        try:
+            extended = extended_layout.detect(data, self.profile)
+        except Exception:
+            extended = None
+        if extended is not None:
+            extended_stats = [
+                count_free(start, end, fill)
+                for start, end, fill in extended.pool_regions
+            ]
+        main_free = extended_stats[0][0] if extended_stats else 0
+        main_capacity = extended_stats[0][1] if extended_stats else 0
+        extra_free = sum(free for free, _ in extended_stats[1:])
+        extra_capacity = sum(capacity for _, capacity in extended_stats[1:])
+        total_free = standard_free + main_free + extra_free
+        total_capacity = standard_capacity + main_capacity + extra_capacity
+        fmt = lambda value: f"{value:,}".replace(",", ".")
+        details = (
+            f"STANDARD: {fmt(standard_free)} / {fmt(standard_capacity)}"
+        )
+        if extended_stats:
+            details += (
+                f"    EXTRA: {fmt(extra_free)} / {fmt(extra_capacity)}"
+                f"    MAIN: {fmt(main_free)} / {fmt(main_capacity)}"
+            )
+        label.config(
+            text=(
+                f"FREE SPACE: {fmt(total_free)} / "
+                f"{fmt(total_capacity)} byte    ({details})"
+            )
+        )
+
     def _find_gaps(self, entries, relocation_sites):
         try:
             return find_unknown_gaps(self.exe_data, self.profile, entries, relocation_sites)
@@ -2203,7 +2281,9 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
     def _zero_fill_gaps(self, gaps):
         for g in gaps:
             start, end = g["gap_start"], g["gap_end"]
-            self.exe_data[start:end] = b"\x00" * (end - start)
+            fill = g.get("fill", 0)
+            self.exe_data[start:end] = bytes([fill]) * (end - start)
+        self.update_extended_pool_free_label()
 
     @staticmethod
     def _find_mana_file(directory):
@@ -2443,6 +2523,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._try_rebuild_baseline_filter_index()
         self.refresh_table(force=True)
         self.update_free_space_label()
+        self.update_extended_pool_free_label()
 
         font_loaded = self.font_editor.load_from_raw(self.exe_data, detected)
 
