@@ -22,7 +22,6 @@ import i18n
 import input_system
 import intro_system
 import joystick
-import layout
 import match_config
 import match_log_system
 import physics_system
@@ -71,7 +70,7 @@ class Game(intro_system.IntroMixin, championship_system.ChampionshipMixin, singl
         self.help_page = 0
         self._help_paged = False
         self.vsurf = None
-        self.su_surf = pygame.Surface((layout.SU_W, layout.SU_H), pygame.SRCALPHA) # Transparent where a menu picture must show through.
+        self.su_surf = pygame.Surface((graphics_system.SU_W, graphics_system.SU_H), pygame.SRCALPHA) # Transparent where a menu picture must show through.
         self.su_scroll, self.su_active, self.su_hits = [0, 0], 0, []
         self.joy = joystick.JoyPad(getattr(args, "joy_dirs", []), getattr(args, "joy_write_dir", None))
         self.joy_img_path = getattr(args, "joy_img", None)
@@ -1062,6 +1061,8 @@ class Game(intro_system.IntroMixin, championship_system.ChampionshipMixin, singl
     def handle_event(self, ev): # Championship matches first: at full time only ENTER (continue) and S (save) are accepted.
         if self.championship_event(ev):
             return None
+        if self.mode == "intro" and not self.joymap_open and ev.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP) and getattr(ev, "button", 0) == 1:
+            return self.intro_mouse(ev) # Buttons of the intro pages act when the mouse button is RELEASED over them.
         return super().handle_event(ev)
 
     def abort_match(self, log=True): # Abort the current match and clean up its transient state (log=False: the match was already logged).
@@ -1155,8 +1156,8 @@ class Game(intro_system.IntroMixin, championship_system.ChampionshipMixin, singl
                 return
 
     def su_scale(self): # Calculate the scale factor for the substitution interface.
-        sc = min(self.W / float(layout.SU_W), self.H / float(layout.SU_H))
-        return sc, (self.W - layout.SU_W * sc) / 2.0, (self.H - layout.SU_H * sc) / 2.0
+        sc = min(self.W / float(graphics_system.SU_W), self.H / float(graphics_system.SU_H))
+        return sc, (self.W - graphics_system.SU_W * sc) / 2.0, (self.H - graphics_system.SU_H * sc) / 2.0
 
     def su_to_virtual(self, pos): # Convert screen coordinates to substitution-panel coordinates.
         sc, ox, oy = self.su_scale()
@@ -1653,7 +1654,7 @@ def main(): # Parse launch options, load resources, initialize the game, and run
         resources.fatal(miss_fon, [d for d in asset_dirs if d])
     pygame.display.set_caption(f"{i18n.tr('app.caption')} v{VERSION}")
     args.zoom = args.zoom or (3 if args.noscroll else 5)
-    d = layout.compute_layout(args.zoom, not args.noscroll)
+    d = graphics_system.compute_layout(args.zoom, not args.noscroll)
     try:
         screen = pygame.display.set_mode((int(d["W"]), int(d["H"])), pygame.RESIZABLE)
     except pygame.error:

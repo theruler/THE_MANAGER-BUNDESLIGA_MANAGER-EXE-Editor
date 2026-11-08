@@ -2,7 +2,7 @@ import pygame
 
 from game_utils import clamp
 from geometry import SCROLL_MAX_X, SCROLL_MAX_Y, w2s, WIN_H, WIN_W, Y_OFFSET
-from layout import compute_layout
+from graphics_system import compute_layout
 
 
 SMOOTH_SCROLL = True # Sub-pixel scrolling in live play (the replay always uses the original pixel-snapped camera).

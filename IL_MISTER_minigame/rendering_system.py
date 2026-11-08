@@ -1,5 +1,4 @@
 import math
-import os
 import time
 
 import pygame
@@ -11,17 +10,15 @@ from geometry import (
     BAR_HI, BOX_D, BOX_V0, BOX_V1, FIELD_ROW0, GA_D, GA_V0, GA_V1, GOAL_D, GOAL_H, GOAL_NET_H, ground_to_img,
     HALF_MOUTH, L, PITCH_W, POST_T, V_BOT, V_GC, V_TOP, Y_OFFSET,
 )
-from graphics_system import CELL_H, GOAL_Y1
-from joystick import JOY_ACTIONS, JOY_HOTSPOTS, JOY_IMG
+from graphics_system import CELL_H, GOAL_Y1, HUD_H
 from i18n import ROLE_LETTER, ROLE_TAG, T, tr
-from layout import HUD_H, SU_H, SU_W
 from match_config import (FLAG_R, KEEPER_CATCH_HEIGHT, KEEPER_CATCH_RADIUS, PLAYER_CATCH_RADIUS, REACH_FIRST,
                            ROLE_POOLS, TEAM_COL, TEAM_NAMES)
 from sprite_data import BALL_ROT
 from stats_system import ROLE_COL, stat_color
 
 
-class RenderingMixin: # Rendering of the pitch, HUD, menus, debug overlays, and help screens.
+class RenderingMixin: # Shared rendering of the pitch, HUD, overlays, and reusable UI components.
     def draw_shot_preview_data(self, data): # Draw a precomputed shot or pass trajectory preview.
         if not data or not data.get("points"):
             return
@@ -541,152 +538,8 @@ class RenderingMixin: # Rendering of the pitch, HUD, menus, debug overlays, and 
         font = self.board.font(px)
         shadow = font.render(txt, True, (0, 0, 0))
         t = font.render(txt, True, (192, 112, 32) if active else (255, 255, 255))
-        self.board.put(s, shadow, cx=r.centerx + 1, cy=r.centery + 1)
+        self.board.put(s, shadow, cx=r.centerx + 2, cy=r.centery + 2)
         self.board.put(s, t, cx=r.centerx, cy=r.centery)
-
-    def present_su(self, bg=None): # Show the virtual menu surface on the window; with bg ("title" / "options") the menu picture goes underneath, whole and pixel-exact, and su_surf must be transparent where it should show through.
-        if bg:
-            self.screen.fill((0, 0, 0))
-            img = self.gfx.menu_background(bg, (self.W, self.H))
-            if img is not None:
-                self.screen.blit(img, ((self.W - img.get_width()) // 2, (self.H - img.get_height()) // 2))
-        sc, ox, oy = self.su_scale()
-        self.screen.blit(pygame.transform.smoothscale(self.su_surf, (int(SU_W * sc), int(SU_H * sc))), (int(ox), int(oy)))
-
-    def draw_joymap(self): # Draw the joystick-mapping and control-assignment screen.
-        s, bd, j = self.su_surf, self.board, self.joy
-        s.fill((0, 0, 0, 0)) # Transparent: PIC\\22.CP is drawn under it by present_su().
-        hits = self.su_hits = []
-        vx, vy = self.su_to_virtual(pygame.mouse.get_pos())
-        W = SU_W
-        bd.put(s, bd.font(46).render(tr("intro.joymap"), True, (255, 255, 255)), cx=W // 2, cy=26)
-        pads = j.names()
-        st = ", ".join(pads) if pads else tr("joy.none")
-        bd.put(s, bd.font(26).render(self.fit_text(st, 16, W - 40), True, (255, 255, 255)), cx=W // 2, cy=58)
-        dt = 1.0 / 60.0
-        self.jm_flash = {k: v - dt for k, v in self.jm_flash.items() if v - dt > 0}
-        flash_ctrl = {j.control_of(t) for t in self.jm_flash}
-        focus = None
-        y = 80
-        for act, _k, _u, label in JOY_ACTIONS:
-            r = pygame.Rect(20, y, 410, 24)
-            toks = j.cfg["buttons"].get(act, [])
-            hov = r.collidepoint(vx, vy)
-            waiting = self.jm_wait == act
-            if waiting or (hov and not self.jm_wait):
-                focus = act
-            col = (96, 82, 20) if waiting else ((36, 44, 92) if hov else (22, 26, 56))
-            pygame.draw.rect(s, col, r, border_radius=4)
-            if j.is_held(act):
-                pygame.draw.rect(s, (90, 220, 120), r, 2, border_radius=4)
-            bd.put(s, bd.font(16).render(tr("joy.act." + act), True, (255, 236, 150) if waiting else (255, 255, 255)), left=r.left + 8, cy=r.centery)
-            txt = tr("joy.press") if waiting else (", ".join(j.token_label(t) for t in toks) or "-")
-            bd.put(s, bd.font(16).render(self.fit_text(txt, 16, 150), True, (255, 224, 90) if waiting else (255, 255, 255)), cx=r.right - 80, cy=r.centery)
-            hits.append((r, ("act", act)))
-            y += 26
-        bx, by0, bw, bh = 48, 0, 945, 800
-        sc = min(560.0 / bw, 500.0 / bh)
-        ox, oy = 450, 92
-        if self.jm_img is None and self.joy_img_path:
-            try:
-                im = pygame.image.load(self.joy_img_path).convert_alpha()
-                self.jm_img = pygame.transform.smoothscale(im.subsurface(pygame.Rect(bx, by0, bw, bh)).copy(), (int(bw * sc), int(bh * sc)))
-            except (pygame.error, ValueError, OSError):
-                self.jm_img = False
-        if self.jm_img:
-            pygame.draw.rect(s, (22, 26, 56), (ox - 6, oy - 6, self.jm_img.get_width() + 12, self.jm_img.get_height() + 12), border_radius=8)
-            s.blit(self.jm_img, (ox, oy))
-        else:
-            bd.put(s, bd.font(18).render(tr("joy.img_missing", name=JOY_IMG), True, (255, 170, 110)), cx=ox + 280, cy=oy + 200)
-        sel_ctrl = {j.control_of(t) for t in j.cfg["buttons"].get(focus, [])} if focus else set()
-        bound = {j.control_of(t) for toks in j.cfg["buttons"].values() for t in toks}
-        self.jm_spots = {}
-        drag = self.jm_drag
-        tgt = self.jm_near(drag["pos"][0], drag["pos"][1], skip=drag["ctrl"], rad=self.JM_SNAP) if drag else None
-        chip = {"triangle": "Tri", "circle": "Cer", "cross": "Cro", "square": "Qua", "select": "Sel", "start": "Sta"}
-        for name, (hx, hy) in JOY_HOTSPOTS.items():
-            if name in ("lstick", "rstick"):
-                continue
-            cx, cy = int(ox + (hx - bx) * sc), int(oy + (hy - by0) * sc)
-            self.jm_spots[name] = (cx, cy)
-            if name in self.JM_DRAGGABLE:
-                lab = chip.get(name, name.upper())
-                moving = drag is not None and drag["ctrl"] == name
-                if name in flash_ctrl:
-                    pygame.draw.circle(s, (90, 255, 140), (cx, cy), 16, 0)
-                elif name == tgt:
-                    pygame.draw.circle(s, (255, 215, 0), (cx, cy), 19, 3)
-                elif name in sel_ctrl:
-                    pygame.draw.circle(s, (255, 215, 0), (cx, cy), 16, 3)
-                if not moving:
-                    pygame.draw.circle(s, (24, 34, 80), (cx, cy), 11, 0)
-                    pygame.draw.circle(s, (120, 150, 230), (cx, cy), 11, 1)
-                    bd.put(s, bd.font(11).render(lab, True, (230, 236, 255)), cx=cx, cy=cy)
-            else:
-                if name in flash_ctrl:
-                    pygame.draw.circle(s, (90, 255, 140), (cx, cy), 15, 0)
-                elif name in sel_ctrl:
-                    pygame.draw.circle(s, (255, 215, 0), (cx, cy), 15, 3)
-                elif name in bound:
-                    pygame.draw.circle(s, (80, 140, 255), (cx, cy), 4, 0)
-        if drag:
-            dxp, dyp = int(drag["pos"][0]), int(drag["pos"][1])
-            pygame.draw.circle(s, (255, 215, 0), (dxp, dyp), 14, 0)
-            bd.put(s, bd.font(12).render(chip.get(drag["ctrl"], drag["ctrl"].upper()), True, (20, 20, 20)), cx=dxp, cy=dyp)
-        for name, lab, dx_ in (("lstick", tr("joy.lstick"), 0), ("rstick", tr("joy.rstick"), 0)):
-            hx, hy = JOY_HOTSPOTS[name]
-            cx, cy = int(ox + (hx - bx) * sc), int(oy + (hy - by0) * sc)
-            bd.put(s, bd.font(14).render(lab, True, (80, 84, 120)), cx=cx, cy=int(oy + (712 - by0) * sc))
-        if self.jm_wait:
-            msg = tr("joy.wait") + tr("joy.act." + self.jm_wait) + tr("joy.cancel_hint")
-            colr = (255, 255, 255)
-        else:
-            msg = tr("joy.hint")
-            colr = (255, 255, 255)
-        for i, line in enumerate(self._wrap(msg, bd.font(16), 560)):
-            bd.put(s, bd.font(16).render(line, True, colr), cx=ox + 280, cy=oy + int(bh * sc) + 28 + i * 20)
-        for rect, lab, tag in ((pygame.Rect(690, 660, 140, 34), tr("joy.reset"), ("reset",)),
-                               (pygame.Rect(850, 660, 140, 34), tr("joy.close"), ("close",))):
-            self.draw_chip(s, rect, lab, False, rect.collidepoint(vx, vy), (120, 170, 230), 18, fg=(255, 255, 255))
-            hits.append((rect, tag))
-        info = "File: " + os.path.abspath(j.write_path)
-        if j.error:
-            info += "   !  " + j.error
-        bd.put(s, bd.font(13).render(self.fit_text(info, 13, 640), True, (255, 170, 110) if j.error else (255, 255, 255)), left=450, cy=700)
-        self.present_su("options")
-
-    def draw_lang_dropdown(self, s, bd, hits, vx, vy): # Draw the language selection dropdown.
-        if not self.langs:
-            return
-        cur = T.current_language()
-        names = dict(self.langs)
-        btn = pygame.Rect(SU_W - 30 - 160, 12, 160, 32)
-        lab = bd.font(16).render(tr("intro.language"), True, (255, 255, 255))
-        bd.put(s, lab, left=btn.left - lab.get_width() - 8, cy=btn.centery)
-        s.blit(self.gfx.make_generic_button(btn.w), btn)
-        if self.lang_open or btn.collidepoint(vx, vy):
-            pygame.draw.rect(s, (255, 224, 90), btn.inflate(4, 4), 2)
-        shown = self.fit_text(names.get(cur, cur.upper()), 18, btn.w - 36)
-        bd.put(s, bd.font(18).render(shown, True, (255, 255, 255)), left=btn.left + 8, cy=btn.centery)
-        ax, ay = btn.right - 15, btn.centery
-        arrow = [(ax - 5, ay + 3), (ax + 5, ay + 3), (ax, ay - 3)] if self.lang_open else [(ax - 5, ay - 3), (ax + 5, ay - 3), (ax, ay + 3)]
-        pygame.draw.polygon(s, (255, 255, 255), arrow)
-        hits.insert(0, (btn, ("lang_toggle",)))
-        if not self.lang_open:
-            return
-        pr = pygame.Rect(btn.left, btn.bottom + 2, btn.w, 6 + len(self.langs) * 24)
-        pygame.draw.rect(s, (14, 18, 44), pr, border_radius=6)
-        pygame.draw.rect(s, (255, 224, 90), pr, 2, border_radius=6)
-        pops = []
-        for i, (code, name) in enumerate(self.langs):
-            cr = pygame.Rect(pr.left + 3, pr.top + 3 + i * 24, pr.w - 6, 22)
-            if code == cur:
-                pygame.draw.rect(s, (46, 56, 112), cr, border_radius=3)
-            elif cr.collidepoint(vx, vy):
-                pygame.draw.rect(s, (36, 44, 92), cr, border_radius=3)
-            bd.put(s, bd.font(18).render(self.fit_text(name, 18, cr.w - 12), True, (255, 255, 255)), left=cr.left + 6, cy=cr.centery)
-            pops.append((cr, ("lang", code)))
-        hits[0:0] = pops
 
     def draw_summary(self): # Draw the end-of-match summary and statistics.
         W, _H = self.overlay(150)

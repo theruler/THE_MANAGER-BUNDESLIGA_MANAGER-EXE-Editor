@@ -36,8 +36,8 @@ ROSTER = 20 # Players per team (as in the roster of the single match).
 BENCH = 7 # Substitutes named for a match: the best available players after the starting eleven.
 YELLOW_BAN = 5 # Yellow cards that cost one match.
 FAT_MATCH, FAT_REST, FAT_PLAYED = 45, 25, 10 # Fatigue (0-100): gained by a full match, lost after a match missed / played.
-FAT_FAST_GAIN, FAT_FAST_RAND = 20, (0.5, 1.5) # SIMULA VELOCE / SUBITO: fatigue gained by a full match (random share of it, fitter players gain less)...
-FAT_FAST_PLAYED, FAT_FAST_REST = 0.30, 0.55 # ...and the share of the fatigue lost after a match played / missed (bench, injured, suspended): rest pays off.
+FAT_FAST_GAIN, FAT_FAST_RAND = 36, (0.5, 1.5) # SIMULA VELOCE / SUBITO: fatigue gained by a full match (random share of it, fitter players gain less)...
+FAT_FAST_PLAYED, FAT_FAST_REST = 0.25, 0.50 # ...and the share of the fatigue lost after a match played / missed (bench, injured, suspended): rest pays off.
 FAT_COND = 0.30 # Fatigue 100 takes this share of the top value off the player's Condition.
 INJ_BASE, INJ_FAT = 0.008, 0.04 # Chance of an injury per match played: base + fatigue term (engine injuries are added to it).
 FORM_CAP, FORM_GOAL = 15, 2 # The Form of a player moves by at most FORM_CAP (in 1/100 of the top value); a goal is worth FORM_GOAL.
@@ -226,6 +226,7 @@ class Squad:
 class Championship:
     def __init__(self, divisions, pool, user, season=1, double=True, results=None, squad=None):
         self.squad = squad or Squad() # The user's team: formation, line-up and player records.
+        self.manager, self.face = "", 0 # Name and face (index in the faces of 0.VGA, 0a.VGA ...) of the user's manager.
         self.divisions = [list(d) for d in divisions]
         self.pool, self.user, self.season, self.double = list(pool), user, int(season), bool(double)
         if not any(user in d for d in self.divisions):
@@ -355,7 +356,7 @@ class Championship:
             fx = [[[h, a] + (sc if sc is not None else [None, None]) for (h, a), sc in zip(rd, res)] for rd, res in zip(self.rounds[d], self.results[d])]
             divs.append(dict(name=DIV_NAMES[d], teams=[team(i) for i in ids], fixtures=fx)) # fixture = [home id, away id, home goals, away goals]
         return dict(format=FORMAT_NAME, version=SAVE_VERSION, meta=meta, season=self.season, user=self.user, double_round=self.double,
-                    divisions=divs, pool=[team(i) for i in self.pool], squad=self.squad.to_dict(players))
+                    divisions=divs, pool=[team(i) for i in self.pool], squad=self.squad.to_dict(players), manager=self.manager, face=self.face)
 
     @classmethod
     def from_dict(cls, d, n_teams): # Validated championship, or None when the data is unusable for a roster of n_teams.
@@ -379,6 +380,10 @@ class Championship:
             if d.get("squad") is not None and squad is None:
                 return None
             ch = cls(divs, pool, d["user"], season, bool(d["double_round"]), squad=squad)
+            if isinstance(d.get("manager"), str):
+                ch.manager = d["manager"][:24]
+            if isinstance(d.get("face"), int) and not isinstance(d.get("face"), bool) and d["face"] >= 0:
+                ch.face = d["face"]
             res = ch._empty_results()
             for di, dv in enumerate(d["divisions"]):
                 fx = dv["fixtures"]

@@ -2,6 +2,8 @@ import math
 import os
 import pygame
 
+from game_utils import clamp
+
 
 def _hex_palette(s, scale=1): # Decode a hexadecimal RGB palette and optionally scale its channel values.
     return [
@@ -188,7 +190,7 @@ class Graphics: # VGA assets, field graphics, sprites, and crowd animation resou
     def pic_surface(self, stem): # Whole VGA file of the PIC folder (default palette, opaque) for cutting button pictures out of it; None when missing / unreadable.
         try:
             return self._load_pic(stem, False)
-        except OSError:
+        except Exception:
             return None
 
     def make_generic_button(self, w, dark=False): # BUTTON_GENERIC at width w: the two end caps stay as they are, the middle is stretched.
@@ -281,6 +283,70 @@ ROSTER_BALL_PX = 8 # Horizontal offset of the ball marker in a roster row.
 ROSTER_BALL_CY = 2 # Vertical offset of the ball marker relative to a roster row.
 BAR_DH = 58 # Height of the bottom status bar in virtual pixels.
 SB_DW = 1040 # Virtual width used by scoreboard scaling calculations.
+
+
+# --- UI button pictures (formerly ui_art.py) ---
+# Button pictures cut from 3.VGA (inclusive pixel coordinates x1, y1, x2, y2 of the original sheet).
+# Each name maps to a list of rectangles: the three tab pictures have one per division (SERIE A, B, C).
+
+ART_SHEET = "3" # Stem of the picture file (3.VGA).
+
+ART_RECTS = {
+    "tab_table": ((0, 48, 31, 70), (33, 48, 64, 70), (66, 48, 97, 70)), # CLASSIFICA, serie A / B / C
+    "tab_cal": ((99, 48, 130, 70), (132, 48, 163, 70), (165, 48, 196, 70)), # CALENDARIO
+    "tab_squad": ((0, 72, 31, 94), (33, 72, 64, 94), (66, 72, 97, 94)), # SQUADRA
+    "play": ((99, 24, 130, 46),), # GIOCA
+    "sim": ((33, 144, 64, 166),), # SIMULA
+    "fast": ((66, 96, 97, 118),), # SIMULA VELOCE
+    "now": ((0, 24, 31, 46),), # SIMULA SUBITO
+    "save": ((66, 120, 97, 142),), # SALVA
+    "slot": ((33, 120, 64, 142),), # SLOT
+    "back": ((165, 120, 196, 142),), # INDIETRO
+    "menu_champ": ((33, 0, 64, 22),), # Main menu: CAMPIONATO
+    "menu_quick": ((99, 72, 130, 94),), # PARTITA VELOCE
+    "menu_options": ((132, 120, 163, 142),), # OPZIONI
+    "menu_exit": ((165, 0, 196, 22),), # USCITA
+    "menu_exit_sure": ((0, 31, 31, 53),), # USCITA while "Sei sicuro?" is asked (37.VGA)
+    "frame": ((0, 0, 49, 40),), # Frame of every button picture (24.VGA) ...
+    "frame_down": ((0, 0, 49, 40),), # ... and the same frame while the mouse button is held down (25.VGA).
+    "banner": ((0, 0, 319, 68),), # Championship header (23.VGA).
+    "arrow_left": ((132, 144, 163, 166),), # Previous page of the slots (3.VGA).
+    "arrow_right": ((99, 144, 130, 166),), # Next page of the slots (3.VGA).
+    "manager_frame": ((0, 57, 57, 134),), # Frame of the manager: face above, name below (35.VGA).
+}
+ART_SHEET_OF = {"menu_exit_sure": "37", "frame": "24", "frame_down": "25", "banner": "23", "manager_frame": "35"} # Pictures that live in another file than ART_SHEET.
+FRAME_W, FRAME_H = 50, 41 # Size of the button frame; the buttons (32x23, back 26x23) are centred inside it.
+MANAGER_BOXES = dict(face=(7, 7, 49, 48), name=(7, 63, 49, 69)) # Empty (black) areas of the manager frame (inclusive): the face (40x40 picture, centred) and the typed name.
+BANNER_BOXES = dict(face=(15, 18, 54, 57), chart=(63, 24, 177, 43), logo=(185, 17, 226, 58), title=(74, 9, 165, 18), lower=(62, 49, 178, 58), sheet=(243, 12, 303, 63)) # Empty areas of the banner (inclusive).
+
+
+def art_size(name): # (width, height) in original pixels.
+    x1, y1, x2, y2 = ART_RECTS[name][0]
+    return x2 - x1 + 1, y2 - y1 + 1
+
+NO_TRIM = ("frame", "frame_down", "banner", "manager_frame") # Every other picture has a 1-pixel black border that is cut away (the picture is stretched back over the frame's free space).
+
+
+# --- Window/view layout (formerly layout.py) ---
+HUD_H = 76 # Height reserved for the bottom match HUD.
+
+
+def board_scale(view_w): # Calculate the scoreboard scale for the current view width.
+    return clamp(view_w / float(SB_DW), 0.4, 1.12)
+
+
+def compute_layout(zoom, scroll): # Calculate the field viewport layout for the requested zoom and scroll.
+    from geometry import FH, FW, WIN_H, WIN_W # Imported here: geometry itself imports graphics_system (circular import otherwise).
+    vw, vh = (WIN_W, WIN_H) if scroll else (FW, FH)
+    view_w, view_h = vw * zoom, vh * zoom
+    s = board_scale(view_w)
+    kb = max(1, int(view_w // BOARD_W))
+    bh = BOARD_H * kb
+    bar_h = int(round(BAR_DH * s))
+    return dict(vw=vw, vh=vh, view_w=view_w, view_h=view_h, bs=s, kb=kb, bh=bh, bar_h=bar_h, W=view_w, H=bh + view_h + bar_h + HUD_H)
+
+
+SU_W, SU_H = 1024, 768 # Virtual width/height of the substitution interface.
 
 class Scoreboard: # Scoreboard, team roster, and match-information rendering.
     BG, FRAME = (13, 17, 38), (72, 82, 138)

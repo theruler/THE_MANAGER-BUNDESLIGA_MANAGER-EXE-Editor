@@ -41,16 +41,17 @@ import championship_model as cm
 import geometry
 import match_config
 from formation_system import FORMATIONS
+from graphics_system import BANNER_BOXES, FRAME_H, FRAME_W, MANAGER_BOXES, SU_H, SU_W, art_size
 from i18n import ROLE_TAG, tr
-from layout import SU_H, SU_W
 from match_config import ROLE_ORDER, TEAM_COL
-from single_match_system import LIST_Y, ROSTER_BOTTOM
+from single_match_system import LIST_Y, ROSTER_BOTTOM, ROW_H
 from stats_system import ROLE_COL, norm, stat_color
-from ui_art import art_size
 
 NOTE_SECS = 6.0
 CONFIRM_SECS = 3.0
 SETUP_COLS = 2
+SLOTS_PER_PAGE = 10 # Slots shown at once; the two arrows at the bottom left turn the page.
+SLOTS = SLOTS_PER_PAGE * 10 # Save slots of the slots page: 10 pages (championship_model.SLOTS is no longer used here).
 SIM_SPEED = 10 # Speed (x) the normal simulation starts at; PgUp / PgDn change it as in a played match.
 FAST_SPEEDS = (100, 200, 300, 400, 500, 600, 700, 800, 900, 1000) # Engine updates per frame (= x real time at 60 fps) of the fast simulation.
 FAST_DEFAULT = 1 # Index in FAST_SPEEDS of the starting speed (200x). PgUp / PgDn / + / - change it, Home = default, End = maximum.
@@ -60,6 +61,9 @@ PROFILE_ENV = "MISTER_FASTPROF" # Set this environment variable to 1: the fast s
 SIM_EVENT_MODES = ("foul", "goal", "injury") # Engine modes of the events SPACE can skip in the normal simulation.
 EVENT_SECONDS = 2.0 # Real seconds the picture of a yellow / red card or an injury is watched at 1x (the goal replay is 1x for its whole length).
 SKIP_MAX_STEPS = 60 * 45 # SPACE skips at most this many engine steps of one event.
+MANAGER_MAX = 16 # Letters of the manager name.
+BANNER_INK = (58, 64, 118) # Dark blue of the texts printed on the parchment of the banner.
+BANNER_LIGHT = (232, 236, 255) # Texts printed on its dark plates.
 DRY_MAX_STEPS = 400000 # Safety net: a match that never ends is settled on paper.
 GOLD, WHITE, DIM, WARN = (255, 224, 90), (255, 255, 255), (205, 215, 235), (255, 170, 110)
 RULE = (70, 76, 110)
@@ -68,13 +72,8 @@ NAME_KEYS = ("name", "nome", "team", "squadra") # Where a roster entry keeps its
 ROLE_GOAL_W = (0.0, 0.6, 1.5, 3.0) # Share of the goals of a match settled on paper, by role (goalkeeper, defender, midfielder, forward).
 
 
-CTR_FALLBACK = {"c_cond": "CON", "c_skill": "TEC", "c_form": "FOR", "grp_sim": "S I M U L A Z I O N E", "sim_n": "NORMALE", "sim_f": "VELOCE", "sim_i": "ISTANTANEA", "my_squad": "LA MIA SQUADRA"} # Column heads used while the language files have no entry.
-
 def ctr(key, **kw): # Text "champ.<key>" of the language files.
-    v = tr("champ." + key, **kw)
-    if key in CTR_FALLBACK and (not isinstance(v, str) or not v or key in v):
-        return CTR_FALLBACK[key]
-    return v
+    return tr("champ." + key, **kw)
 
 def div_name(d): # Letter of division d.
     return cm.DIV_NAMES[d]
@@ -111,15 +110,20 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
     champ_div = 0 # Division shown by the tabs (hub) / the team grid (setup).
     champ_slot = 0 # Slot of the championship in memory (where SALVA writes).
     champ_cur = 0 # Slot highlighted on the slots page.
+    champ_page = 0 # Page of the slots page (SLOTS_PER_PAGE slots each).
     champ_slots = () # Per slot: None (no file), False (invalid file) or a cm.Championship.
     champ_pick = 0 # Team highlighted in the setup page.
     champ_prev = None # Setup preview of the picked team: SimpleNamespace(team, lineup, formation).
     champ_round = 0 # Round shown by the CALENDARIO tab.
     champ_scroll = 0 # First row of "LE TUE PARTITE" shown.
+    champ_manager = "" # Name typed in the setup page (the championship keeps its own copy: Championship.manager).
+    champ_face = 0 # Manager face picked in the setup page (index of the faces of 0.VGA, 0a.VGA ...).
     champ_team = None # Team whose players the CLASSIFICA tab shows on the right of the table (None = the user's own).
     _champ_ev_prev = None # Speed index to go back to when an event of the normal simulation is over.
     _champ_ev_t = None # time.time() when the running event started (None = no event).
     _champ_ev_id = None # Identity of the event whose picture is shown (card / injury).
+    _champ_ghosts = frozenset() # Roster indexes put in the line-up only to satisfy the engine (nobody else is available): sent off before the kick-off.
+    _champ_ghosts_all = frozenset() # The same, kept until full time (they are neither played minutes nor red cards).
     _champ_roles = None # {team: [role of each player]} of the teams shown read-only.
     champ_dirty = False # Results not written to the slot yet.
     champ_live = None # (round, home, away) of the match being played / simulated.
@@ -155,7 +159,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
 
     def champ_refresh_slots(self):
         out = []
-        for i in range(cm.SLOTS):
+        for i in range(SLOTS):
             p = self.champ_slot_path(i)
             out.append(None if not p or not os.path.isfile(p) else (cm.load_slot(p, len(self.teams)) or False))
         self.champ_slots = out
@@ -278,6 +282,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
     # ---------- entry points ----------
     def championship_open(self): # CAMPIONATO button / C key.
         self.menu_page = "champ"
+        self.champ_page = self.champ_cur // SLOTS_PER_PAGE
         if self.champ is None:
             self.champ_view = "slots"
             self.champ_refresh_slots()
@@ -321,6 +326,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
                 return
         self._champ_drop_match()
         self.champ = cm.Championship.new(len(self.teams), prev.team, formation=prev.formation, lineup=copy.deepcopy(prev.lineup))
+        self.champ.manager, self.champ.face = self.champ_manager.strip(), self.champ_face
         self._champ_str, self.champ_dirty = None, True
         self.champ_view, self.champ_tab, self.champ_div, self.champ_team = "hub", "table", self.champ.user_div, None
         self._champ_view_round(0)
@@ -340,7 +346,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         self._champ_view_round(0)
 
     # ---------- the user's squad ----------
-    def _champ_repair(self): # Line-up of the user's team: no injured / suspended starter, no empty slot.
+    def _champ_repair(self, fill=True): # Line-up of the user's team: no injured / suspended starter; fill=True also fills the empty slots with the best available players.
         ch = self.champ
         sq = ch.squad
         if sq.lineup is None:
@@ -351,7 +357,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             for role, j in pos:
                 if lu[role][j] is not None and not sq.available(lu[role][j]):
                     lu[role][j] = None
-            for role, j in pos:
+            for role, j in pos if fill else ():
                 if lu[role][j] is None:
                     taken = {lu[r][k] for r, k in pos}
                     cands = [i for i in range(cm.ROSTER) if sq.available(i) and i not in taken]
@@ -359,6 +365,18 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
                     if nat or cands:
                         lu[role][j] = max(nat or cands, key=lambda i: self.player_rating(0, i))
             sq.lineup, sq.formation = self.lineup[0], self.form_names[0]
+
+    def _champ_check_lineup(self): # Before any match: 11 players named, or fewer only when nobody else is available. False = the match must not start (message shown).
+        sq = self.champ.squad
+        self._champ_repair(False)
+        named = [i for v in (sq.lineup or {}).values() for i in v if i is not None]
+        if not named:
+            self.champ_say(ctr("lineup_err"), True)
+            return False
+        if len(named) < 11 and any(sq.available(i) and i not in named for i in range(cm.ROSTER)):
+            self.champ_say(ctr("lineup_short", n=len(named)), True)
+            return False
+        return True
 
     def _champ_squad_info(self): # ({roster index: shirt}, bench) of the user's team: the best available players after the eleven (and a goalkeeper).
         ch = self.champ
@@ -390,7 +408,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             return
         fn = {"num": lambda: self.assign_number(0, arg), "clear": lambda: self.clear_number(0, arg), "form": lambda: self.set_formation(0, arg)}[op]
         self._champ_edit(0, ch.user, sq, fn)
-        self._champ_repair()
+        self._champ_repair(False) # A removed number stays removed: the line-up is free (checked before the match).
         self.champ_dirty = True
 
     def _champ_patch_stats(self, apply): # Tiredness and form change the Condition / Form the engine reads from the roster (restored after the match).
@@ -426,18 +444,25 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         side = 0 if h == ch.user else 1
         self.sel = [h, a]
         self.sync_teams()
-        self._champ_repair()
+        if not self._champ_check_lineup():
+            return False
         sq = ch.squad
         self.fix_lineup(1 - side, reset=True) # The opponent: his default line-up.
         self.set_formation(side, sq.formation)
         self.lineup[side] = copy.deepcopy(sq.lineup)
-        if self.lineup_count(side) != 11:
-            self.fix_lineup(side, reset=True)
+        ghosts = set()
+        if self.lineup_count(side) != 11: # Nobody else is available: the engine still wants 11, the extra ones walk off before the kick-off (fewer men).
+            named = {i for _role, i in self.lineup_slots(side)}
+            for i in range(cm.ROSTER):
+                if i not in named and self.lineup_count(side) < 11:
+                    self.assign_number(side, i)
+                    ghosts.add(i)
         if not self.lineup_ready():
             self.champ_say(ctr("lineup_err"), True)
             return False
         self.champ_live, self._champ_side = (r, h, a), side
-        self._champ_xi = {i for _role, i in self.lineup_slots(side)}
+        self._champ_ghosts = self._champ_ghosts_all = frozenset(ghosts)
+        self._champ_xi = {i for _role, i in self.lineup_slots(side)} - ghosts
         self.champ_goals, self.champ_hurt = {}, set()
         return True
 
@@ -510,6 +535,8 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         r = ch.round_index() if ch else None
         if r is None or self.champ_dry or not self._champ_drop_ok():
             return
+        if not self._champ_check_lineup():
+            return
         self._champ_drop_match()
         self._champ_settle_paper(r)
         self.champ_dirty = True
@@ -548,6 +575,14 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             if self.cp is not None:
                 self.select_player(None, quiet=True)
             self._champ_event_speed()
+        if self._champ_ghosts and self.champ_live and self.mode in ("restart", "play"): # Fewer men: the extra players leave as after a red card (no card, no ban).
+            for p in self.team_p[self._champ_side]:
+                if getattr(p, "sq", -1) in self._champ_ghosts and not p.red:
+                    p.red = True
+                    p.state, p.act = "leaving", None
+                    self.set_gate(p)
+                    p.tx, p.tv = geometry.L / 2.0 + p.gate, geometry.V_MAX_P
+            self._champ_ghosts = frozenset()
         inj = self.injury
         if inj and self.champ_live and isinstance(inj, dict): # An engine injury of one of the user's players.
             p = inj.get("p")
@@ -606,10 +641,12 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         self.champ_live = None
         gf, ga = self.score[side], self.score[1 - side]
         team = self.team_p[side]
-        final = {p.sq for p in team}
+        final = {p.sq for p in team} - self._champ_ghosts_all
         played = {i: (1.0 if i in final else 0.6) if i in self._champ_xi else 0.4 for i in self._champ_xi | final}
         yellows, reds = {}, {}
         for p in team:
+            if p.sq in self._champ_ghosts_all:
+                continue
             if p.red:
                 reds[p.sq] = 1 if p.yellow >= 2 else 2 # Second yellow: one match; straight red: two.
                 yellows[p.sq] = min(1, p.yellow)
@@ -633,12 +670,14 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
 
     def _champ_settle_paper(self, r): # The user's match of round r on paper: result by strength (his real eleven, tiredness and form), players by role weight.
         ch = self.champ
-        self._champ_repair()
+        self._champ_repair(False)
         sq = ch.squad
         xi = [i for v in (sq.lineup or {}).values() for i in v if i is not None]
         top, st = self._champ_top(), self.teams[ch.user]["stats"]
         rows = [sq.effective(i, st[i], top) for i in xi] if xi else cm.best_rows(self.teams[ch.user])
         mine = cm.rows_rating(rows)
+        if xi and len(xi) < 11: # Fewer men: weaker attack and defence.
+            mine = (mine[0] * len(xi) / 11.0, mine[1] * len(xi) / 11.0)
         h, a = ch.user_fixture(r)
         opp = self.champ_strengths().get(a if h == ch.user else h, cm.NEUTRAL)
         gh, ga = cm.sim_score(*((mine, opp) if h == ch.user else (opp, mine)))
@@ -698,6 +737,15 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         if ev.type not in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
             return False
         if self.mode == "intro" and self.menu_page == "champ" and not (self.options_open or self.joymap_open or self.confirm_exit):
+            if ev.type == pygame.KEYDOWN and self.champ_view == "setup" and not self.champ_dry: # The manager name is typed in the setup page.
+                u = getattr(ev, "unicode", "")
+                if ev.key == pygame.K_BACKSPACE:
+                    self.champ_manager = self.champ_manager[:-1]
+                    return True
+                if u and u.isprintable() and ev.key not in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE, pygame.K_TAB):
+                    if len(self.champ_manager) < MANAGER_MAX and (u != " " or self.champ_manager):
+                        self.champ_manager += u.upper()
+                    return True
             if ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE: # The global handler of input_system would quit the game: here ESC steps back / suspends.
                     self.championship_key(pygame.K_ESCAPE)
@@ -827,6 +875,8 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
                 self.champ_view = "hub"
             else:
                 return False
+        elif k == "ch_page":
+            self._champ_turn_page(hit[1])
         elif k == "ch_slot":
             self.champ_cur = hit[1]
             self._champ_slot_enter(hit[1])
@@ -849,15 +899,18 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             pass
         elif k == "ch_start":
             self.championship_start()
-        elif k == "ch_cancel":
-            self.champ_view = "slots"
-        elif k == "ch_tab":
-            self.champ_tab = hit[1]
-            if hit[1] == "squad":
-                self.champ_team, self.champ_div = None, self.champ.user_div
-        elif k == "ch_tabdiv":
-            self.champ_tab, self.champ_div = "table", hit[1]
+        elif k == "ch_face":
+            self.champ_face = (self.champ_face + 1) % max(1, len(self._champ_faces()))
+        elif k == "ch_tab": # CLASSIFICA / CALENDARIO always show the same series: a click on the shown one steps to the next series (both pictures follow).
+            nd = min(3, len(self.champ.divisions))
+            if hit[1] in ("table", "calendar") and self.champ_tab == hit[1] and nd > 1:
+                self.champ_div = (self.champ_div + 1) % nd
+            else:
+                self.champ_tab = hit[1]
         elif k == "ch_team":
+            self._champ_open_team(hit[1])
+        elif k == "ch_goto": # A team of the calendar: CLASSIFICA of its series, with the team selected.
+            self.champ_tab, self.champ_div = "table", hit[2]
             self._champ_open_team(hit[1])
         elif k == "sq_num":
             self._champ_squad_edit("num", hit[1])
@@ -882,12 +935,23 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             self.champ_refresh_slots()
         elif k == "ch_slots":
             self.champ_refresh_slots()
+            self.champ_page = self.champ_cur // SLOTS_PER_PAGE
             self.champ_view = "slots"
         elif k == "ch_season":
             self.championship_next_season()
         else:
             return False
         return True
+
+    def _champ_pages(self): # Number of pages of the slots page.
+        return (SLOTS + SLOTS_PER_PAGE - 1) // SLOTS_PER_PAGE
+
+    def _champ_turn_page(self, d): # Arrow buttons / LEFT / RIGHT: another page of slots; the highlight keeps its row.
+        page = max(0, min(self._champ_pages() - 1, self.champ_page + d))
+        if page != self.champ_page:
+            row = self.champ_cur % SLOTS_PER_PAGE
+            self.champ_page = page
+            self.champ_cur = min(SLOTS - 1, page * SLOTS_PER_PAGE + row)
 
     def _champ_open_team(self, t): # Click on a team name of the table: its players appear on the right of the table.
         self.champ_team = None if t == self.champ.user else t
@@ -914,8 +978,14 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         elif self.champ_view == "slots":
             if k == pygame.K_UP:
                 self.champ_cur = max(0, self.champ_cur - 1)
+                self.champ_page = self.champ_cur // SLOTS_PER_PAGE
             elif k == pygame.K_DOWN:
-                self.champ_cur = min(cm.SLOTS - 1, self.champ_cur + 1)
+                self.champ_cur = min(SLOTS - 1, self.champ_cur + 1)
+                self.champ_page = self.champ_cur // SLOTS_PER_PAGE
+            elif k in (pygame.K_LEFT, pygame.K_PAGEUP):
+                self._champ_turn_page(-1)
+            elif k in (pygame.K_RIGHT, pygame.K_PAGEDOWN):
+                self._champ_turn_page(1)
             elif enter:
                 self._champ_slot_enter(self.champ_cur)
         elif self.champ_view == "setup":
@@ -937,8 +1007,6 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
                 self.champ_refresh_slots()
             elif k == pygame.K_TAB:
                 self.champ_tab = tabs[(tabs.index(self.champ_tab) + 1) % len(tabs)]
-                if self.champ_tab == "squad":
-                    self.champ_team, self.champ_div = None, self.champ.user_div
             elif self.champ_tab == "calendar" and k in (pygame.K_UP, pygame.K_DOWN, pygame.K_PAGEUP, pygame.K_PAGEDOWN, pygame.K_LEFT, pygame.K_RIGHT):
                 n = {pygame.K_UP: -1, pygame.K_LEFT: -1, pygame.K_DOWN: 1, pygame.K_RIGHT: 1}.get(k, -10 if k == pygame.K_PAGEUP else 10)
                 self._champ_view_round(self.champ_round + n)
@@ -957,10 +1025,6 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
                 self.championship_sim_now()
 
     # ---------- drawing ----------
-    def _put_right(self, txt, px, col, cy, right, w): # Text ending at x = right.
-        txt = self.fit_text(txt, px, w)
-        self._put(txt, px, col, cy, left=right - self.board.font(px).size(txt)[0])
-
     def _champ_button(self, s, hits, vx, vy, r, label, tag, px=20, selected=False): # Generic button + hit.
         self.draw_generic_button(s, r, self.fit_text(label, px, r.w - 16), selected, r.collidepoint(vx, vy), px=px)
         hits.append((r, tag))
@@ -978,9 +1042,12 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             self._champ_dry_step()
         hub = self.champ_view != "setup" and not (self.champ_view == "slots" or self.champ is None)
         if not hub: # The hub has no title and no top rule: its space goes to the tables.
-            self._put(ctr("title"), 46, WHITE, 40, cx=W // 2)
-            self.back_button(s, hits, vx, vy, 30, 8, 2)
-            pygame.draw.line(s, RULE, (30, 76), (W - 30, 76), 2)
+            if self.champ_view == "setup":
+                self._put(ctr("title"), 46, WHITE, 40, cx=30 + 495 + 232, w=465) # The top left belongs to the SERIE A / B / C buttons.
+            else: # The slots page has the label of the slots instead of the title.
+                self._put(ctr("slots_title"), 46, WHITE, 40, cx=W // 2, w=W - 60, shadow=True)
+                pygame.draw.line(s, RULE, (30, 94), (W - 30, 94), 2)
+            self.back_button_br(s, hits, vx, vy)
         if self.champ_view == "setup":
             self._champ_setup(s, bd, hits, vx, vy)
         elif not hub:
@@ -991,7 +1058,34 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
                 self._champ_dry_panel(s)
         note = self.champ_note
         if note and time.time() < note[1]:
-            self._put(note[0], 18, WARN if note[2] else GOLD, H - 14, cx=W // 2, w=W - 60)
+            col = WARN if note[2] else GOLD
+            if hub: # Hub: the message sits in the last third of the page, on the row of the SIMULA label (up to two lines, the last one on that row).
+                x1 = W * 2 // 3
+                w = W - 16 - x1
+                lines = self._wrap_text(note[0], 16, w, 2)
+                for j, ln in enumerate(reversed(lines)):
+                    self._put(ln, 16, col, self._champ_geom()["row_y"] - 16 - j * 18, cx=x1 + w // 2, w=w)
+            else:
+                self._put(note[0], 18, col, H - 14, cx=W // 2, w=W - 60)
+
+    def _champ_place(self, n): # "3° posto": the text champ.place of the language files when it exists, otherwise this default.
+        try:
+            t = ctr("place", n=n)
+        except Exception:
+            t = None
+        return t if t and not t.startswith("champ.") else "%d\u00b0 posto" % n
+
+    def _wrap_text(self, txt, px, w, max_lines=2): # Break txt into at most max_lines lines of w pixels (the last one is cut when the text is still too long).
+        font, lines, cur = self.board.font(px), [], ""
+        for word in txt.split():
+            t = (cur + " " + word).strip()
+            if cur and font.size(t)[0] > w and len(lines) < max_lines - 1:
+                lines.append(cur)
+                cur = word
+            else:
+                cur = t
+        lines.append(cur)
+        return [self.fit_text(ln, px, w) for ln in lines]
 
     def _champ_div_tabs(self, s, hits, vx, vy, n, x=None, y=84): # SERIE A / B / C.
         bw = 116
@@ -1000,18 +1094,21 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             r = pygame.Rect(x + d * (bw + 6), y, bw, 30)
             self._champ_button(s, hits, vx, vy, r, ctr("div", l=div_name(d)), ("ch_div", d), 16, self.champ_div == d)
 
-    def _champ_slots(self, s, hits, vx, vy): # The save slots, in a block centred on the page.
+    def _champ_slots(self, s, hits, vx, vy): # The save slots of the current page, in a block centred on the page; the arrows at the bottom left turn the page.
         W, H = SU_W, SU_H
-        if not self.champ_slots:
+        if len(self.champ_slots) != SLOTS:
             self.champ_refresh_slots()
-        rh, gap = 56, 14
+        pages = self._champ_pages()
+        self.champ_page = page = max(0, min(pages - 1, self.champ_page))
+        rh, gap = 44, 8
         bw = min(W - 60, 780)
         x0 = (W - bw) // 2
-        total = 34 + cm.SLOTS * rh + (cm.SLOTS - 1) * gap
-        y0 = max(92, 76 + (H - 76 - total) // 2)
-        self._put(ctr("slots_title"), 26, WHITE, y0 + 12, cx=W // 2)
-        for i in range(cm.SLOTS):
-            y = y0 + 34 + i * (rh + gap)
+        ry = H - 30 - FRAME_H * 2 # Row of the bottom buttons (the same as the hub and the back button).
+        total = SLOTS_PER_PAGE * rh + (SLOTS_PER_PAGE - 1) * gap # A full page: every page has the same block.
+        y0 = 94 + (ry - 10 - 94 - total) // 2
+        first = page * SLOTS_PER_PAGE
+        for n, i in enumerate(range(first, min(SLOTS, first + SLOTS_PER_PAGE))):
+            y = y0 + n * (rh + gap)
             ch = self.champ_slots[i]
             r = pygame.Rect(x0, y, bw - 176 if ch else bw, rh)
             if ch:
@@ -1023,38 +1120,85 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             self._champ_button(s, hits, vx, vy, r, "%d   %s" % (i + 1, label), ("ch_slot", i), 20, self.champ_cur == i)
             if ch:
                 wait = self.champ_over and self.champ_over[0] == i and time.time() < self.champ_over[1]
-                self._champ_button(s, hits, vx, vy, pygame.Rect(x0 + bw - 164, y + 10, 164, rh - 20), ctr("confirm_over" if wait else "new"), ("ch_new", i), 16, bool(wait))
+                self._champ_button(s, hits, vx, vy, pygame.Rect(x0 + bw - 164, y + 6, 164, rh - 12), ctr("confirm_over" if wait else "new"), ("ch_new", i), 16, bool(wait))
+        if pages > 1: # LEFT / RIGHT arrows (3.VGA) in the frame of the back button; the one that has nowhere to go is darkened and cannot be clicked.
+            fw, gap2 = FRAME_W * 2, 8
+            for j, (name, d, lab) in enumerate((("arrow_left", -1, "<"), ("arrow_right", 1, ">"))):
+                ok = 0 <= page + d < pages
+                r = self.framed_button(s, hits, vx, vy, name, 0, 2, 16 + j * (fw + gap2), ry, ("ch_page", d), False, lab, ok)
+                if not ok:
+                    dim = pygame.Surface(r.size, pygame.SRCALPHA)
+                    dim.fill((0, 0, 30, 150))
+                    s.blit(dim, r)
+            self._put("%d / %d" % (page + 1, pages), 22, WHITE, ry + FRAME_H, cx=16 + 2 * fw + gap2 + 50, w=90)
 
-    def _champ_setup(self, s, bd, hits, vx, vy): # Left: the teams of the division; right: the single-match column of the picked team.
+    def _champ_setup(self, s, bd, hits, vx, vy): # Left: series pictures (top) + the teams of the series with their strengths; right: the picked team, manager face and name.
         W, H = SU_W, SU_H
         divs, pool = cm.layout_divisions(len(self.teams))
         if self.champ_prev is None or self.champ_prev.team != self.champ_pick:
             self._champ_set_pick(self.champ_pick)
         prev = self.champ_prev
-        hb = pygame.Rect(30, 70, 465, 26)
+        nd, sc, gap = min(3, len(divs)), 2, 8 # the same CLASSIFICA SERIE A / B / C pictures as the next pages, in the top left corner
+        x = 30 + (465 - (nd * FRAME_W * sc + (nd - 1) * gap)) // 2
+        for d in range(nd):
+            self._champ_art_button(s, hits, vx, vy, "tab_table", d, sc, x + d * (FRAME_W * sc + gap), 6, ("ch_div", d), self.champ_div == d, ctr("tab_table") + " " + div_name(d))
+        hb = pygame.Rect(30, 6 + FRAME_H * sc + 4, 465, 26)
         pygame.draw.rect(s, (36, 60, 110), hb, border_radius=5)
         self._put(ctr("pick_team"), 21, WHITE, hb.centery, cx=hb.centerx)
-        self._champ_div_tabs(s, hits, vx, vy, len(divs), 30 + (465 - len(divs) * 122 + 6) // 2, 102)
         ids = divs[self.champ_div] if divs else []
-        bw, bh, gap = (465 - 10) // SETUP_COLS, 40, 4
+        y0 = hb.bottom + 18 # selectable list: team name and its three strengths; it ends where the player list of the right column ends
+        rh = max(16, min(ROW_H, (ROSTER_BOTTOM - y0) // max(1, len(ids))))
+        px = max(12, min(16, rh - 5))
+        cw = 44
+        for n, key in enumerate(("c_cond", "c_skill", "c_form")):
+            self._put(ctr(key), 12, DIM, hb.bottom + 9, cx=30 + 465 - cw * (3 - n) + cw // 2)
         for k, t in enumerate(ids):
-            r = pygame.Rect(30 + (k % SETUP_COLS) * (bw + 10), 142 + (k // SETUP_COLS) * (bh + gap), bw, bh)
-            self._champ_button(s, hits, vx, vy, r, self.champ_name(t), ("ch_pick", t), 18, self.champ_pick == t)
-        # the picked team, drawn by the single-match screen itself (side 1) over a team list that holds only that team
+            r = pygame.Rect(30, y0 + k * rh, 465, rh - 2)
+            sel = self.champ_pick == t
+            _shade(s, r, (70, 60, 10, 200) if sel else (60, 100, 170, 150) if r.collidepoint(vx, vy) else (8, 12, 34, 150 if k % 2 == 0 else 105))
+            col = GOLD if sel else WHITE
+            put = self._put_bold if sel else self._put
+            put(self.champ_name(t), px, col, r.centery, left=r.x + 8, w=465 - 3 * cw - 16)
+            for n, v in enumerate(self.teams[t]["avg"]):
+                self._put(str(v), px, stat_color(v), r.centery, cx=r.right - cw * (3 - n) + cw // 2)
+            hits.append((r, ("ch_pick", t)))
+        # the picked team, drawn by the single-match screen itself (side 1) without its team list: the manager frame takes that place
         with self._champ_ctx(1, prev.team, prev.lineup, prev.formation, only=True):
-            self._draw_single_team(s, bd, hits, vx, vy, 1, ("", ctr("selected")))
+            self._draw_single_team(s, bd, hits, vx, vy, 1, ("", ctr("selected")), with_list=False, panel_bottom=ROSTER_BOTTOM + 36) # The blue panel under "selected" also holds the manager hint.
             n = self.lineup_count(1)
-        lr = pygame.Rect(525, LIST_Y, 232, ROSTER_BOTTOM - LIST_Y) # The list area shows the reserve teams instead.
-        pygame.draw.rect(s, bd.BG, lr)
-        pygame.draw.rect(s, bd.FRAME, lr, 2)
-        if pool:
-            self._put(ctr("reserves_title"), 16, bd.LIT, lr.y + 14, cx=lr.centerx)
-            for k, t in enumerate(pool):
-                self._put(self.champ_name(t), 16, bd.DIM, lr.y + 42 + k * 22, left=lr.x + 12, w=lr.w - 24)
+        msc = 3 # Manager frame (35.VGA): face above (click = next face), typed name below.
+        fw_, fh_ = art_size("manager_frame")
+        fr = pygame.Rect(0, 0, fw_ * msc, fh_ * msc)
+        fr.midtop = (525 + 116, LIST_Y - 8)
+        frame = self.art("manager_frame", 0, msc)
+
+        def box(name): # An empty area of the frame, in virtual pixels.
+            x1, y1, x2, y2 = MANAGER_BOXES[name]
+            return pygame.Rect(fr.x + x1 * msc, fr.y + y1 * msc, (x2 - x1 + 1) * msc, (y2 - y1 + 1) * msc)
+        face, nb = box("face"), box("name")
+        if frame is not None:
+            s.blit(frame, fr)
+        else: # 35.VGA missing: a plain frame with the two black areas.
+            pygame.draw.rect(s, bd.BG, fr)
+            pygame.draw.rect(s, bd.FRAME, fr, 2)
+            pygame.draw.rect(s, (0, 0, 0), face)
+            pygame.draw.rect(s, (0, 0, 0), nb)
+        fimg = self._champ_face_img(self.champ_face)
+        if fimg is not None: # The 40x40 face, centred in the black area.
+            s.blit(pygame.transform.scale(fimg, (40 * msc, 40 * msc)), (face.x + (face.w // msc - 40) // 2 * msc, face.y + (face.h // msc - 40) // 2 * msc))
+        if face.collidepoint(vx, vy):
+            pygame.draw.rect(s, WHITE, face, 2)
+        hits.append((face, ("ch_face",)))
+        cur = "_" if int(time.time() * 2) % 2 == 0 and len(self.champ_manager) < MANAGER_MAX else ""
+        if self.champ_manager or cur:
+            self._put(self.champ_manager + cur, 14, WHITE, nb.centery, left=nb.x + 4, w=nb.w - 8)
+        else:
+            self._put(ctr("manager"), 14, DIM, nb.centery, left=nb.x + 4, w=nb.w - 8)
+        self._put(ctr("manager_hint"), 16, DIM, fr.bottom + 16, cx=fr.centerx, w=300)
         if n != 11:
             self._put(tr("intro.warn_lineup", n=n), 17, WARN, 622, cx=W // 2, w=W - 60)
         else:
-            self._put(tr("intro.hint_numbers"), 17, DIM, 622, cx=W // 2, w=W - 60)
+            self._put_right(tr("intro.hint_numbers"), 17, DIM, 622, W - 30, W - 60)
         sb = pygame.Rect(W // 2 - 140, 650, 280, 44)
         hov = sb.collidepoint(vx, vy)
         pygame.draw.rect(s, ((60, 150, 90) if hov else (44, 112, 70)) if n == 11 else (40, 44, 58), sb, border_radius=8)
@@ -1062,36 +1206,118 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         self._put(ctr("start"), 24, WHITE if n == 11 else (120, 126, 146), sb.centery, cx=sb.centerx, w=sb.w - 14)
         if n == 11:
             hits.append((sb, ("ch_start",)))
-        self._champ_button(s, hits, vx, vy, pygame.Rect(30, 650, 200, 44), ctr("cancel"), ("ch_cancel",))
 
-    def _champ_geom(self): # Hub layout: picture scale, top row of the three CLASSIFICA pictures, left column, content box, bottom row (labels under the buttons).
-        W, H = SU_W, SU_H
-        sc = 3 if W >= 900 else 2
-        bw, bh = art_size("play")
-        colw, rowh = bw * sc, bh * sc
-        x0, row_y = 16 + colw + 16, H - 56 - rowh
-        return dict(sc=sc, colw=colw, rowh=rowh, x0=x0, top=10, y0=10 + rowh + 16, w=W - 16 - x0, bot=row_y - 30, row_y=row_y)
+    def _champ_faces(self): # [(file stem, index)] of every manager face: 0.VGA (4 faces of 40x40, 41 px apart), then 0a.VGA, 0b.VGA ... when they exist.
+        c = self.__dict__.setdefault("_face_cache", {})
+        if "list" not in c:
+            lst = []
+            for stem in ["0"] + ["0" + ch for ch in "abcdefghijklmnopqrstuvwxyz"]:
+                sheet = self.gfx.pic_surface(stem) if hasattr(self.gfx, "pic_surface") else None
+                if sheet is None:
+                    if stem == "0":
+                        continue
+                    break
+                for i in range((sheet.get_width() + 1) // 41):
+                    if i * 41 + 40 <= sheet.get_width() and sheet.get_height() >= 40:
+                        c[(stem, i)] = sheet.subsurface(pygame.Rect(i * 41, 0, 40, 40)).copy().convert()
+                        lst.append((stem, i))
+            c["list"] = lst
+        return c["list"]
 
-    def _champ_art_button(self, s, hits, vx, vy, name, idx, sc, x, y, tag, selected=False, fb_label="", label=None): # Picture button (3.VGA) with an optional label on it; a generic button without the picture.
-        bw, bh = art_size(name)
-        r = pygame.Rect(x, y, bw * sc, bh * sc)
-        img, hov = self.art(name, idx, sc), r.collidepoint(vx, vy)
-        if img is None:
-            self.draw_generic_button(s, r, self.fit_text(label or fb_label, 16, r.w - 12), selected, hov, px=16)
+    def _champ_face_img(self, n): # Surface (40x40) of face number n, or None.
+        faces = self._champ_faces()
+        return self._face_cache.get(faces[n % len(faces)]) if faces else None
+
+    def _champ_banner_h(self): # Height of the header: the 69 px of 23.VGA at an integer vertical zoom (its width follows the screen).
+        return 69 * 3
+
+    def _champ_trend(self): # Cumulative trend of the user's season: +1 per win, 0 per draw, -1 per defeat (one value per round played, starting at 0).
+        ch = self.champ
+        out, v = [0], 0
+        for r in range(ch.played_rounds()):
+            h, a = ch.user_fixture(r)
+            res = ch.results[ch.user_div][r][ch.user_slot(r)]
+            if res is not None:
+                gf, gc = (res[0], res[1]) if h == ch.user else (res[1], res[0])
+                v += (gf > gc) - (gf < gc)
+            out.append(v)
+        return out
+
+    def _champ_banner(self, s): # Header: 23.VGA stretched over the screen width with the manager, the round, the team logo, the date and the season trend.
+        W, ch = SU_W, self.champ
+        bh = self._champ_banner_h()
+        kx, ky = W / 320.0, bh // 69
+        img = self.art("banner", 0, 1)
+        if img is not None:
+            cache = self.__dict__.setdefault("_banner_cache", {})
+            if cache.get("key") != (W, bh):
+                cache["key"], cache["img"] = (W, bh), pygame.transform.scale(img, (W, bh))
+            s.blit(cache["img"], (0, 0))
+
+        def box(name):
+            x1, y1, x2, y2 = BANNER_BOXES[name]
+            return pygame.Rect(int(x1 * kx), y1 * ky, int((x2 - x1 + 1) * kx), (y2 - y1 + 1) * ky)
+
+        if img is None: # No picture: plain plates so that the information stays readable.
+            pygame.draw.rect(s, (40, 46, 96), (0, 0, W, bh))
+            for nm in BANNER_BOXES:
+                pygame.draw.rect(s, (70, 76, 130), box(nm))
+        r = box("face") # manager face (40x40, integer zoom, centred)
+        fimg = self._champ_face_img(ch.face)
+        if fimg is not None:
+            z = max(1, min(r.w // 40, r.h // 40))
+            fi = pygame.transform.scale(fimg, (40 * z, 40 * z))
+            s.blit(fi, fi.get_rect(center=r.center))
+        td = self.teams[ch.user]
+        lr = box("lower")
+        who = "  -  ".join(t for t in (ch.manager.strip(), self.champ_name(ch.user)) if t)
+        self._put(who, max(12, lr.h - 2), BANNER_LIGHT, lr.centery, cx=lr.centerx, w=lr.w - 12, shadow=True)
+        tr_ = box("title")
+        rnd = ch.round_index()
+        n = ch.total_rounds() if rnd is None else rnd + 1
+        txt = ctr("banner_round", n=n)
+        self._put(txt, max(12, tr_.h - 2), BANNER_LIGHT, tr_.centery, cx=tr_.centerx, w=tr_.w - 10, shadow=True)
+        lg = box("logo") # team logo
+        logo = self.gfx.logo(td["logo"])
+        if logo is not None:
+            k = min((lg.w - 8) / float(logo.get_width()), (lg.h - 8) / float(logo.get_height()))
+            im = pygame.transform.smoothscale(logo, (max(1, int(logo.get_width() * k)), max(1, int(logo.get_height() * k))))
+            s.blit(im, im.get_rect(center=lg.center))
+        sh = box("sheet") # date of the round (the next one to play; the last one when the season is over)
+        d = ch.round_date(n - 1)
+        cx = sh.centerx
+        if d is not None:
+            f = lambda p: max(16, int(sh.h * p))
+            # Percentuali ridotte per spostare le label più in alto
+            self._put(tr("champ.wd.%d" % d.weekday()), f(0.22), BANNER_INK, sh.y + sh.h * 15 // 100, cx=cx, w=sh.w - 12, shadow=True)
+            self._put("%d." % d.day, f(0.50), BANNER_INK, sh.y + sh.h * 45 // 100, cx=cx, w=sh.w - 12, shadow=True)
+            self._put(tr("champ.mo.%d" % d.month), f(0.22), BANNER_INK, sh.y + sh.h * 70 // 100, cx=cx, w=sh.w - 1, shadow=True)
+            self._put(str(d.year), f(0.22), BANNER_INK, sh.y + sh.h * 90 // 100, cx=cx, w=sh.w - 12, shadow=True)
         else:
-            s.blit(img, r)
-            if selected:
-                pygame.draw.rect(s, GOLD, r.inflate(6, 6), 3)
-            elif hov:
-                pygame.draw.rect(s, WHITE, r.inflate(4, 4), 2)
-            if label:
-                parts = label.split(" ", 1) if len(label) > 8 and " " in label else [label]
-                px = 17 if len(parts) == 1 else 16
-                for j, t in enumerate(parts):
-                    cy = int(r.centery + (j - (len(parts) - 1) / 2.0) * (px + 3))
-                    self._put(t, px, WHITE, cy, cx=r.centerx, w=r.w - 8)
-        hits.append((r, tag))
-        return r
+            # Spostato sopra il centro (es. al 35% invece di sh.centery che corrisponde al 50%)
+            self._put(cm.season_label(ch.season), 24, BANNER_INK, sh.y + sh.h * 35 // 100, cx=cx, w=sh.w - 16, shadow=True)
+        ct = box("chart") # trend of the season: up with a win, flat with a draw, down with a defeat
+        trend = self._champ_trend()
+        top = max(3, max(trend))
+        bot = min(-3, min(trend))
+        tot = max(1, ch.total_rounds())
+        yy = lambda v: ct.bottom - 6 - int((v - bot) * (ct.h - 12) / float(top - bot))
+        pygame.draw.line(s, (40, 44, 150), (ct.x + 4, yy(0)), (ct.right - 4, yy(0)), 1)
+        pts = [(ct.x + 6 + int(i * (ct.w - 12) / float(tot)), yy(v)) for i, v in enumerate(trend)]
+        if len(pts) > 1:
+            pygame.draw.lines(s, (214, 214, 226), False, pts, 2)
+        elif pts:
+            pygame.draw.circle(s, (214, 214, 226), pts[0], 3)
+
+    def _champ_geom(self): # Hub layout: picture scale, left column of framed buttons, content box under the banner, bottom row of framed buttons (labels under them).
+        W, H = SU_W, SU_H
+        sc = 2
+        colw, rowh = FRAME_W * sc, FRAME_H * sc
+        x0, row_y = 16 + colw + 16, H - 18 - 12 - rowh # The labels under the buttons end 10 pixels above the bottom edge.
+        return dict(sc=sc, colw=colw, rowh=rowh, x0=x0, y0=self._champ_banner_h() + 10, w=W - 16 - x0, bot=row_y - 50, row_y=row_y)
+
+    def _champ_art_button(self, s, hits, vx, vy, name, idx, sc, x, y, tag, selected=False, fb_label="", label=None): # Framed picture button (3.VGA + 24 / 25.VGA); returns the frame rect.
+        return self.framed_button(s, hits, vx, vy, name, idx, sc, x, y, tag, selected, label or fb_label)
 
     def _put_bold(self, txt, px, col, cy, left=None, cx=None, w=None): # Bold text: the same text drawn twice, one pixel apart (works with the bitmap font too).
         bd = self.board
@@ -1116,26 +1342,22 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
     def _champ_hub(self, s, hits, vx, vy):
         W, H, ch = SU_W, SU_H, self.champ
         g = self._champ_geom()
-        sc, x0, colw, gap = g["sc"], g["x0"], g["colw"], 8
+        sc, x0, fw, fh, gap = g["sc"], g["x0"], g["colw"], g["rowh"], 8
         if self.champ_team is not None and not 0 <= self.champ_team < len(self.teams):
             self.champ_team = None
-        nd, skin = min(3, len(ch.divisions)), min(self.champ_div, 2)
-        gw = nd * colw + (nd - 1) * gap # Top, in the middle: CLASSIFICA of series A / B / C.
-        xt = W // 2 - gw // 2
-        for d in range(nd):
-            self._champ_art_button(s, hits, vx, vy, "tab_table", d, sc, xt + d * (colw + gap), g["top"], ("ch_tabdiv", d),
-                                   self.champ_tab == "table" and self.champ_div == d, ctr("tab_table") + " " + div_name(d))
-        self._champ_art_button(s, hits, vx, vy, "tab_cal", skin, sc, 16, g["y0"], ("ch_tab", "calendar"), self.champ_tab == "calendar", ctr("tab_cal")) # Left, level with the table: CALENDARIO of the shown series.
-        ys = H // 2 - g["rowh"] // 2 # Left, halfway down: always the squad picture of the user's series.
-        self._champ_art_button(s, hits, vx, vy, "tab_squad", min(ch.user_div, 2), sc, 16, ys, ("ch_tab", "squad"), self.champ_tab == "squad", ctr("tab_squad"))
-        for j, t in enumerate(ctr("my_squad").rsplit(" ", 1) if " " in ctr("my_squad") else [ctr("my_squad")]):
-            self._put(t, 16, WHITE, ys + g["rowh"] + 14 + j * 18, cx=16 + colw // 2, w=colw + 12)
-        head = ctr("season", s=cm.season_label(ch.season)) + "   " + ctr("div", l=div_name(ch.user_div))
+        self._champ_banner(s)
+        skin = min(self.champ_div, 2) # Left column: CLASSIFICA and CALENDARIO (always the same series, see ch_tab), then LA MIA SQUADRA (fixed picture of the user's series).
+        y = g["y0"]
+        self._champ_art_button(s, hits, vx, vy, "tab_table", skin, sc, 16, y, ("ch_tab", "table"), self.champ_tab == "table", ctr("tab_table") + " " + div_name(self.champ_div))
+        self._champ_art_button(s, hits, vx, vy, "tab_cal", skin, sc, 16, y + fh + 10, ("ch_tab", "calendar"), self.champ_tab == "calendar", ctr("tab_cal") + " " + div_name(self.champ_div))
         extra = ctr("interrupted") if self.champ_paused else ctr("dirty") if self.champ_dirty else ""
-        ty = g["top"] + g["rowh"] // 2
-        self._put(head, 15, DIM, ty, left=x0, w=max(60, xt - x0 - 12))
         if extra:
-            self._put_right(extra, 16, WARN, ty, W - 16, max(60, W - 16 - (xt + gw) - 12))
+            self._put(extra, 14, WARN, y + 2 * fh + 34, cx=16 + fw // 2, w=fw + 8)
+        ys = g["bot"] - fh - 44
+        self._champ_art_button(s, hits, vx, vy, "tab_squad", min(ch.user_div, 2), sc, 16, ys, ("ch_tab", "squad"), self.champ_tab == "squad", ctr("tab_squad"))
+        mine = ctr("my_squad")
+        for j, t in enumerate(mine.rsplit(" ", 1) if " " in mine else [mine]):
+            self._put(t, 16, WHITE, ys + fh + 14 + j * 18, cx=16 + fw // 2, w=fw + 12)
         if self.champ_tab == "table":
             self._champ_table(s, hits, vx, vy)
         elif self.champ_tab == "calendar":
@@ -1143,12 +1365,12 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         else:
             self._champ_squad(s, hits, vx, vy)
         ry = g["row_y"]
-        lab_cy = ry + g["rowh"] + 12
+        lab_cy = ry + fh + 12
 
-        def btn(x, tag, name, label, selected=False): # Picture button with its text UNDER it (inside only when the picture is missing).
+        def btn(x, tag, name, label, selected=False): # Framed picture button with its text UNDER it (inside only when the picture is missing).
             self._champ_art_button(s, hits, vx, vy, name, 0, sc, x, ry, (tag,), selected, label)
             if self.art(name, 0, sc) is not None:
-                self._put(label, 16, WHITE, lab_cy, cx=x + colw // 2, w=colw + 2 * gap - 2)
+                self._put(label, 16, WHITE, lab_cy, cx=x + fw // 2, w=fw + 2 * gap - 2)
 
         def g_play(x):
             btn(x, "ch_season" if ch.finished else "ch_play", "play", ctr("next_season" if ch.finished else "play"))
@@ -1157,24 +1379,23 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             if self.champ_paused:
                 btn(x, "ch_resume", "sim", ctr("resume"), True)
                 return
-            w = 3 * colw + 2 * gap
+            w = 3 * fw + 2 * gap
             self._put(ctr("grp_sim"), 16, GOLD, ry - 16, cx=x + w // 2, w=w)
             pygame.draw.line(s, GOLD, (x, ry - 6), (x + w, ry - 6), 1)
             for j, (tag, name, key) in enumerate((("ch_sim", "sim", "sim_n"), ("ch_fast", "fast", "sim_f"), ("ch_now", "now", "sim_i"))):
-                btn(x + j * (colw + gap), tag, name, ctr(key))
+                btn(x + j * (fw + gap), tag, name, ctr(key))
 
         def g_save(x):
             btn(x, "ch_save", "save", ctr("save") + (" *" if self.champ_dirty else ""))
-            btn(x + colw + gap, "ch_slots", "slot", ctr("slot"))
+            btn(x + fw + gap, "ch_slots", "slot", ctr("slot"))
 
-        bwb = art_size("back")[0] * sc
         def g_back(x):
-            self.back_button(s, hits, vx, vy, x, ry, sc, pygame.Rect(x, ry, bwb, g["rowh"]))
+            self.back_button(s, hits, vx, vy, x, ry, sc)
 
-        groups = [(colw, g_play)]
+        groups = [(fw, g_play)]
         if not ch.finished:
-            groups.append((colw if self.champ_paused else 3 * colw + 2 * gap, g_sims))
-        groups += [(2 * colw + gap, g_save), (bwb, g_back)]
+            groups.append((fw if self.champ_paused else 3 * fw + 2 * gap, g_sims))
+        groups += [(2 * fw + gap, g_save), (fw, g_back)]
         space = (W - 32 - sum(w for w, _f in groups)) / float(len(groups) - 1) # The groups are equally spaced along the row.
         x = 16.0
         for w, fn in groups:
@@ -1188,15 +1409,16 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         shirts, bench = self._champ_squad_info()
         top = self._champ_top()
         x0, y0, tw = g["x0"], g["y0"], g["w"]
+        per = max(6, (tw - 250) // 78)
         for i, fname in enumerate(FORMATIONS): # formations
-            r = pygame.Rect(x0 + (i % 6) * 78, y0 + (i // 6) * 31, 74, 27)
+            r = pygame.Rect(x0 + (i % per) * 78, y0 + (i // per) * 31, 74, 27)
             self.draw_chip(s, r, fname, sq.formation == fname, r.collidepoint(vx, vy), TEAM_COL[0])
             hits.append((r, ("sq_form", fname)))
-        nfr = (len(list(FORMATIONS)) + 5) // 6
-        self._put(ctr("sq_hint"), 14, DIM, y0 + 13, left=x0 + 6 * 78 + 20, w=tw - 6 * 78 - 20)
-        y0 = y0 + nfr * 31 + 8
-        rh = max(16, min(23, (g["bot"] - y0 - 4) // (cm.ROSTER + 1)))
-        px = max(12, min(16, rh - 6))
+        nfr = (len(list(FORMATIONS)) + per - 1) // per
+        self._put(ctr("sq_hint"), 15, DIM, y0 + 13, left=x0 + min(per, len(list(FORMATIONS))) * 78 + 16, w=tw - min(per, len(list(FORMATIONS))) * 78 - 16)
+        y0 = y0 + nfr * 30
+        rh = max(18, min(26, (g["bot"] - y0 - 4) // (cm.ROSTER + 1)))
+        px = max(14, min(20, rh - 4))
         cols = (("sq_games", 44), ("sq_cond", 46), ("sq_skill", 46), ("sq_form", 46), ("sq_goals", 44), ("sq_yellow", 44), ("sq_red", 44), ("sq_state", 150), ("sq_fat", 130))
         cx_list, xr = [], x0 + tw
         for key, w in reversed(cols):
@@ -1206,6 +1428,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         name_w = cx_list[0][1] - (x0 + 56) - 6
         for key, xx, w in cx_list:
             self._put(ctr(key), px, DIM, y0 + rh // 2, cx=xx + w // 2)
+        self._put(ctr("lineup_n", n=len(shirts)), px, DIM if len(shirts) == 11 else WARN, y0 + rh // 2, left=x0 + 4, w=name_w) # Players named for the match.
         names = self._champ_player_names(ch.user)
         for i in range(cm.ROSTER):
             y = y0 + (i + 1) * rh
@@ -1254,9 +1477,9 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         if t == self.champ.user:
             top, sq = self._champ_top(), self.champ.squad
             st = [list(sq.effective(i, r, top)) for i, r in enumerate(st)]
-        rh = max(16, min(24, (bot - y0) // (cm.ROSTER + 1)))
-        px = max(12, min(17, rh - 6))
-        vw = 40
+        rh = max(16, min(26, (bot - y0) // (cm.ROSTER + 1)))
+        px = max(13, min(20, rh - 4))
+        vw = 46
         for n, key in enumerate(("c_cond", "c_skill", "c_form")):
             self._put(ctr(key), px, DIM, y0 + rh // 2, cx=x0 + tw - vw * (3 - n) + vw // 2)
         self._put_bold(self.champ_name(t), px + 4, GOLD, y0 + rh // 2, left=x0, w=tw - 3 * vw - 6)
@@ -1277,8 +1500,8 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         x0, y0 = g["x0"], g["y0"]
         tw = int(g["w"] * 0.58)
         cols = (("c_played", 34), ("c_won", 34), ("c_drawn", 34), ("c_lost", 34), ("c_gd", 42), ("c_pts", 40), ("c_cond", 38), ("c_skill", 38), ("c_form", 38))
-        rh = max(16, min(28, (g["bot"] - y0) // (len(rows) + 1)))
-        px = max(12, min(20, rh - 8))
+        rh = max(16, min(30, (g["bot"] - y0) // (len(rows) + 1)))
+        px = max(13, min(22, rh - 4))
         xr, xs = x0 + tw, []
         for key, w in reversed(cols):
             xr -= w
@@ -1307,12 +1530,14 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
                 put(str(vals[key]), px, stat_color(vals[key]) if key in ("c_cond", "c_skill", "c_form") else col, y + rh // 2, cx=cx)
         sel = self.champ_team if self.champ_team is not None else ch.user # Right: the players of the clicked team (the round and match info are in the calendar).
         self._champ_roster(s, sel, x0 + tw + 24, y0, g["w"] - tw - 24, g["bot"])
+
     def _champ_calendar(self, s, hits, vx, vy): # Left: every match of the user's team with its date; right: the whole round of the shown division.
         ch, g = self.champ, self._champ_geom()
         ud, d = ch.user_div, self.champ_div
         x0, y0, cw = g["x0"], g["y0"], int(g["w"] * 0.48)
         rh, nvis, cur = 22, self._champ_rows_visible(), ch.round_index()
         self._put(ctr("your_matches"), 16, DIM, y0 + 8, left=x0 + 4)
+        place = {row["team"]: n + 1 for n, row in enumerate(ch.standings(ud))} # Current place of every team of the user's series.
         self._put(ctr("cal_hint"), 14, DIM, y0 + 8, left=x0 + cw - 210, w=210)
         for k in range(nvis):
             r = self.champ_scroll + k
@@ -1337,7 +1562,9 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             self._put("%d" % (r + 1), 15, DIM, cy, cx=x0 + 16)
             self._put(self._champ_date(r, True), 14, DIM, cy, left=x0 + 34, w=56)
             self._put(ctr("home" if home else "away"), 15, DIM, cy, left=x0 + 96)
-            self._put(self.champ_name(opp), 15, col if sc is not None else WHITE, cy, left=x0 + 128, w=cw - 128 - 58)
+            self._put(self.champ_name(opp), 15, col if sc is not None else WHITE, cy, left=x0 + 128, w=cw - 128 - 58 - 78)
+            if opp in place: # Place of the opponent in the table (always up to date): "3° posto".
+                self._put_right(self._champ_place(place[opp]), 15, DIM, cy, x0 + cw - 62, 76)
             self._put(res, 15, col, cy, cx=x0 + cw - 30)
             hits.append((rect, ("ch_round", r)))
         rx, rw = x0 + cw + 24, g["w"] - cw - 24
@@ -1358,6 +1585,10 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
                 col = GOLD if ch.user in (h, a) else WHITE
                 px = max(13, min(20, lh - 8))
                 half = (rw - 90) // 2
+                for t, tr_ in ((h, pygame.Rect(cx - 36 - half, y - lh // 2, half + 6, lh)), (a, pygame.Rect(cx + 30, y - lh // 2, half + 6, lh))): # Click on a team: the table of the series with that team selected.
+                    if tr_.collidepoint(vx, vy):
+                        pygame.draw.rect(s, WHITE, tr_.inflate(0, -2), 1, border_radius=3)
+                    hits.append((tr_, ("ch_goto", t, d)))
                 self._put_right(self.champ_name(h), px, col, y, cx - 36, half)
                 self._put("%d-%d" % tuple(sc) if sc is not None else "-", px, col, y, cx=cx)
                 self._put(self.champ_name(a), px, col, y, left=cx + 36, w=half)

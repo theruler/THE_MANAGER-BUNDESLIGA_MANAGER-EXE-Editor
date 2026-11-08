@@ -32,7 +32,7 @@ from match_config import (AGON_AI_RATE, AGON_AI_SWING, AGON_CHASE_BONUS, AGON_DE
 
 
 FAT_SKIP = 6 # Fast championship simulation only: engine steps per fatigue update.
-FAST_FAT_RATE = 0.30 # Fast championship simulation only: fatigue (0..1) an average player (Fitness / Form resistance 1.0) piles up over 90 minutes of play, whatever the agonism bars say.
+FAST_FAT_RATE = 0.40 # Fast championship simulation only: fatigue (0..1) an average player (Fitness / Form resistance 1.0) piles up over 90 minutes of play, whatever the agonism bars say.
 FAST_FAT_VAR = (0.6, 1.5) # Fast championship simulation only: each player draws his own multiplier at the start of the match (some are tired at the end, most are not).
 SWEAT_HEAD_H = 1.0 # Field pixels from the feet row up to the top of the head.
 SWEAT_SPREAD = 2.0 # Sideways reach of the spray, in field pixels.

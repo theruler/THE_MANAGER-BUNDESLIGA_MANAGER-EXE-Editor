@@ -17,7 +17,7 @@ import pygame
 from game_utils import clamp
 from formation_system import formation_slots, FORMATIONS
 from i18n import ROLE_TAG, tr
-from layout import SU_H, SU_W
+from graphics_system import SU_H, SU_W
 from match_config import ROLE_ORDER, ROLE_POOLS, TEAM_COL, TEAM_NAMES
 from stats_system import ROLE_COL, stat_color
 
@@ -139,16 +139,10 @@ class SingleMatchMixin: # Team / formation / roster selection for the quick matc
 
     # ---------- drawing ----------
     def draw_single_match(self, s, bd, hits, vx, vy): # Team / formation / roster screen of the single match.
-        W = SU_W
-        s.fill(SINGLE_BG)
-        self._put(tr("intro.title"), 56, (232, 236, 255), 26, cx=W // 2)
-        self._put(tr("intro.subtitle"), 15, (130, 140, 190), 58, cx=W // 2, w=W - 300)
-        back = pygame.Rect(30, 16, 190, 32)
-        if self.art("back", 0, 2) is not None: # INDIETRO picture (3.VGA); the old chip when it is missing.
-            self.back_button(s, hits, vx, vy, 30, 8, 2)
-        else:
-            self.draw_chip(s, back, tr("intro.back"), False, back.collidepoint(vx, vy), (120, 170, 230), 20)
-            hits.append((back, ("back",)))
+        W = SU_W # The page background is the 22.CP picture (draw_intro); the surface is transparent.
+        self._put(tr("intro.title"), 56, (232, 236, 255), 26, cx=W // 2, shadow=True)
+        self._put(tr("intro.subtitle"), 15, (205, 215, 235), 58, cx=W // 2, w=W - 300, shadow=True)
+        self.back_button_br(s, hits, vx, vy) # Framed INDIETRO picture, always in the bottom right corner.
         names_ctl = (tr("intro.team_home"), tr("intro.team_away"))
         for c in (0, 1):
             self._draw_single_team(s, bd, hits, vx, vy, c, names_ctl)
@@ -156,9 +150,9 @@ class SingleMatchMixin: # Team / formation / roster selection for the quick matc
         ok = self.lineup_ready()
         bad = [c for c in (0, 1) if self.lineup_count(c) != 11]
         if bad:
-            self._put("   ".join("%s: %s" % (TEAM_NAMES[c], tr("intro.warn_lineup", n=self.lineup_count(c))) for c in bad), 17, (255, 170, 110), 622, cx=W // 2, w=W - 60)
-        else: # Line-up complete: the warning gives way to the hint about the shirt numbers.
-            self._put(tr("intro.hint_numbers"), 17, (130, 140, 190), 622, cx=W // 2, w=W - 60)
+            self._put("   ".join("%s: %s" % (TEAM_NAMES[c], tr("intro.warn_lineup", n=self.lineup_count(c))) for c in bad), 17, (255, 170, 110), 622, cx=W // 2, w=W - 60, shadow=True)
+        else: # Line-up complete: the warning gives way to the hint about the shirt numbers (right-aligned).
+            self._put_right(tr("intro.hint_numbers"), 17, (205, 215, 235), 622, W - 30, W - 60, shadow=True)
         row = 672 # START row.
         sb = pygame.Rect(W // 2 - 140, row - 22, 280, 44)
         hov = sb.collidepoint(vx, vy)
@@ -167,9 +161,9 @@ class SingleMatchMixin: # Team / formation / roster selection for the quick matc
         self._put(tr("intro.start"), 26, (255, 255, 255) if ok else (120, 126, 146), sb.centery, cx=sb.centerx, w=sb.w - 14)
         if ok:
             hits.append((sb, ("start",)))
-        self._put(tr("intro.footer"), 16, (150, 158, 205), ROSTER_BOTTOM + 17, cx=W // 2, w=W - 30) # Right under the team and player lists.
+        self._put(tr("intro.footer"), 16, (205, 215, 235), ROSTER_BOTTOM + 17, cx=W // 2, w=W - 30, shadow=True) # Right under the team and player lists.
 
-    def _draw_single_team(self, s, bd, hits, vx, vy, c, names_ctl): # One team column: header, logo + pitch + formations + team list, full numbered roster.
+    def _draw_single_team(self, s, bd, hits, vx, vy, c, names_ctl, with_list=True, panel_bottom=None): # One team column: header, logo + pitch + formations + team list (with_list), full numbered roster, all on a blue panel.
         x0 = 30 + c * 495
         col = TEAM_COL[c]
         td = self.team_data[c]
@@ -179,6 +173,7 @@ class SingleMatchMixin: # Team / formation / roster selection for the quick matc
             pygame.draw.rect(s, (255, 224, 90), hb, 2, border_radius=5)
         self._put(names_ctl[c], 21, (255, 255, 255), hb.centery, cx=hb.centerx)
         top = TOP
+        self.blue_panel(s, pygame.Rect(x0 - 6, hb.bottom + 2, 477, (ROSTER_BOTTOM + 4 if panel_bottom is None else panel_bottom) - hb.bottom - 2)) # Same blue box as the OPTIONS page, under the header.
         # --- logo and stylised pitch with the formation ---
         lg = pygame.Rect(x0+5, top, 110, 110)
         pygame.draw.rect(s, (8, 10, 24), lg)
@@ -207,30 +202,8 @@ class SingleMatchMixin: # Team / formation / roster selection for the quick matc
             r = pygame.Rect(x0 +1 + (i % 3) * 78, fy + (i // 3) * 33, 74, 28)
             self.draw_chip(s, r, fname, self.form_names[c] == fname, r.collidepoint(vx, vy), col)
             hits.append((r, ("form", c, fname)))
-        # --- team list: alphabetical, fills the column down to the bottom bar ---
-        order = self.team_order()
-        if self._su_last_sel.get(c) != self.sel[c]:
-            self._su_last_sel[c] = self.sel[c]
-            self.su_show(c)
-        self.su_scroll[c] = sc0 = int(clamp(self.su_scroll[c], 0, max(0, len(order) - LIST_ROWS)))
-        ly = LIST_Y
-        lr = pygame.Rect(x0, ly, 232, ROSTER_BOTTOM - ly)
-        pygame.draw.rect(s, bd.BG, lr)
-        for i, idx in enumerate(order[sc0:sc0 + LIST_ROWS]):
-            rr = pygame.Rect(x0, ly + 2 + i * 20, 226, 20)
-            if idx == self.sel[c]:
-                pygame.draw.rect(s, tuple(int(v * 0.6) for v in col), rr)
-            elif rr.collidepoint(vx, vy):
-                pygame.draw.rect(s, (36, 44, 92), rr)
-            self._put(self.teams[idx]["name"], 16, (255, 255, 255) if idx == self.sel[c] else bd.WHITE, rr.centery, left=x0 + 8, w=140)
-            for n, v in enumerate(self.teams[idx]["avg"]): # Team averages: Fitness, Skill, Form.
-                self._put(str(v), 14, stat_color(v), rr.centery, cx=x0 + 222 - 24 * (3 - n) + 12)
-            hits.append((rr, ("team", c, idx)))
-        if len(order) > LIST_ROWS:
-            th = max(18, int(lr.h * LIST_ROWS / len(order)))
-            ty = lr.y + int((lr.h - th) * sc0 / float(len(order) - LIST_ROWS))
-            pygame.draw.rect(s, (80, 90, 150), (x0 + 226, ty, 5, th), border_radius=2)
-        pygame.draw.rect(s, bd.FRAME, lr, 2)
+        if with_list:
+            self._draw_team_list(s, bd, hits, vx, vy, c, x0, col)
         # --- full roster: role, shirt number, name, Fitness / Skill / Form ---
         px0, rw = x0 + 238, 227
         vw = 24
@@ -260,3 +233,28 @@ class SingleMatchMixin: # Team / formation / roster selection for the quick matc
                 v = td["stats"][i][n]
                 self._put(str(v), 14, stat_color(v), rr.centery, cx=px0 + rw - vw * (3 - n) + vw // 2)
             hits.append((rr, ("num", c, i)))
+
+    def _draw_team_list(self, s, bd, hits, vx, vy, c, x0, col): # Alphabetical team list of column c: fills the column down to the bottom bar.
+        order = self.team_order()
+        if self._su_last_sel.get(c) != self.sel[c]:
+            self._su_last_sel[c] = self.sel[c]
+            self.su_show(c)
+        self.su_scroll[c] = sc0 = int(clamp(self.su_scroll[c], 0, max(0, len(order) - LIST_ROWS)))
+        ly = LIST_Y
+        lr = pygame.Rect(x0, ly, 232, ROSTER_BOTTOM - ly)
+        pygame.draw.rect(s, bd.BG, lr)
+        for i, idx in enumerate(order[sc0:sc0 + LIST_ROWS]):
+            rr = pygame.Rect(x0, ly + 2 + i * 20, 226, 20)
+            if idx == self.sel[c]:
+                pygame.draw.rect(s, tuple(int(v * 0.6) for v in col), rr)
+            elif rr.collidepoint(vx, vy):
+                pygame.draw.rect(s, (36, 44, 92), rr)
+            self._put(self.teams[idx]["name"], 16, (255, 255, 255) if idx == self.sel[c] else bd.WHITE, rr.centery, left=x0 + 8, w=140)
+            for n, v in enumerate(self.teams[idx]["avg"]): # Team averages: Fitness, Skill, Form.
+                self._put(str(v), 14, stat_color(v), rr.centery, cx=x0 + 222 - 24 * (3 - n) + 12)
+            hits.append((rr, ("team", c, idx)))
+        if len(order) > LIST_ROWS:
+            th = max(18, int(lr.h * LIST_ROWS / len(order)))
+            ty = lr.y + int((lr.h - th) * sc0 / float(len(order) - LIST_ROWS))
+            pygame.draw.rect(s, (80, 90, 150), (x0 + 226, ty, 5, th), border_radius=2)
+        pygame.draw.rect(s, bd.FRAME, lr, 2)
