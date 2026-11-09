@@ -48,6 +48,7 @@ from single_match_system import LIST_Y, ROSTER_BOTTOM, ROW_H
 from stats_system import ROLE_COL, norm, stat_color
 
 NOTE_SECS = 6.0
+FAT_TIRED = 60 # Above this tiredness (%) a player loses priority in the automatic line-up.
 CONFIRM_SECS = 3.0
 SETUP_COLS = 2
 SLOTS_PER_PAGE = 10 # Slots shown at once; the two arrows at the bottom left turn the page.
@@ -202,8 +203,8 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             self._champ_str, self._champ_str_key = cm.division_strengths(self.teams, self.champ.divisions), key
         return self._champ_str
 
-    def champ_say(self, text, warn=False):
-        self.champ_note = (text, time.time() + NOTE_SECS, warn)
+    def champ_say(self, text, warn=False, oneline=False): # oneline: shown on a single line, right-justified (lineup_short).
+        self.champ_note = (text, time.time() + NOTE_SECS, warn, oneline)
 
     def _champ_line(self, r, i, d=None): # "Round 3: A 2-1 B" for fixture i of round r.
         d = self.champ.user_div if d is None else d
@@ -361,9 +362,36 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
                 if lu[role][j] is None:
                     taken = {lu[r][k] for r, k in pos}
                     cands = [i for i in range(cm.ROSTER) if sq.available(i) and i not in taken]
-                    nat = [i for i in cands if self.natural_pool(i) == role]
-                    if nat or cands:
-                        lu[role][j] = max(nat or cands, key=lambda i: self.player_rating(0, i))
+                    pick = self._champ_pick(role, cands)
+                    if pick is not None:
+                        lu[role][j] = pick
+            sq.lineup, sq.formation = self.lineup[0], self.form_names[0]
+
+    def _champ_pick(self, role, cands): # Best player for a slot: highest average first, but a player above FAT_TIRED tiredness only comes after the fresh ones (a goalkeeper slot only takes goalkeepers when any is left).
+        sq = self.champ.squad
+        fresh = lambda i: sq.p[i]["fat"] <= FAT_TIRED
+        rate = lambda i: self.player_rating(0, i)
+        nat = [i for i in cands if self.natural_pool(i) == role]
+        others = [] if role == ROLE_ORDER[0] else [i for i in cands if i not in nat and self.natural_pool(i) != ROLE_ORDER[0]]
+        for pool in ([i for i in nat if fresh(i)], [i for i in others if fresh(i)], nat, cands):
+            if pool:
+                return max(pool, key=rate)
+        return None
+
+    def _champ_tired_swap(self): # After an automatic change of formation: every starter above FAT_TIRED is replaced by the best fresh available player of the same role (only when there is one).
+        ch = self.champ
+        sq = ch.squad
+        with self._champ_ctx(0, ch.user, sq.lineup, sq.formation):
+            pos = self.slot_positions(0)
+            lu = self.lineup[0]
+            for role, j in pos:
+                cur = lu[role][j]
+                if cur is None or sq.p[cur]["fat"] <= FAT_TIRED:
+                    continue
+                taken = {lu[r][k] for r, k in pos}
+                fresh = [i for i in range(cm.ROSTER) if sq.available(i) and i not in taken and sq.p[i]["fat"] <= FAT_TIRED and self.natural_pool(i) == role]
+                if fresh:
+                    lu[role][j] = max(fresh, key=lambda i: self.player_rating(0, i))
             sq.lineup, sq.formation = self.lineup[0], self.form_names[0]
 
     def _champ_check_lineup(self): # Before any match: 11 players named, or fewer only when nobody else is available. False = the match must not start (message shown).
@@ -374,7 +402,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             self.champ_say(ctr("lineup_err"), True)
             return False
         if len(named) < 11 and any(sq.available(i) and i not in named for i in range(cm.ROSTER)):
-            self.champ_say(ctr("lineup_short", n=len(named)), True)
+            self.champ_say(ctr("lineup_short", n=len(named)), True, True)
             return False
         return True
 
@@ -408,6 +436,8 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             return
         fn = {"num": lambda: self.assign_number(0, arg), "clear": lambda: self.clear_number(0, arg), "form": lambda: self.set_formation(0, arg)}[op]
         self._champ_edit(0, ch.user, sq, fn)
+        if op == "form": # The engine re-places the players for the new formation: tired ones give way to fresh ones.
+            self._champ_tired_swap()
         self._champ_repair(False) # A removed number stays removed: the line-up is free (checked before the match).
         self.champ_dirty = True
 
@@ -674,7 +704,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         sq = ch.squad
         xi = [i for v in (sq.lineup or {}).values() for i in v if i is not None]
         top, st = self._champ_top(), self.teams[ch.user]["stats"]
-        rows = [sq.effective(i, st[i], top) for i in xi] if xi else cm.best_rows(self.teams[ch.user])
+        rows = [sq.effective(i, st[i], top, cm.FAT_PAPER_K) for i in xi] if xi else cm.best_rows(self.teams[ch.user]) # Instant simulation: tiredness weighs more.
         mine = cm.rows_rating(rows)
         if xi and len(xi) < 11: # Fewer men: weaker attack and defence.
             mine = (mine[0] * len(xi) / 11.0, mine[1] * len(xi) / 11.0)
@@ -1059,21 +1089,22 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         note = self.champ_note
         if note and time.time() < note[1]:
             col = WARN if note[2] else GOLD
-            if hub: # Hub: the message sits in the last third of the page, on the row of the SIMULA label (up to two lines, the last one on that row).
-                x1 = W * 2 // 3
-                w = W - 16 - x1
+            if hub and len(note) > 3 and note[3]: # One line, right-justified, on the row of the SIMULA label.
+                x1 = 16
+                w = W - 32
+                txt = self.fit_text(note[0], 16, w)
+                self._put(txt, 16, col, self._champ_geom()["row_y"] - 16, left=W - 16 - self.board.font(16).size(txt)[0])
+            elif hub: # Hub: the message sits in the last third of the page, on the row of the SIMULA label (up to two lines, the last one on that row).
+                x1 = 16
+                w = W - 32
                 lines = self._wrap_text(note[0], 16, w, 2)
                 for j, ln in enumerate(reversed(lines)):
                     self._put(ln, 16, col, self._champ_geom()["row_y"] - 16 - j * 18, cx=x1 + w // 2, w=w)
             else:
                 self._put(note[0], 18, col, H - 14, cx=W // 2, w=W - 60)
 
-    def _champ_place(self, n): # "3° posto": the text champ.place of the language files when it exists, otherwise this default.
-        try:
-            t = ctr("place", n=n)
-        except Exception:
-            t = None
-        return t if t and not t.startswith("champ.") else "%d\u00b0 posto" % n
+    def _champ_place(self, n): # the text champ.place of the language files when it exists, otherwise this default.
+        return ctr("final_pos", n=n)
 
     def _wrap_text(self, txt, px, w, max_lines=2): # Break txt into at most max_lines lines of w pixels (the last one is cut when the text is still too long).
         font, lines, cur = self.board.font(px), [], ""
@@ -1409,15 +1440,21 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         shirts, bench = self._champ_squad_info()
         top = self._champ_top()
         x0, y0, tw = g["x0"], g["y0"], g["w"]
-        per = max(6, (tw - 250) // 78)
-        for i, fname in enumerate(FORMATIONS): # formations
-            r = pygame.Rect(x0 + (i % per) * 78, y0 + (i // per) * 31, 74, 27)
-            self.draw_chip(s, r, fname, sq.formation == fname, r.collidepoint(vx, vy), TEAM_COL[0])
-            hits.append((r, ("sq_form", fname)))
-        nfr = (len(list(FORMATIONS)) + per - 1) // per
-        self._put(ctr("sq_hint"), 15, DIM, y0 + 13, left=x0 + min(per, len(list(FORMATIONS))) * 78 + 16, w=tw - min(per, len(list(FORMATIONS))) * 78 - 16)
-        y0 = y0 + nfr * 30
-        rh = max(18, min(26, (g["bot"] - y0 - 4) // (cm.ROSTER + 1)))
+        fl = list(FORMATIONS) # One formation chip, just above the LA MIA SQUADRA button: a click cycles through the formations.
+        fw_, fh_ = g["colw"], g["rowh"]
+        chip = pygame.Rect(16, g["bot"] - fh_ - 44 - 27 - 8 + 4, fw_, 27)
+        cur = fl.index(sq.formation) if sq.formation in fl else -1
+        self.draw_chip(s, chip, sq.formation or "-", True, chip.collidepoint(vx, vy), TEAM_COL[0])
+        hits.append((chip, ("sq_form", fl[(cur + 1) % len(fl)])))
+        note = self.champ_note
+        if not (note and time.time() < note[1] and len(note) > 3 and note[3]): # The hint gives way to the one-line message (lineup_short).
+            txt = self.fit_text(ctr("sq_hint"), 15, tw)
+            self._put(txt, 15, DIM, g["row_y"] - 16, left=SU_W - 16 - self.board.font(15).size(txt)[0])
+        roles = [self.natural_pool(i) for i in range(cm.ROSTER)]
+        gaps = [0] * cm.ROSTER # Extra pixels above each row: 2 more between one role group and the next.
+        for i in range(1, cm.ROSTER):
+            gaps[i] = gaps[i - 1] + (10 if roles[i] != roles[i - 1] else 0)
+        rh = max(18, min(26, (g["bot"] - y0 - 4 - gaps[-1]) // (cm.ROSTER + 1)))
         px = max(14, min(20, rh - 4))
         cols = (("sq_games", 44), ("sq_cond", 46), ("sq_skill", 46), ("sq_form", 46), ("sq_goals", 44), ("sq_yellow", 44), ("sq_red", 44), ("sq_state", 150), ("sq_fat", 130))
         cx_list, xr = [], x0 + tw
@@ -1431,8 +1468,11 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         self._put(ctr("lineup_n", n=len(shirts)), px, DIM if len(shirts) == 11 else WARN, y0 + rh // 2, left=x0 + 4, w=name_w) # Players named for the match.
         names = self._champ_player_names(ch.user)
         for i in range(cm.ROSTER):
-            y = y0 + (i + 1) * rh
+            y = y0 + (i + 1) * rh + gaps[i]
             rr = pygame.Rect(x0, y, tw, rh - 2)
+            if i and gaps[i] > gaps[i - 1]:
+                line_y = y - 6
+                pygame.draw.line(s, WHITE, (x0 + 10, line_y), (x0 + tw - 10, line_y), 3)
             rec = sq.p[i]
             skey, sleft, scol = self._champ_state(i, shirts, bench)
             avail = sq.available(i)
@@ -1440,7 +1480,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             if rr.collidepoint(vx, vy):
                 pygame.draw.rect(s, (255, 255, 255), rr, 1, border_radius=3)
             cy = y + rh // 2 - 1
-            role = self.natural_pool(i)
+            role = roles[i]
             self._put(ROLE_TAG[role], px - 2, ROLE_COL[role], cy, cx=x0 + 14)
             if shirts.get(i):
                 self._put(str(shirts[i]), px, WHITE, cy, cx=x0 + 40)
@@ -1567,14 +1607,31 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
                 self._put_right(self._champ_place(place[opp]), 15, DIM, cy, x0 + cw - 62, 76)
             self._put(res, 15, col, cy, cx=x0 + cw - 30)
             hits.append((rect, ("ch_round", r)))
-        rx, rw = x0 + cw + 24, g["w"] - cw - 24
-        cx = rx + rw // 2
-        for rect, tag, label in ((pygame.Rect(rx, y0, 44, 32), ("ch_step", -1), "<"), (pygame.Rect(rx + rw - 44, y0, 44, 32), ("ch_step", 1), ">")):
-            self._champ_button(s, hits, vx, vy, rect, label, tag, 22)
-        self._put(ctr("round", n=self.champ_round + 1, tot=ch.total_rounds()), 24, GOLD if self.champ_round == cur else WHITE, y0 + 16, cx=cx, w=rw - 100)
+    
+            rx, rw = x0 + cw + 24, g["w"] - cw - 24
+            cx = rx + rw // 2
+            
+            self.blue_panel(s, pygame.Rect(rx, y0+60, rw, g["bot"] - y0-60))
+            
+            if ch.total_rounds() > 1: # LEFT / RIGHT arrows.
+                fw, fh = int(FRAME_W * 1.5), int(FRAME_H * 1.5)
+                for name, delta, lab, bx in (
+                    ("arrow_left", -1, "<", rx),
+                    ("arrow_right", 1, ">", rx + rw - fw),
+                ):
+                    ok = 0 <= self.champ_round + delta < ch.total_rounds()
+                    r = self.framed_button(s, hits, vx, vy, name, 0, 1.5, bx, y0 + (32 - fh) // 2, ("ch_step", delta), False, lab, ok)
+                    if not ok:
+                        dim = pygame.Surface(r.size, pygame.SRCALPHA)
+                        dim.fill((0, 0, 30, 150))
+                        s.blit(dim, r)
+    
+        self._put(ctr("round", n=self.champ_round + 1, tot=ch.total_rounds()), 24, GOLD if self.champ_round == cur else WHITE, y0 + 16, cx=cx, w=rw - (2 * fw + 16) if ch.total_rounds() > 1 else rw)
+    
         lines = [ln for ln in self._champ_round_lines(self.champ_round) if ln]
         for j, ln in enumerate(lines):
             self._put(ln, 15, DIM, y0 + 44 + j * 16, cx=cx, w=rw)
+    
         top = y0 + 48 + max(1, len(lines)) * 16 + 4
         if self.champ_round < len(ch.rounds[d]):
             fx = ch.rounds[d][self.champ_round]

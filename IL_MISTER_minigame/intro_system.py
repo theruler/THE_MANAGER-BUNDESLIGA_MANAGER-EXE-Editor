@@ -300,22 +300,26 @@ class IntroMixin: # Main menu, OPTIONS, joypad mapping and intro input dispatch.
 
     def framed_button(self, s, hits, vx, vy, name, idx, sc, x, y, tag, selected=False, fb_label="", clickable=True): # Picture of 3.VGA centred in its frame (24.VGA; 25.VGA while the mouse button is held on it). Returns the outer (frame) rect.
         outer = pygame.Rect(x, y, FRAME_W * sc, FRAME_H * sc)
-        bw, bh = art_size(name)
-        inner = pygame.Rect(0, 0, bw * sc, bh * sc)
-        inner.center = outer.center
         hov = outer.collidepoint(vx, vy) and clickable
-        frame = self.art("frame_down" if hov and self._press_rect == tuple(outer) else "frame", 0, sc) # 25.VGA while the mouse button is held on this button
+        frame = self.art("frame_down" if hov and self._press_rect == tuple(outer) else "frame", 0, sc)
         if frame is not None:
             s.blit(frame, outer)
+    
         img = self.art(name, idx, sc)
         if img is None:
+            bw, bh = art_size(name)
+            inner = pygame.Rect(0, 0, bw * sc, bh * sc)
+            inner.center = outer.center
             self.draw_generic_button(s, inner, self.fit_text(fb_label, 16, inner.w - 12), selected, hov, px=16)
         else:
+            inner = img.get_rect(center=outer.center)
             s.blit(img, inner)
-            if selected: # yellow frame, 1 pixel inside the old one (overlapping the picture)
-                pygame.draw.rect(s, (255, 224, 90), inner.inflate(4, 4), 3)
+            p = max(1, round(sc)) # One original pixel, proportionally scaled.
+            if selected:
+                pygame.draw.rect(s, (255, 224, 90), inner.inflate(2 * p, 2 * p), p)
             elif hov:
-                pygame.draw.rect(s, (255, 224, 90), inner.inflate(2, 2), 2)
+                pygame.draw.rect(s, (OPT_WARN), inner.inflate(2 * p, 2 * p), p)
+    
         if clickable:
             hits.append((outer, tag))
         return outer

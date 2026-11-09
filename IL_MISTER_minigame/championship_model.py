@@ -39,6 +39,8 @@ FAT_MATCH, FAT_REST, FAT_PLAYED = 45, 25, 10 # Fatigue (0-100): gained by a full
 FAT_FAST_GAIN, FAT_FAST_RAND = 36, (0.5, 1.5) # SIMULA VELOCE / SUBITO: fatigue gained by a full match (random share of it, fitter players gain less)...
 FAT_FAST_PLAYED, FAT_FAST_REST = 0.25, 0.50 # ...and the share of the fatigue lost after a match played / missed (bench, injured, suspended): rest pays off.
 FAT_COND = 0.30 # Fatigue 100 takes this share of the top value off the player's Condition.
+FAT_FORM = 0.30 # ...and this share off the player's Form: a tired player is also out of form.
+FAT_PAPER_K = 1.8 # SIMULA SUBITO (on paper): the tiredness penalty (Condition and Form) is multiplied by this, so that a tired eleven plays clearly worse.
 INJ_BASE, INJ_FAT = 0.008, 0.04 # Chance of an injury per match played: base + fatigue term (engine injuries are added to it).
 FORM_CAP, FORM_GOAL = 15, 2 # The Form of a player moves by at most FORM_CAP (in 1/100 of the top value); a goal is worth FORM_GOAL.
 BASE_GOALS, HOME_BONUS = 1.30, 1.10 # Match simulation: average goals per team (equal strengths), home factor.
@@ -140,12 +142,13 @@ class Squad:
     def available(self, i): # Can player i be named for the next match?
         return self.p[i]["inj"] <= 0 and self.p[i]["susp"] <= 0
 
-    def effective(self, i, base, top): # (Condition, Skill, Form) the engine uses: tiredness lowers Condition, results move Form.
+    def effective(self, i, base, top, k=1.0): # (Condition, Skill, Form) the engine uses: tiredness lowers Condition AND Form, results move Form. k scales the tiredness penalty (SIMULA SUBITO uses FAT_PAPER_K).
         c, t, f = base[0], base[1], base[2]
         r, lo = self.p[i], 1 if top > 1 else 0
         def clamp(v, b):
             return max(min(b, lo), min(top, v))
-        return (clamp(c - round(top * FAT_COND * r["fat"] / 100.0), c), t, clamp(f + round(top * r["formd"] / 100.0), f))
+        tired = top * k * r["fat"] / 100.0
+        return (clamp(c - round(FAT_COND * tired), c), t, clamp(f + round(top * r["formd"] / 100.0) - round(FAT_FORM * tired), f))
 
     def after_match(self, played, goals, yellows, reds, result, hurt=(), rng=random, fit=None):
         """Book one championship match of the user's team.

@@ -34,7 +34,7 @@ import sprite_data
 import stats_system
 import substitution_system
 
-VERSION = "1.5.6"
+VERSION = "1.6.1"
 
 class Game(intro_system.IntroMixin, championship_system.ChampionshipMixin, single_match_system.SingleMatchMixin, stats_system.StatsMixin, agonism_system.AgonismMixin,
              restart_system.RestartMixin, input_system.InputMixin, match_log_system.MatchLogMixin, replay_system.ReplayMixin,
