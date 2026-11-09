@@ -14,7 +14,7 @@ TEXTS_IT = {
     'menu.quick_match': 'PARTITA VELOCE',
     'menu.exit': 'USCITA',
     'menu.sure': 'Sei sicuro?',
-    'menu.yes': 'SÌ',
+    'menu.yes': 'Sì',
     'menu.no': 'NO',
     'menu.championship_soon': 'Prossimamente',
 
