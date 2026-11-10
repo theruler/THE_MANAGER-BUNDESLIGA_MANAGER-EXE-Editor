@@ -36,15 +36,14 @@ Executable profiles are detected automatically. File names do not matter.
 
 Strings can be modified and enlarged at will.
 
-<img width="1277" height="927" alt="immagine" src="https://github.com/user-attachments/assets/c8bdfc55-a9ae-4292-8f13-75dd758dee4e" />
+<img width="1287" height="932" alt="image" src="https://github.com/user-attachments/assets/4c121d91-2300-4896-aee1-b1df7aa64bd6" />
 
 
 ## Font Editor
 Fonts can be freely modified and remapped, the string editor will interpret and show the mapped character, while converting the hex value into the string.
 Accented letters can be modified and replaced. Width of the single char can be adjusted.
 
-<img width="1276" height="926" alt="immagine" src="https://github.com/user-attachments/assets/31080ede-511c-4a10-9def-45877b0614f0" />
-
+<img width="1281" height="935" alt="image" src="https://github.com/user-attachments/assets/5888792f-b742-44e1-bfa1-cc6bf983809e" />
 
 
 ## Gameplay options change
