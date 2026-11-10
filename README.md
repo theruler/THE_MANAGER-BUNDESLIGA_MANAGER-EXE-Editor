@@ -136,15 +136,21 @@ Extract the content of the "Il_mister" archive into THE MANAGER game's original 
 
 <img width="1017" height="771" alt="immagine" src="https://github.com/user-attachments/assets/6ee2d0bb-90ef-4c6f-a229-47f32a98ea2f" />
 
+
 <img width="1022" height="765" alt="immagine" src="https://github.com/user-attachments/assets/caee4c04-c3cb-4b8c-b629-a0cbd6126c97" />
+
 
 <img width="1018" height="763" alt="immagine" src="https://github.com/user-attachments/assets/f84806ca-7d11-4fec-b65d-cb8faa1b04d4" />
 
+
 <img width="1015" height="765" alt="immagine" src="https://github.com/user-attachments/assets/d57ce986-91cc-4b08-92ca-396ea69e01d6" />
+
 
 <img width="1020" height="770" alt="immagine" src="https://github.com/user-attachments/assets/00e8d201-d0ba-4b38-96ec-6da34971d89c" />
 
+
 <img width="1018" height="804" alt="immagine" src="https://github.com/user-attachments/assets/3a0d5af6-3057-4d5d-9162-527cbf375bdd" />
+
 
 <img width="1437" height="863" alt="immagine" src="https://github.com/user-attachments/assets/6259a003-958e-41b1-b5aa-8d23b6520a64" />
 
