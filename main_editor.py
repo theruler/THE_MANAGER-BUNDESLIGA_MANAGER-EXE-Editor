@@ -2,7 +2,8 @@ import os
 import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from exe_handler import unpack_in_memory, get_mz_relocation_sites, detect_game_profile, GAME_PROFILES, EXE_FONT_PROFILES
+from exe_handler import (unpack_in_memory, get_mz_relocation_sites, detect_game_profile, GAME_PROFILES,
+                         EXE_FONT_PROFILES, BMH_EXE_PROFILES, detect_bmh_exe_profile)
 from charmap import CharmapEncodeError
 from translation_bar import TranslationBar
 from utils import (load_config, save_config, get_game_config, set_translator as _set_utils_translator)
@@ -51,6 +52,48 @@ APP_VERSION = "2.9.9"
 APP_TITLE = f"THE MANAGER/BMP-FLTD/BMH Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
+
+
+_FS_WARN_AT = 85.0      # percent used
+_FS_BAD_AT = 95.0
+_FS_COLORS = {"Ok": "#27AE60", "Warn": "#E67E22", "Bad": "#C0392B"}
+_FS_TEXT_COLORS = {"Ok": "#2980B9", "Warn": "#E67E22", "Bad": "#C0392B"}
+
+
+class FreeSpaceBar(ttk.Frame):
+    """Single "space used" widget, defined here and used by the main editor AND handed to the BMH
+    panels (bmh_editor.BMHExeStringsPanel(space_bar_factory=FreeSpaceBar)).
+    One line, right-aligned:  [#######-----]  text.  The bar shows the USED share and turns
+    orange / red as room runs out; the caller supplies numbers and text (no prefix added here)."""
+
+    def __init__(self, parent, bar_length=220, **kwargs):
+        super().__init__(parent, **kwargs)
+        style = ttk.Style(self)
+        for level, color in _FS_COLORS.items():
+            style.configure(f"FreeSpace{level}.Horizontal.TProgressbar", background=color)
+        inner = ttk.Frame(self)
+        inner.pack(side=tk.RIGHT)                     # everything hugs the right edge
+        self.bar = ttk.Progressbar(inner, orient=tk.HORIZONTAL, length=bar_length,
+                                   mode="determinate", maximum=100)
+        self.bar.pack(side=tk.LEFT, padx=(0, 8))
+        self.label = ttk.Label(inner, text="", font=("Segoe UI", 9), anchor=tk.E, justify=tk.RIGHT)
+        self.label.pack(side=tk.LEFT)
+
+    @staticmethod
+    def level(percent_used, error=False):
+        if error or percent_used >= _FS_BAD_AT:
+            return "Bad"
+        return "Warn" if percent_used >= _FS_WARN_AT else "Ok"
+
+    def set(self, used, capacity, text, error=False):
+        percent = (100.0 * used / capacity) if capacity else 0.0
+        level = self.level(percent, error)
+        self.bar.config(value=min(100.0, percent), style=f"FreeSpace{level}.Horizontal.TProgressbar")
+        self.label.config(text=text, foreground=_FS_TEXT_COLORS[level])
+
+    def clear(self):
+        self.bar.config(value=0, style="FreeSpaceOk.Horizontal.TProgressbar")
+        self.label.config(text="")
 
 
 class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
@@ -464,8 +507,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.current_range_label.pack(side=tk.LEFT)
         self.space_stats_label = ttk.Label(info_frame, text="", font=("Segoe UI", 9, "italic"), foreground="#2980B9")
         self.space_stats_label.pack(side=tk.RIGHT)
-        self.pool_free_label = ttk.Label(edit_frame,text="", font=("Segoe UI", 9), foreground="#566573", anchor=tk.E, justify=tk.RIGHT,)
-        self.pool_free_label.pack(anchor=tk.W, fill=tk.X, pady=(3, 0))
+        self.pool_free_bar = FreeSpaceBar(edit_frame)
+        self.pool_free_bar.pack(fill=tk.X, pady=(3, 0))
         ctrl_row = ttk.Frame(edit_frame)
         ctrl_row.pack(fill=tk.X, pady=(10, 0))
         self.apply_edit_button = ttk.Button(ctrl_row, command=self.apply_edit)
@@ -657,6 +700,16 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             on_change=self._update_save_state,
         )
         self.bmh_panel.pack(fill=tk.BOTH, expand=True)
+        self.tab_bmh_exe = ttk.Frame(self.notebook)
+        self.bmh_exe_panel = bmh_editor.BMHExeStringsPanel(
+            self.tab_bmh_exe,
+            space_bar_factory=FreeSpaceBar,
+            reg=self._reg,
+            translate_var=self.translate_enabled_var,
+            on_translate_toggle=self.on_translate_toggle,
+            on_change=self._update_save_state,
+        )
+        self.bmh_exe_panel.pack(fill=tk.BOTH, expand=True)
         self.bmh_vga = {}
         for folder in ("KB", "W"):
             tab = ttk.Frame(self.notebook)
@@ -823,8 +876,13 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         )
 
     def _bmh_unsaved(self) -> bool:
-        panel = getattr(self, "bmh_panel", None)
-        return bool(self.bmh_game and panel is not None and (panel.is_dirty() or panel.has_pending_edit()))
+        if not self.bmh_game:
+            return False
+        for name in ("bmh_panel", "bmh_exe_panel"):
+            panel = getattr(self, name, None)
+            if panel is not None and (panel.is_dirty() or panel.has_pending_edit()):
+                return True
+        return False
 
     def _has_unsaved_changes(self) -> bool:
         return bool(
@@ -874,9 +932,9 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
     def _update_save_state(self):
         if getattr(self, "bmh_game", None):
-            panel = self.bmh_panel
-            can_save = bool(not panel.has_pending_edit()
-                            and (panel.is_dirty() or self.font_editor.fnt_dirty()))
+            panels = (self.bmh_panel, self.bmh_exe_panel)
+            can_save = bool(not any(p.has_pending_edit() for p in panels)
+                            and (any(p.is_dirty() for p in panels) or self.font_editor.fnt_dirty()))
             self.save_button.config(state=tk.NORMAL if can_save else tk.DISABLED)
             self._set_menu_state(self.save_menu_entries, can_save)
             return
@@ -974,13 +1032,14 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         return False
 
     def _can_change_bmh_charmap(self) -> bool:
-        if not self.bmh_panel.has_pending_edit():
+        if not (self.bmh_panel.has_pending_edit() or self.bmh_exe_panel.has_pending_edit()):
             return True
         messagebox.showwarning(self.tr("dlg.pending_text.title"), self.tr("dlg.pending_charmap.msg"))
         return False
 
     def _on_bmh_charmap_changed(self):
         self.bmh_panel.refresh_texts()
+        self.bmh_exe_panel.refresh_texts()
         self._update_save_state()
 
     def _on_charmap_changed(self, game_name: str, font_key: str, charmap: dict):
@@ -1036,17 +1095,19 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             self.translation_bar.set_default_source_from_profile(self.profile_name)
         if target:
             self.translation_bar.set_default_target_from_language(self.language)
-        bmh_panel = getattr(self, "bmh_panel", None)
-        if bmh_panel is not None:
-            bmh_panel.apply_defaults(
-                source_label=self.bmh_game["label"] if (source and self.bmh_game) else None,
-                target_language=self.language if target else None,
-            )
+        for name in ("bmh_panel", "bmh_exe_panel"):
+            bmh_panel = getattr(self, name, None)
+            if bmh_panel is not None:
+                bmh_panel.apply_defaults(
+                    source_label=self.bmh_game["label"] if (source and self.bmh_game) else None,
+                    target_language=self.language if target else None,
+                )
 
     def on_translate_toggle(self):
         self._update_translate_all_state()
         if self.bmh_game:
             self.bmh_panel.set_translate_enabled(self.translate_enabled_var.get())
+            self.bmh_exe_panel.set_translate_enabled(self.translate_enabled_var.get())
             return
         panel = self._active_newspaper_panel()
         if panel is not None:
@@ -1585,9 +1646,19 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         win.wait_window()
         return result["ids"]
 
+    def _active_bmh_panel(self):
+        """The BMH tab being looked at (BLK strings or EXE strings)."""
+        try:
+            on_exe = self.notebook.select() == str(self.tab_bmh_exe)
+        except tk.TclError:
+            on_exe = False
+        if on_exe and self.bmh_exe_panel.loaded:
+            return self.bmh_exe_panel
+        return self.bmh_panel if self.bmh_panel.loaded else self.bmh_exe_panel
+
     def translate_all(self):
         if self.bmh_game:
-            self.bmh_panel.translate_all(self.root)
+            self._active_bmh_panel().translate_all(self.root)
             return
         if not self._supported_loaded() or not self.entries:
             messagebox.showinfo(self.tr("dlg.translate_all.title"), self.tr("dlg.translate_all.none"))
@@ -2035,6 +2106,12 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         )
 
     def show_changes_preview(self):
+        if getattr(self, "bmh_game", None) and self.bmh_exe_panel.loaded:
+            if self.bmh_exe_panel.has_pending_edit():
+                messagebox.showwarning(self.tr("dlg.save.blocked"), self.tr("block.text_pending"))
+                return False
+            bmh_editor.show_exe_preview(self.root, self.bmh_exe_panel)
+            return True
         if not self._supported_loaded():
             messagebox.showwarning(self.tr("dlg.preview.warn"), self.tr("dlg.preview.load_first"))
             return False
@@ -2115,7 +2192,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.space_stats_label.config(text="")
         self.translate_status_label.config(text="")
         self.current_range_label.config(text="")
-        self.pool_free_label.config(text="")
+        self.pool_free_bar.clear()
         self._set_profile("header.profile_none")
         self.filename_label.config(text="")
         self._set_status("header.no_file")
@@ -2125,6 +2202,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.mana_editor_panel.show_placeholder()
         self.bmh_panel.clear()
         self._hide_tab(self.tab_bmh)
+        self.bmh_exe_panel.clear()
+        self._hide_tab(self.tab_bmh_exe)
         for tab, panel in self.bmh_vga.values():
             self._clear_vga_panel(panel, "")
             self._hide_tab(tab)
@@ -2201,11 +2280,11 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.root.destroy()
 
     def update_extended_pool_free_label(self):
-        label = getattr(self, "pool_free_label", None)
-        if label is None:
+        bar = getattr(self, "pool_free_bar", None)
+        if bar is None:
             return
         if not self.profile or not self.exe_data:
-            label.config(text="")
+            bar.clear()
             return
         data = self.exe_data
         string_spans = []
@@ -2265,12 +2344,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 f"    EXTRA: {fmt(extra_free)} / {fmt(extra_capacity)}"
                 f"    MAIN: {fmt(main_free)} / {fmt(main_capacity)}"
             )
-        label.config(
-            text=(
-                f"FREE SPACE: {fmt(total_free)} / "
-                f"{fmt(total_capacity)} byte    ({details})"
-            )
-        )
+        bar.set(total_capacity - total_free, total_capacity,
+                f"{fmt(total_free)} / {fmt(total_capacity)} byte free    ({details})")
 
     def _find_gaps(self, entries, relocation_sites):
         try:
@@ -2313,8 +2388,20 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
     def _try_load_bmh(self, filepath) -> bool:
         """Bundesliga Manager Hattrick: FLTD.EXE (ENG) / BMH.EXE (GER) + TEXTE.BLK / TEXTD.BLK.
+        A BMH.EXE build with an exe_handler.BMH_EXE_PROFILES profile also gets the "BMH EXE Strings"
+        tab (strings stored inside the executable).
         Returns True when the file was a BMH executable (handled, successfully or not)."""
         game = bmh_editor.detect_game(filepath)
+        exe_data, exe_profile = None, None
+        try:
+            with open(filepath, "rb") as handle:
+                exe_data = handle.read()
+            exe_profile = detect_bmh_exe_profile(exe_data)
+        except OSError:
+            exe_data = None
+        if game is None and exe_profile is not None:          # renamed executable: trust the content
+            prof = BMH_EXE_PROFILES[exe_profile]
+            game = {"label": prof["label"], "blk": prof["blk"], "lang": prof["lang"]}
         if game is None:
             return False
         exe_dir = os.path.dirname(os.path.abspath(filepath))
@@ -2324,22 +2411,35 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 title=f"{game['blk']} not found in {exe_dir} - locate it",
                 initialdir=exe_dir,
                 filetypes=[("BLK", "*.BLK"), ("All Files", "*.*")])
-            if not blk_path:
+            if not blk_path and exe_profile is None:
                 return True
-        try:
-            with open(blk_path, "rb") as handle:
-                data = handle.read()
-            probe = bmh_editor.TextDb.from_bytes(data)
-        except (OSError, bmh_editor.BMHFormatError) as exc:
-            messagebox.showerror(self.tr("dlg.load.failed"), self.tr("dlg.load.failed_msg", error=exc))
-            return True
-        del probe
+        blk_data = None
+        if blk_path:
+            try:
+                with open(blk_path, "rb") as handle:
+                    blk_data = handle.read()
+                probe = bmh_editor.TextDb.from_bytes(blk_data)
+            except (OSError, bmh_editor.BMHFormatError) as exc:
+                messagebox.showerror(self.tr("dlg.load.failed"), self.tr("dlg.load.failed_msg", error=exc))
+                return True
+            del probe
         self._reset_state()
         self.bmh_game = game
         self.source_path = os.path.abspath(filepath)
         bmh_editor.set_charmap(load_config().get("bmh_charmap", {}))
-        self.bmh_panel.load(os.path.abspath(blk_path), data)
-        self.notebook.add(self.tab_bmh, text="BMH Strings")
+        if blk_data is not None:
+            self.bmh_panel.load(os.path.abspath(blk_path), blk_data)
+            self.notebook.add(self.tab_bmh, text="BMH Strings")
+        exe_tab = False
+        if exe_profile is not None:
+            try:
+                self.bmh_exe_panel.load(self.source_path, exe_data)
+                # always the first tab on the left (insert() also moves a tab that was hidden before)
+                self.notebook.insert(0, self.tab_bmh_exe, text="BMH EXE Strings")
+                self.notebook.tab(self.tab_bmh_exe, state="normal")
+                exe_tab = True
+            except bmh_editor.BMHExeError as exc:
+                messagebox.showwarning("BMH EXE Strings", str(exc))
         for folder, (tab, panel) in self.bmh_vga.items():
             pic_dir = bmh_editor.find_dir_ci(exe_dir, folder)
             if pic_dir:
@@ -2348,11 +2448,15 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
                 self._clear_vga_panel(panel, f"Cartella {folder} non trovata in: {exe_dir}")
             self.notebook.add(tab, text=f"VGA {folder}")
         self._autoload_bmh_fonts(exe_dir)
-        self.notebook.select(self.tab_bmh)
-        self.filename_label.config(text=f"({os.path.basename(filepath)} + {os.path.basename(blk_path)})")
+        self.notebook.select(self.tab_bmh_exe if exe_tab else self.tab_bmh)
+        names = [os.path.basename(filepath)]
+        if blk_data is not None:
+            names.append(os.path.basename(blk_path))
+        self.filename_label.config(text=f"({' + '.join(names)})")
         self._set_profile(value=game["label"])
         self._apply_translation_defaults(source=True)
         self.bmh_panel.set_translate_enabled(self.translate_enabled_var.get())
+        self.bmh_exe_panel.set_translate_enabled(self.translate_enabled_var.get())
         self._set_menu_state([(self.tools_menu, 11)], True)
         self._update_translate_all_state()
         self._update_save_state()
@@ -2386,8 +2490,11 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         editor = self.font_editor
         if editor.fnt_dirty() and not editor.save_all_fnt():
             return False
+        return self._save_bmh_blk() and self._save_bmh_exe()
+
+    def _save_bmh_blk(self):
         panel = self.bmh_panel
-        if not panel.is_dirty():
+        if not panel.loaded or not panel.is_dirty():
             return True
         if panel.has_pending_edit():
             messagebox.showwarning(self.tr("dlg.save.blocked"), self.tr("block.text_pending"))
@@ -2397,10 +2504,32 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         except bmh_editor.BMHFormatError as exc:
             messagebox.showerror(self.tr("dlg.save.blocked"), str(exc))
             return False
+        return self._write_bmh_file(panel, payload, ".BLK", [("BLK", "*.BLK"), ("All Files", "*.*")])
+
+    def _save_bmh_exe(self):
+        """Write the strings edited in the "BMH EXE Strings" tab into the executable."""
+        panel = self.bmh_exe_panel
+        if not panel.loaded or not panel.is_dirty():
+            return True
+        if panel.has_pending_edit():
+            messagebox.showwarning(self.tr("dlg.save.blocked"), self.tr("block.text_pending"))
+            return False
+        try:
+            payload = panel.payload()
+        except (bmh_editor.BMHExeError, bmh_editor.BMHEncodeError) as exc:
+            messagebox.showerror(self.tr("dlg.save.blocked"), str(exc))
+            return False
+        saved = self._write_bmh_file(panel, payload, ".exe", [("DOS Executable", "*.exe"), ("All Files", "*.*")])
+        if saved:
+            self.source_path = panel.path
+        return saved
+
+    def _write_bmh_file(self, panel, payload, extension, filetypes):
+        """Save dialog + external-change check + backup + atomic write shared by BLK and EXE."""
         filepath = filedialog.asksaveasfilename(
             title=self.tr("fd.save_exe"),
-            defaultextension=".BLK",
-            filetypes=[("BLK", "*.BLK"), ("All Files", "*.*")],
+            defaultextension=extension,
+            filetypes=filetypes,
             initialfile=os.path.basename(panel.path),
             initialdir=os.path.dirname(panel.path),
         )

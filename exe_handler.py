@@ -1,4 +1,5 @@
 import hashlib
+import re
 import struct
 
 MATCH_FLAG_TYPES = {
@@ -288,6 +289,125 @@ EXE_FONT_PROFILES = {
     },
 }
 
+# --------------------------------------------------------------------------
+# Bundesliga Manager Hattrick: DOS/4GW "LE" executables (32-bit, not MZ-relocated).
+# Strings are referenced through LE fixup records; moving a string only needs the
+# target (object, offset) of its fixups to be patched.  Offsets below are FILE offsets.
+# --------------------------------------------------------------------------
+BMH_EXE_PROFILES = {
+    "BUNDESLIGA MANAGER HATTRICK (GERMAN)": {
+        "format": "le",
+        "label": "Bundesliga Manager Hattrick (GER)",
+        "filename": "bmh.exe",
+        "blk": "TEXTD.BLK",
+        "lang": "GER",
+        "le_offset": 0x2C80,
+        # (base, virtual size, flags, first page, page count)
+        "objects": (
+            (0x10000, 0x6B000, 0x2045, 1, 107),
+            (0x80000, 0x1000, 0x2045, 108, 1),
+            (0x90000, 0x31, 0x45, 109, 1),
+            (0xA0000, 0x20840, 0x2043, 110, 12),
+        ),
+        "fixup_count": 12219,
+        # sha256 over the sorted (source linear address, source type) pairs; invariant to
+        # string relocation because only fixup TARGETS are ever patched.
+        "fixup_sources_sha256": "92E1E16C5A125E98ADE99B1EC26364159E8DC3490DE12A8BE63E4DE9BCBF2BD3",
+        "string_object": 4,
+        "string_ranges": [(0x87C0F, 0x8874F), (0x88C5C, 0x891C8)],   # inclusive, last byte = NUL
+        # not translatable: char tables, syllables, file names, fopen modes, version, devices...
+        "locked_ranges": [
+            (0x87E40, 0x87ED6), (0x87EDA, 0x87EF1), (0x88746, 0x8874F),
+            (0x88FE8, 0x89003), (0x89080, 0x8908E), (0x89097, 0x8909A),
+            (0x89189, 0x891C8),
+        ],
+        # Free space: the tail of the object-3 page (a 0x31-byte interrupt stub inside a 4 KiB
+        # page).  It is 0x00 in the file, never referenced by any fixup, and right before the
+        # string object.  A fixup record keeps its 7-byte size: only object+offset change.
+        "cave": {"object": 3, "start": 0x40, "end": 0x1000},
+        # anchors sit on NON-translatable data only, so an already translated EXE is still recognised
+        "anchors": (
+            (0x87E75, b"sch\x00ch\x00sp\x00bl\x00pl\x00"),
+            (0x87EDA, b"KRON_FBM\x00kleinbilder/23\x00"),
+            (0x88FE8, b"M3PC.COL\x00"),
+            (0x891AA, b"trackdisk.device\x00DF0\x00Workbench\x00"),
+        ),
+    },
+}
+
+
+BMH_EXE_PROFILES["BUNDESLIGA MANAGER HATTRICK (ENGLISH)"] = {
+    # FLTD.EXE: Doug Huffman DOS extender (two MZ headers, NO LE tables).  The 32-bit image starts
+    # at file offset 0x496D = linear address 0; a string pointer is a plain u32 equal to
+    # (file offset - 0x496D).  There are no fixups, so every pointer slot was located once with a
+    # disassembler (push/mov immediates, lea, data pointer tables) and is listed below.  Slots whose
+    # string is also used as a table/index, text with control bytes and pure punctuation are NOT listed.
+    "label": "Bundesliga Manager Hattrick (ENG)",
+    "filename": "fltd.exe",
+    "blk": "TEXTE.BLK",
+    "lang": "ENG",
+    "format": "flat",
+    "file_size": 0x7C015,
+    "image_file_base": 0x496D,
+    "string_object": 1,
+    "string_ranges": [(0x7086D, 0x733FB)],
+    "locked_ranges": [
+        (0x70ED9, 0x70EE8), (0x70F2D, 0x70F4B), (0x70F7D, 0x70F8D), (0x70F8F, 0x70FED),
+        (0x71089, 0x7108D), (0x710D0, 0x710EB), (0x71A11, 0x71A19), (0x71A1F, 0x71A28),
+    ],
+    # No provably free space exists in this build: the BSS starts exactly at the end of the image
+    # (the C startup clears 0x776A8..0x89A80) and every zero run lies inside tables used by the code.
+    # Strings may therefore only be re-arranged inside the space of the listed strings.  To use an
+    # area you verified yourself, set {"object": 1, "start": <image address>, "end": <image address>}.
+    "cave": None,
+    "code_range": (0x496D, 0x70000),
+    "code_sha256": "4C19059045B02F3A7884F46DFA1A46E4D43DB55577ABD54A621DB4CC2D9E3DF8",
+    "anchors": (
+        (0x7D1, b"Fatal error reading disk$DOS extender Copyright 1991-1994 by Doug Huffman"),
+        (0x70F8F, b"sch\x00ch\x00sp\x00bl\x00pl\x00"),
+        (0x710D0, b"KRON_FBM\x00"),
+        (0x710DD, b"kleinbilder/23\x00"),
+        (0x71A1F, b"DF0:\x00DF1:\x00"),
+    ),
+    "pointer_slots": (
+        0xD483, 0x1175F, 0x24806, 0x2710C, 0x28EEC, 0x29ADA, 0x2CD6F, 0x2CD85, 0x39311, 0x40398,
+            0x46C80, 0x4B6F4, 0x70D2D, 0x70D59, 0x70D79, 0x70DA9, 0x70DC1, 0x70DCD, 0x70E8D, 0x70E91,
+            0x70E95, 0x70E99, 0x70E9D, 0x70EA1, 0x70EA5, 0x70EA9, 0x70EAD, 0x70EB5, 0x70EB9, 0x70EBD,
+            0x70EC1, 0x70EC5, 0x70EC9, 0x7191D, 0x71921, 0x71925, 0x71929, 0x7192D, 0x71931, 0x71935,
+            0x71939, 0x7193D, 0x71941, 0x71945, 0x71949, 0x7194D, 0x71951, 0x71955, 0x71959, 0x7195D,
+            0x71961, 0x71965, 0x71969, 0x7196D, 0x71971,
+    ),
+}
+
+
+# Original extents (file offsets, end exclusive) of the translatable strings: text + NUL + zero padding.
+# They are the space strings may be laid out in; kept in the profile so that the free space is still
+# known after an EXE was saved (a string that moved leaves zeros nobody points at any more).
+BMH_EXE_PROFILES["BUNDESLIGA MANAGER HATTRICK (GERMAN)"]["slot_regions"] = (
+    (0x87C0F, 0x87C40), (0x87C41, 0x87C5C), (0x87C5D, 0x87E40), (0x87ED7, 0x87EDA),
+    (0x87EF2, 0x88746), (0x88C5C, 0x88C74), (0x88C75, 0x88CF6), (0x88CF7, 0x88D60),
+    (0x88D61, 0x88D8A), (0x88D8B, 0x88DE8), (0x88DE9, 0x88F7D), (0x88F7E, 0x88FDC),
+    (0x88FDD, 0x88FE8), (0x89004, 0x8900F), (0x89010, 0x89034), (0x8903C, 0x89055),
+    (0x89056, 0x89080), (0x8908F, 0x89097), (0x8909B, 0x8911A), (0x8911B, 0x89120),
+    (0x89121, 0x89124), (0x89134, 0x89187),
+)
+
+BMH_EXE_PROFILES["BUNDESLIGA MANAGER HATTRICK (ENGLISH)"]["slot_regions"] = (
+    (0x7086D, 0x70881), (0x70C35, 0x70C51), (0x70CE9, 0x70D2D), (0x70D31, 0x70D59),
+    (0x70D5D, 0x70D79), (0x70D7D, 0x70DA9), (0x70DAD, 0x70DC1), (0x70DC5, 0x70DCD),
+    (0x70DD1, 0x70E3B), (0x70E3D, 0x70E89), (0x710F2, 0x7191D), (0x7222A, 0x72231),
+    (0x7226B, 0x72271), (0x7228E, 0x722E1), (0x722FD, 0x72342), (0x72419, 0x72426),
+    (0x728FE, 0x7296D), (0x72AF5, 0x72B1D), (0x72C7C, 0x72C85), (0x72E87, 0x72E8C),
+)
+
+# Same German build, version V3.7 (BMH_1.exe): identical texts, offsets and free space; only the
+# version string, some code and one fixup (not a string pointer) differ, hence the other signature.
+BMH_EXE_PROFILES["BUNDESLIGA MANAGER HATTRICK (GERMAN V3.7)"] = dict(
+    BMH_EXE_PROFILES["BUNDESLIGA MANAGER HATTRICK (GERMAN)"],
+    filename="bmh_1.exe",
+    fixup_count=12220,
+    fixup_sources_sha256="F2DC19F48253510F516EEEE2D6B842D1E9D793E797A35837574A5EDEF48F25FD",
+)
 
 
 def read_u16(data, offset):
@@ -614,10 +734,249 @@ def detect_game_profile(data, profiles):
     return result
 
 
+# ------------------------------------------------------------------ LE (DOS/4GW) ----
+class LEFixup:
+    """One source location of an LE fixup record (a record with a source list yields several)."""
+    __slots__ = ("src_file", "src_lin", "kind", "flags", "tobj", "toff", "additive",
+                 "obj_pos", "obj_size", "off_pos", "off_size")
+
+    def __init__(self, **kw):
+        for name in self.__slots__:
+            setattr(self, name, kw.get(name))
+
+
+class LEImage:
+    PAGE_FILE_FLAGS_OK = 0
+
+    def __init__(self, data):
+        if len(data) < 0x40 or bytes(data[:2]) not in (b"MZ", b"ZM"):
+            raise ValueError("not an MZ container")
+        le = struct.unpack_from("<I", data, 0x3C)[0]
+        if le + 0xB0 > len(data) or bytes(data[le:le + 2]) != b"LE":
+            raise ValueError("LE header not found")
+        self.le = le
+        u = lambda o: struct.unpack_from("<I", data, le + o)[0]
+        self.page_size = u(0x28)
+        self.num_pages = u(0x14)
+        self.data_pages = u(0x80)
+        num_obj = u(0x44)
+        obj_tbl, pmap, fpt, frt = le + u(0x40), le + u(0x48), le + u(0x68), le + u(0x6C)
+        if self.page_size != 0x1000 or not 0 < num_obj <= 64 or not 0 < self.num_pages < 0x10000:
+            raise ValueError("unexpected LE geometry")
+        self.objects = []
+        for i in range(num_obj):
+            vsize, base, flags, first, count, _ = struct.unpack_from("<6I", data, obj_tbl + i * 24)
+            self.objects.append({"vsize": vsize, "base": base, "flags": flags, "first": first, "count": count})
+        for i in range(self.num_pages):                      # pages must be stored sequentially
+            hi, lo, fl = struct.unpack_from("<HBB", data, pmap + i * 4)
+            if ((hi << 8) | lo) != i + 1 or fl != 0:
+                raise ValueError("non-sequential / non-plain LE page map")
+        end_pages = self.data_pages + (self.num_pages - 1) * self.page_size
+        if end_pages > len(data):
+            raise ValueError("LE data pages outside file")
+        self._fixup_offsets = [struct.unpack_from("<I", data, fpt + i * 4)[0] for i in range(self.num_pages + 1)]
+        self._frt = frt
+        self.fixups = self._parse_fixups(data)
+
+    # --- geometry
+    def page_file_offset(self, page):                        # page is 1-based
+        return self.data_pages + (page - 1) * self.page_size
+
+    def object_file_offset(self, obj):                       # obj is 1-based
+        return self.page_file_offset(self.objects[obj - 1]["first"])
+
+    def file_to_object(self, file_off):
+        """file offset -> (object number, offset in object) or None."""
+        for number, o in enumerate(self.objects, 1):
+            start = self.page_file_offset(o["first"])
+            if start <= file_off < start + o["count"] * self.page_size:
+                return number, file_off - start
+        return None
+
+    def object_to_file(self, obj, off):
+        o = self.objects[obj - 1]
+        if off >= o["count"] * self.page_size:
+            raise ValueError("offset beyond the stored pages of object %d" % obj)
+        return self.object_file_offset(obj) + off
+
+    def _page_object(self, page):
+        for number, o in enumerate(self.objects, 1):
+            if o["first"] <= page < o["first"] + o["count"]:
+                return o["base"] + (page - o["first"]) * self.page_size
+        raise ValueError("page %d belongs to no object" % page)
+
+    # --- fixups
+    def _parse_fixups(self, data):
+        out = []
+        for page in range(1, self.num_pages + 1):
+            pbase = self._page_object(page)
+            pos = self._frt + self._fixup_offsets[page - 1]
+            stop = self._frt + self._fixup_offsets[page]
+            while pos < stop:
+                stype, flags = data[pos], data[pos + 1]
+                pos += 2
+                if stype & 0x20:
+                    count = data[pos]; pos += 1
+                    srcs = list(struct.unpack_from("<%dh" % count, data, pos)); pos += 2 * count
+                else:
+                    srcs = [struct.unpack_from("<h", data, pos)[0]]; pos += 2
+                if flags & 3:
+                    raise ValueError("only internal-reference fixups are supported")
+                obj_pos, obj_size = pos, (2 if flags & 0x40 else 1)
+                tobj = int.from_bytes(data[pos:pos + obj_size], "little"); pos += obj_size
+                kind = stype & 0xF
+                toff = off_pos = off_size = None
+                if kind != 2:
+                    off_pos, off_size = pos, (4 if flags & 0x10 else 2)
+                    toff = int.from_bytes(data[pos:pos + off_size], "little"); pos += off_size
+                additive = 0
+                if flags & 0x04:
+                    size = 4 if flags & 0x20 else 2
+                    additive = int.from_bytes(data[pos:pos + size], "little"); pos += size
+                for s in srcs:
+                    out.append(LEFixup(src_file=self.page_file_offset(page) + s, src_lin=pbase + s,
+                                       kind=kind, flags=flags, tobj=tobj, toff=toff, additive=additive,
+                                       obj_pos=obj_pos, obj_size=obj_size, off_pos=off_pos, off_size=off_size))
+            if pos != stop:
+                raise ValueError("LE fixup parsing desynchronised on page %d" % page)
+        return out
+
+    def sources_sha256(self):
+        h = hashlib.sha256()
+        for f in sorted(self.fixups, key=lambda f: (f.src_lin, f.kind)):
+            h.update(struct.pack("<IB", f.src_lin & 0xFFFFFFFF, f.kind))
+        return h.hexdigest().upper()
+
+
+def parse_le_image(data) -> LEImage:
+    return LEImage(data)
+
+
+class FlatImage:
+    """Flat 32-bit image with no relocation tables (FLTD.EXE).  Mimics the part of LEImage that
+    BMHExeStrings needs: the pointer slots listed in the profile act as 'fixups' whose target is the
+    u32 stored in the slot (object 1, offset = file offset - image_file_base)."""
+
+    def __init__(self, data, profile):
+        self.base = profile["image_file_base"]
+        if len(data) <= self.base:
+            raise ValueError("file too small for the flat image")
+        self.page_size = 1
+        self.objects = [{"base": 0, "vsize": len(data) - self.base, "flags": 0, "first": 1,
+                         "count": len(data) - self.base}]
+        self.fixups = []
+        for slot in profile["pointer_slots"]:
+            value = struct.unpack_from("<I", data, slot)[0]
+            self.fixups.append(LEFixup(src_file=slot, src_lin=slot - self.base, kind=7, flags=0, tobj=1,
+                                       toff=value, additive=0, obj_pos=None, obj_size=0,
+                                       off_pos=slot, off_size=4))
+
+    def scan_references(self, data, ranges):
+        """File offsets inside the string ranges that ANY 32-bit value of the image could point at
+        (also values that are not listed slots: pointers to other strings, empty strings, tables)."""
+        refs = set()
+        top = max(b for _, b in ranges) - self.base
+        lo_hi = (top >> 16) & 0xFFFF
+        pattern = re.compile(b"(?=(..)" + re.escape(struct.pack("<H", lo_hi)) + b")", re.S)
+        for m in pattern.finditer(bytes(data), self.base):
+            target = self.base + (struct.unpack("<H", m.group(1))[0] | (lo_hi << 16))
+            if any(a <= target <= b for a, b in ranges):
+                refs.add(target)
+        return refs
+
+    def object_file_offset(self, obj):
+        return self.base
+
+    def object_to_file(self, obj, off):
+        if not 0 <= off < self.objects[0]["count"]:
+            raise ValueError("offset beyond the image")
+        return self.base + off
+
+    def file_to_object(self, file_off):
+        if self.base <= file_off < self.base + self.objects[0]["count"]:
+            return 1, file_off - self.base
+        return None
+
+
+def open_bmh_image(data, profile):
+    return FlatImage(data, profile) if profile.get("format", "le") == "flat" else LEImage(data)
+
+
+def _bmh_cave_is_clean(data, image, cave):
+    """True when every byte of the cave is 0x00 or inside a NUL-terminated string a fixup points at
+    (a translated EXE keeps relocated strings there)."""
+    lo = image.object_to_file(cave["object"], cave["start"])
+    hi = image.object_to_file(cave["object"], cave["end"] - 1) + 1
+    covered = bytearray(hi - lo)
+    for f in image.fixups:
+        if f.tobj == cave["object"] and f.toff is not None and cave["start"] <= f.toff < cave["end"]:
+            a = lo + f.toff - cave["start"]
+            z = bytes(data).find(b"\x00", a, hi)
+            if z < 0:
+                return False
+            covered[a - lo:z - lo + 1] = b"\x01" * (z - a + 1)
+    return not any(b and not covered[i] for i, b in enumerate(data[lo:hi]))
+
+
+def _anchors_match(data, prof):
+    return all(bytes(data[off:off + len(pattern)]) == pattern for off, pattern in prof["anchors"])
+
+
+def _detect_le(data, prof):
+    if struct.unpack_from("<I", data, 0x3C)[0] != prof["le_offset"]:
+        return False
+    image = LEImage(data)
+    got = tuple((o["base"], o["vsize"], o["flags"], o["first"], o["count"]) for o in image.objects)
+    if got != tuple(prof["objects"]) or len(image.fixups) != prof["fixup_count"]:
+        return False
+    if image.sources_sha256() != prof["fixup_sources_sha256"]:
+        return False
+    return _bmh_cave_is_clean(data, image, prof["cave"])
+
+
+def _detect_flat(data, prof):
+    if len(data) != prof["file_size"] or bytes(data[:2]) != b"MZ":
+        return False
+    base = prof["image_file_base"]
+    code_lo, code_hi = prof["code_range"]
+    code = bytearray(data[code_lo:code_hi])
+    ranges = prof["string_ranges"]
+    for slot in prof["pointer_slots"]:
+        target = base + struct.unpack_from("<I", data, slot)[0]          # every slot must still hit a string
+        if not any(a <= target <= b for a, b in ranges) or bytes(data).find(b"\x00", target) < 0:
+            return False
+        if code_lo <= slot < code_hi:
+            code[slot - code_lo:slot - code_lo + 4] = bytes(4)
+    return hashlib.sha256(bytes(code)).hexdigest().upper() == prof["code_sha256"]
+
+
+def detect_bmh_exe_profile(data, profiles=None):
+    """Name of the BMH_EXE_PROFILES entry matching this executable, else None (never raises).
+    The checks only look at structure and non-translatable data, so an already translated EXE is
+    still recognised."""
+    profiles = BMH_EXE_PROFILES if profiles is None else profiles
+    for name, prof in profiles.items():
+        try:
+            if len(data) < 0x40 or not _anchors_match(data, prof):
+                continue
+            ok = _detect_flat(data, prof) if prof.get("format", "le") == "flat" else _detect_le(data, prof)
+            if ok:
+                return name
+        except (ValueError, struct.error, IndexError, KeyError):
+            continue
+    return None
+
+
 __all__ = [
     'unpack_in_memory',
     'get_mz_relocation_sites',
     'detect_game_profile',
     'GAME_PROFILES',
     'EXE_FONT_PROFILES',
+    'BMH_EXE_PROFILES',
+    'LEImage',
+    'parse_le_image',
+    'FlatImage',
+    'open_bmh_image',
+    'detect_bmh_exe_profile',
 ]

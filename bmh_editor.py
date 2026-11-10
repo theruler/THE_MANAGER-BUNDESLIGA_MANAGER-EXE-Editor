@@ -1,6 +1,7 @@
 """Bundesliga Manager Hattrick (BMH) - string editor support.
 
-Games handled (the EXE itself is NOT parsed yet, only the text file next to it):
+Games handled (the text file next to the EXE; BMHExeStringsPanel below edits the strings
+stored INSIDE a supported BMH.EXE, see bmh_exe_strings.py):
     FLTD.EXE (ENG)  ->  TEXTE.BLK
     BMH.EXE  (GER)  ->  TEXTD.BLK
 
@@ -19,6 +20,12 @@ import struct
 import tkinter as tk
 from tkinter import ttk, messagebox
 from translator import TranslationIntegrityError
+try:                                        # control-token shield already used by string_codec_mixin
+    from translator import CONTROL_TOKEN_PATTERN as _SHARED_TOKENS
+except ImportError:                         # pragma: no cover
+    _SHARED_TOKENS = None
+from preview_dialog import make_preview_tree
+from bmh_exe_strings import BMHExeStrings, BMHExeError, BMHExeSpaceError  # noqa: F401  (re-exported)
 
 TEXT_COUNT = 0x566  # pointer table TextPointerTable[1382]
 
@@ -87,6 +94,10 @@ def set_charmap(mapping):
     for code, ch in overrides.items():
         _DE_ENCODE[ch] = code
 _ESCAPE_RE = re.compile(r"\\x([0-9A-Fa-f]{2})")
+# Control codes inside the strings of the EXE (never to be sent to a translation engine):
+#   %x02 %x10 ... colour/attribute codes, %c %z %V %0 ... placeholders, %% literal, # alternatives
+#   separator, #x end of an alternatives group (only when no letter follows).
+_EXE_TOKEN_RE = re.compile(r"%x[0-9A-Fa-f]{2}|%%|%[A-Za-z0-9]|#x(?![A-Za-z0-9])|#")
 
 
 class BMHEncodeError(ValueError):
@@ -208,6 +219,7 @@ class BMHStringsPanel(ttk.Frame):
 
         search = ttk.Frame(self, padding=(15, 10, 15, 4))
         search.pack(fill=tk.X)
+        self._search_frame = search
         ttk.Label(search, text="Search:", font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=(0, 5))
         self.search_var = tk.StringVar()
         entry = ttk.Entry(search, textvariable=self.search_var, font=("Segoe UI", 10))
@@ -235,9 +247,12 @@ class BMHStringsPanel(ttk.Frame):
 
         edit = ttk.LabelFrame(self, text="Edit string", padding=12)
         edit.pack(fill=tk.X, padx=15, pady=(5, 12))
+        self._edit_frame = edit
         self.edit_text = tk.Text(edit, height=3, wrap="word", font=("Consolas", 12, "bold"), relief="solid",
                                  borderwidth=1, padx=5, pady=4, state=tk.DISABLED)
         self.edit_text.pack(fill=tk.X, pady=(0, 6))
+        # same look as the main editor: every 0x20 is highlighted in blue
+        self.edit_text.tag_configure("space_bg", background="#B3E5FC", foreground="#0288D1")
         self.edit_text.bind("<KeyRelease>", self._on_text_modified)
         self.edit_text.bind("<Return>", lambda _e: (self.apply_edit(), "break")[1])
         info = ttk.Frame(edit)
@@ -248,6 +263,7 @@ class BMHStringsPanel(ttk.Frame):
         self.size_label.pack(side=tk.RIGHT)
         row = ttk.Frame(edit)
         row.pack(fill=tk.X, pady=(8, 0))
+        self._btn_row = row
         self.apply_button = ttk.Button(row, text="Apply", command=self.apply_edit, state=tk.DISABLED)
         self.apply_button.pack(side=tk.RIGHT)
         self.discard_button = ttk.Button(row, text="Discard", command=self.discard_edit, state=tk.DISABLED)
@@ -320,12 +336,24 @@ class BMHStringsPanel(ttk.Frame):
         self.edit_text.config(state=tk.NORMAL)
         self.edit_text.delete("1.0", tk.END)
         self.edit_text.insert("1.0", value)
+        self._highlight_spaces()
 
     def _set_edit_enabled(self, enabled):
         self.edit_text.config(state=tk.NORMAL if enabled else tk.DISABLED)
         if not enabled:
             self.apply_button.config(state=tk.DISABLED)
             self.discard_button.config(state=tk.DISABLED)
+
+    # hooks overridden by BMHExeStringsPanel
+    def _offsets(self):
+        return TextDb(self._strings).offsets
+
+    def _check_raw(self, raw):
+        """Extra validation of an encoded text; returns an error message or None."""
+        return None
+
+    def _size_text(self, raw):
+        return f"{len(raw)} bytes (original {len(self._original[self.current_id])})"
 
     def _row_values(self, text_id, offsets):
         return (text_id, f"0x{offsets[text_id]:05X}", decode_text(self._strings[text_id]))
@@ -335,7 +363,7 @@ class BMHStringsPanel(ttk.Frame):
             return
         needle = self.search_var.get().strip().lower()
         only_mod = self.modified_only_var.get()
-        offsets = TextDb(self._strings).offsets
+        offsets = self._offsets()
         self.tree.delete(*self.tree.get_children())
         self._visible = []
         for i in range(len(self._strings)):
@@ -378,7 +406,20 @@ class BMHStringsPanel(ttk.Frame):
         self._set_edit_text(decode_text(self._strings[text_id]))
         self._on_text_modified()
 
+    def _highlight_spaces(self):
+        """Blue background on every space (0x20) of the edit box."""
+        widget = self.edit_text
+        widget.tag_remove("space_bg", "1.0", tk.END)
+        index = "1.0"
+        while True:
+            index = widget.search(" ", index, stopindex=tk.END)
+            if not index:
+                break
+            widget.tag_add("space_bg", index, f"{index} + 1 chars")
+            index = f"{index} + 1 chars"
+
     def _on_text_modified(self, _event=None):
+        self._highlight_spaces()
         if self.current_id is None:
             return
         try:
@@ -386,14 +427,15 @@ class BMHStringsPanel(ttk.Frame):
             err = None
         except BMHEncodeError as exc:
             raw, err = None, str(exc)
-        original_len = len(self._original[self.current_id])
+        if err is None:
+            err = self._check_raw(raw)
         if err:
             self.info_label.config(text=err, foreground="#C0392B")
             self.size_label.config(text="")
         else:
-            offset = TextDb(self._strings).offsets[self.current_id]
+            offset = self._offsets()[self.current_id]
             self.info_label.config(text=f"ID {self.current_id}  -  offset 0x{offset:05X}", foreground="#27AE60")
-            self.size_label.config(text=f"{len(raw)} bytes (original {original_len})")
+            self.size_label.config(text=self._size_text(raw))
         pending = err is not None or raw != self._strings[self.current_id]
         self.apply_button.config(state=tk.NORMAL if (pending and err is None) else tk.DISABLED)
         self.discard_button.config(state=tk.NORMAL if pending else tk.DISABLED)
@@ -406,6 +448,10 @@ class BMHStringsPanel(ttk.Frame):
             raw = encode_text(self._edit_value())
         except BMHEncodeError as exc:
             messagebox.showerror("BMH Strings", str(exc))
+            return False
+        problem = self._check_raw(raw)
+        if problem:
+            messagebox.showerror("BMH Strings", problem)
             return False
         self._strings[self.current_id] = raw
         self._refresh_tree()  # offsets of the following strings may shift
@@ -433,20 +479,32 @@ class BMHStringsPanel(ttk.Frame):
         except Exception:
             pass
 
-    @staticmethod
-    def _translate_text(translate_fn, text):
-        """Translate text chunk by chunk so \\xNN control codes are never sent to the engine."""
-        parts = _ESCAPE_RE.split(text)  # even index = text, odd index = captured hex digits
-        out = []
-        for index, part in enumerate(parts):
-            if index % 2:
-                out.append("\\x" + part)
-            elif re.search(r"\w", part):
+    @classmethod
+    def _protected_patterns(cls):
+        """Regexes whose matches are never sent to the translation engine (\\xNN always)."""
+        return (_ESCAPE_RE,)
+
+    @classmethod
+    def _translate_text(cls, translate_fn, text):
+        """Translate text chunk by chunk so control codes are never sent to the engine."""
+        spans = sorted((m.start(), m.end()) for rx in cls._protected_patterns() for m in rx.finditer(text))
+        merged = []
+        for start, end in spans:
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        out, cursor = [], 0
+        for start, end in merged + [(len(text), len(text))]:
+            part = text[cursor:start]
+            if re.search(r"\w", part):
                 lead = part[:len(part) - len(part.lstrip())]
                 trail = part[len(part.rstrip()):]
                 out.append(lead + translate_fn(part.strip()) + trail)
             else:
                 out.append(part)
+            out.append(text[start:end])
+            cursor = end
         return "".join(out)
 
     def _translate_current_entry(self, translate_fn):
@@ -578,3 +636,186 @@ class BMHStringsPanel(ttk.Frame):
         win.grab_set()
         win.wait_window()
         return result["ids"]
+
+
+# ------------------------------------------------------------ EXE strings ----
+class BMHExeStringsPanel(BMHStringsPanel):
+    """Strings stored inside a supported BMH.EXE (LE executable).
+
+    Same UI as the TEXT*.BLK tab.  The model is BMHExeStrings: a string that outgrows its slot is
+    moved into free space and only the pointer to it is patched.  The "EXE space" bar in the edit
+    box shows how much of the room available for these strings is used.
+    """
+
+    def __init__(self, parent, space_bar_factory=None, **kwargs):
+        """space_bar_factory(parent) -> the free-space bar widget (FreeSpaceBar of main_editor.py:
+        it is defined there once and handed in, to avoid a circular import)."""
+        super().__init__(parent, **kwargs)
+        self.space_bar = space_bar_factory(self._edit_frame) if space_bar_factory else None
+        if self.space_bar is not None:
+            self.space_bar.pack(fill=tk.X, pady=(8, 0), before=self._btn_row)
+
+    # --------------------------------------------------------------- state
+    def load(self, path, data: bytes):
+        model = BMHExeStrings(data)            # raises BMHExeError
+        self.db, self.path, self.disk_bytes = model, path, bytes(data)
+        self._strings = list(model.strings)
+        self._original = list(model.strings)
+        self._baseline = list(model.strings)
+        self.current_id = None
+        self.search_var.set("")
+        self.modified_only_var.set(False)
+        self._refresh_tree()
+        self._set_edit_enabled(False)
+        self._on_change()
+
+    def clear(self):
+        super().clear()
+        if self.space_bar is not None:
+            self.space_bar.clear()
+
+    def mark_saved(self, path, payload: bytes):
+        # re-read the written image: moved strings now live elsewhere and are the new baseline
+        model = BMHExeStrings(payload)
+        keep = self.current_id if self.current_id is not None and self.current_id < len(model.strings) else None
+        self.db, self.path, self.disk_bytes = model, path, bytes(payload)
+        self._strings = list(model.strings)
+        self._baseline = list(model.strings)
+        self._original = list(model.strings)
+        self.current_id = keep
+        self._refresh_tree()
+        self._on_change()
+
+    # --------------------------------------------------------------- hooks
+    @classmethod
+    def _protected_patterns(cls):
+        extra = (_EXE_TOKEN_RE,) + ((_SHARED_TOKENS,) if _SHARED_TOKENS is not None else ())
+        return (_ESCAPE_RE,) + extra
+
+    def _offsets(self):
+        return self.db.offsets
+
+    def _check_raw(self, raw):
+        if not raw:
+            return "Empty text is not supported in the EXE (use a single space)."
+        return None
+
+    def _planned(self, pending=None):
+        strings = list(self._strings)
+        if pending is not None and self.current_id is not None:
+            strings[self.current_id] = pending
+        return strings
+
+    def _size_text(self, raw):
+        item = self.db.items[self.current_id]
+        status = self.db.status(self.current_id, raw)
+        if status == "moved":
+            note = "will be relocated"
+        elif status == "in place":
+            note = "fits its slot"
+        else:
+            note = "unchanged"
+        self._update_space(self._planned(raw))
+        return f"{len(raw)} / {item.slot - 1} bytes in place - {note}"
+
+    def _update_space(self, strings=None):
+        """Bytes needed by the current texts / room available for these strings."""
+        if self.space_bar is None:
+            return
+        if not self.loaded:
+            self.space_bar.clear()
+            return
+        info = self.db.space_info(self._strings if strings is None else strings)
+        capacity = max(1, info["capacity"])
+        percent = 100.0 * info["used"] / capacity
+        if not info["ok"]:
+            text = f"{info['used']:,} / {info['capacity']:,} bytes - NOT ENOUGH SPACE"
+        else:
+            text = f"{info['used']:,} / {info['capacity']:,} bytes ({percent:.0f}%) - {info['free']:,} free"
+            if info["cave"]:
+                text += f" (incl. {info['cave']:,} added free bytes, {info['cave_used']:,} used)"
+            if info["moved"]:
+                text += f" - {info['moved']} moved"
+        self.space_bar.set(info["used"], capacity, text, error=not info["ok"])
+
+    def _refresh_tree(self):
+        super()._refresh_tree()
+        self._update_space()
+
+
+def show_exe_preview(root, panel):
+    """Changes preview for the EXE strings (BMH counterpart of preview_dialog.show_preview_dialog,
+    which needs MZ-profile data): what is going to be written, where it goes and which pointers move."""
+    model = panel.db
+    strings = list(panel._strings)
+    changed = [i for i, (old, new) in enumerate(zip(panel._baseline, strings)) if old != new]
+    plan, problem = None, ""
+    try:
+        plan = model.plan(strings)
+    except BMHExeError as exc:
+        problem = str(exc)
+    info = model.space_info(strings)
+    dialog = tk.Toplevel(root)
+    dialog.title("BMH EXE Strings - changes preview")
+    dialog.geometry("1100x640")
+    dialog.minsize(800, 420)
+    dialog.transient(root)
+    notebook = ttk.Notebook(dialog)
+    notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 4))
+    tabs = {name: ttk.Frame(notebook) for name in ("Summary", "Strings", "Pointers")}
+    for name, frame in tabs.items():
+        notebook.add(frame, text="  %s  " % name)
+
+    relocated = len(plan.moved) if plan else 0
+    lines = [
+        "Profile: %s" % model.profile_name,
+        "File: %s" % (panel.path or ""),
+        "",
+        "Strings changed: %d" % len(changed),
+        "Strings written elsewhere (pointer patched): %d%s" % (
+            relocated, "  (every string laid out again)" if plan and plan.repacked else ""),
+        "Space used by the texts: %s / %s bytes (%s free)" % (
+            format(info["used"], ","), format(info["capacity"], ","), format(info["free"], ",")),
+    ]
+    if info["cave"]:
+        lines.append("Added free space (not part of the original strings): %s / %s bytes used" % (
+            format(info["cave_used"], ","), format(info["cave"], ",")))
+    lines.append("Save possible: %s" % ("yes" if info["ok"] and not panel.has_pending_edit() else "NO"))
+    if problem:
+        lines += ["", "Reason:", "- " + problem]
+    summary = tk.Text(tabs["Summary"], wrap="word", font=("Consolas", 10), padx=12, pady=12)
+    summary.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+    summary.insert("1.0", "\n".join(lines))
+    summary.config(state=tk.DISABLED)
+
+    tree = make_preview_tree(tabs["Strings"], [
+        ("status", "Status", 90, tk.CENTER), ("id", "ID", 50, tk.E),
+        ("offset", "Offset", 90, tk.CENTER), ("newoffset", "New offset", 90, tk.CENTER),
+        ("oldlen", "Old bytes", 70, tk.E), ("newlen", "New bytes", 70, tk.E),
+        ("slot", "Slot", 55, tk.E), ("ptrs", "Pointers", 65, tk.E),
+        ("old", "Old text", 260, tk.W), ("new", "New text", 260, tk.W),
+    ])
+    pointers = make_preview_tree(tabs["Pointers"], [
+        ("source", "Pointer at", 110, tk.CENTER), ("id", "String ID", 80, tk.E),
+        ("old", "Old target", 130, tk.CENTER), ("new", "New target", 130, tk.CENTER),
+    ])
+    for i in changed:
+        item = model.items[i]
+        old_off = model._file_offset(item.obj, item.off)
+        if plan and i in plan.moved:
+            new_off = model._file_offset(*plan.moved[i])
+            status = "PENDING" if not problem else "FAIL"
+            state = "relocated"
+        else:
+            new_off, state = old_off, ("in place" if not problem else "no space")
+            status = "PENDING" if not problem else "FAIL"
+        tree.insert("", tk.END, values=(
+            state, i, f"0x{old_off:X}", f"0x{new_off:X}", len(panel._baseline[i]), len(strings[i]),
+            item.slot - 1, len(item.sources), decode_text(panel._baseline[i]), decode_text(strings[i]),
+        ), tags=(status,))
+        if plan and i in plan.moved and new_off != old_off:
+            for f in item.sources:
+                pointers.insert("", tk.END, values=(
+                    f"0x{f.src_lin:X}", i, f"0x{old_off:X}", f"0x{new_off:X}"))
+    ttk.Button(dialog, text="Close", command=dialog.destroy).pack(pady=(2, 10))
+    return dialog
