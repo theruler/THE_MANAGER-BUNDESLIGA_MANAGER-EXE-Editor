@@ -39,7 +39,41 @@ class NewspaperGrammarError(ValueError):
     pass
 
 
-def _parse_sequence(raw, index, depth, selectors, string_id):
+class Dialect:
+    """Same template language, different spelling.  Shared by the newspaper strings of the MZ games
+    (selector closed by "#%") and the commentary strings of Bundesliga Manager Hattrick (closed by "#x").
+
+    %xNN opens a selector, "#" separates its branches, `terminator` closes it, %<marker> is a placeholder.
+    """
+
+    def __init__(self, name, terminator, marker_meta):
+        self.name = name
+        self.terminator = terminator
+        self.marker_meta = marker_meta
+        self.markers = {code: meta[0] for code, meta in marker_meta.items()}
+        self.marker_by_name = {meta[0]: code for code, meta in marker_meta.items()}
+
+    def needs_guard(self, encoded):
+        """True when a branch (after the first) would be read as the terminator ("#" + its 2nd char)."""
+        return encoded.startswith(self.terminator[1:])
+
+
+NEWSPAPER = Dialect("newspaper", "#%", MARKER_META)
+
+# Commentary strings of BMH.EXE / BMH_1.EXE / FLTD.EXE.  Which game value each placeholder stands for
+# is only known from context (%c = the acting player, %z = the other player, %0 = a number ...), so the
+# names stay neutral.
+BMH_MARKER_META: dict[str, tuple[str, str, str]] = {
+    "c": ("MARK_C", "%c", "#558B2F"),
+    "d": ("MARK_D", "%d", "#827717"),
+    "f": ("MARK_F", "%f", "#2E7D32"),
+    "z": ("MARK_Z", "%z", "#00838F"),
+    "0": ("MARK_0", "%0", "#1565C0"),
+}
+BMH_COMMENTARY = Dialect("bmh-commentary", "#x", BMH_MARKER_META)
+
+
+def _parse_sequence(raw, index, depth, selectors, string_id, dialect=NEWSPAPER):
     nodes, literal = [], []
 
     def flush():
@@ -62,10 +96,10 @@ def _parse_sequence(raw, index, depth, selectors, string_id):
                 flush()
                 code = raw[index + 2:index + 4].upper()
                 node, index = _parse_selector(raw, index + 4, depth, code,
-                                              selectors, string_id)
+                                              selectors, string_id, dialect)
                 nodes.append(node)
                 continue
-            if nxt in MARKERS:
+            if nxt in dialect.markers:
                 flush()
                 nodes.append(("marker", nxt))
                 index += 2
@@ -81,41 +115,41 @@ def _parse_sequence(raw, index, depth, selectors, string_id):
     return nodes, index
 
 
-def _parse_selector(raw, index, depth, code, selectors, string_id):
+def _parse_selector(raw, index, depth, code, selectors, string_id, dialect=NEWSPAPER):
     selectors.append(code)
     number = len(selectors)
     branches = []
     while True:
-        nodes, index = _parse_sequence(raw, index, depth + 1, selectors, string_id)
+        nodes, index = _parse_sequence(raw, index, depth + 1, selectors, string_id, dialect)
         branches.append(nodes)
-        if raw[index:index + 2] == "#%":
+        if raw[index:index + 2] == dialect.terminator:
             return ("selector", number, code, branches), index + 2
         if raw[index:index + 1] != "#":
             raise NewspaperGrammarError(f"{string_id}: selector %x{code} is not closed")
         index += 1
 
 
-def parse(raw, string_id="?"):
+def parse(raw, string_id="?", dialect=NEWSPAPER):
     selectors = []
-    nodes, index = _parse_sequence(raw, 0, 0, selectors, string_id)
+    nodes, index = _parse_sequence(raw, 0, 0, selectors, string_id, dialect)
     if index != len(raw):
         raise NewspaperGrammarError(f"{string_id}: trailing input at offset {index}")
     return nodes
 
 
-def _render_display(nodes):
+def _render_display(nodes, dialect=NEWSPAPER):
     out = []
     for node in nodes:
         if node[0] == "text":
             out.append(node[1])
         elif node[0] == "marker":
-            out.append(f"[[{MARKERS[node[1]]}]]")
+            out.append(f"[[{dialect.markers[node[1]]}]]")
         else:
             out.append(f"[[SEL:S{node[1]:02d}]]")
     return "".join(out)
 
 
-def _walk(nodes, component_id, parent_id, components, context):
+def _walk(nodes, component_id, parent_id, components, context, dialect=NEWSPAPER):
     components.append({
         "component_id": component_id,
         "parent_id": parent_id,
@@ -124,19 +158,19 @@ def _walk(nodes, component_id, parent_id, components, context):
         "branch_index": "",
         "condition": "",
         "context": context,
-        "source_text": _render_display(nodes),
+        "source_text": _render_display(nodes, dialect),
         "nodes": nodes,
     })
     for node in nodes:
         if node[0] != "selector":
             continue
         _number, code, branches = node[1], node[2], node[3]
-        frame = _render_display(nodes)
+        frame = _render_display(nodes, dialect)
         for position, branch in enumerate(branches, start=1):
-            _walk_branch(node, position, branch, component_id, components, frame)
+            _walk_branch(node, position, branch, component_id, components, frame, dialect)
 
 
-def _walk_branch(selector_node, position, branch, parent_id, components, frame):
+def _walk_branch(selector_node, position, branch, parent_id, components, frame, dialect=NEWSPAPER):
     number, code, branches = selector_node[1], selector_node[2], selector_node[3]
     condition = (f"random 1..{int(code[1], 16)}" if code[0] == "0"
                  else f"context {int(code[0], 16)}")
@@ -148,28 +182,28 @@ def _walk_branch(selector_node, position, branch, parent_id, components, frame):
         "branch_index": position,
         "condition": condition,
         "context": frame,
-        "source_text": _render_display(branch),
+        "source_text": _render_display(branch, dialect),
         "nodes": branch,
     })
     for node in branch:
         if node[0] != "selector":
             continue
-        inner_frame = _render_display(branch)
+        inner_frame = _render_display(branch, dialect)
         for inner_position, inner_branch in enumerate(node[3], start=1):
             _walk_branch(node, inner_position, inner_branch,
-                         f"S{number:02d}.{position}", components, inner_frame)
+                         f"S{number:02d}.{position}", components, inner_frame, dialect)
 
 
-def components(raw, string_id="?"):
-    nodes = parse(raw, string_id)
+def components(raw, string_id="?", dialect=NEWSPAPER):
+    nodes = parse(raw, string_id, dialect)
     rows = []
-    _walk(nodes, "ROOT", "", rows, "")
+    _walk(nodes, "ROOT", "", rows, "", dialect)
     for row in rows:
         row.pop("nodes", None)
     return rows
 
 
-def selector_codes(raw, string_id="?"):
+def selector_codes(raw, string_id="?", dialect=NEWSPAPER):
     codes = []
 
     def visit(nodes):
@@ -179,11 +213,11 @@ def selector_codes(raw, string_id="?"):
                 for branch in node[3]:
                     visit(branch)
 
-    visit(parse(raw, string_id))
+    visit(parse(raw, string_id, dialect))
     return codes
 
 
-def _encode_display(display, string_id, component_id, selector_lookup):
+def _encode_display(display, string_id, component_id, selector_lookup, dialect=NEWSPAPER):
     out, index = [], 0
     for match in MARKER_PATTERN.finditer(display):
         literal = display[index:match.start()]
@@ -198,8 +232,8 @@ def _encode_display(display, string_id, component_id, selector_lookup):
                 raise NewspaperGrammarError(
                     f"{string_id}/{component_id}: unknown selector reference {name}")
             out.append(selector_lookup[key])
-        elif name in MARKER_BY_NAME:
-            out.append("%" + MARKER_BY_NAME[name])
+        elif name in dialect.marker_by_name:
+            out.append("%" + dialect.marker_by_name[name])
         else:
             raise NewspaperGrammarError(
                 f"{string_id}/{component_id}: unknown marker [[{name}]]")
@@ -212,7 +246,7 @@ def _encode_display(display, string_id, component_id, selector_lookup):
     return "".join(out)
 
 
-def rebuild(rows, string_id="?"):
+def rebuild(rows, string_id="?", dialect=NEWSPAPER):
     by_id = {}
     for row in rows:
         key = row["component_id"]
@@ -245,16 +279,16 @@ def rebuild(rows, string_id="?"):
             if row is None:
                 raise NewspaperGrammarError(f"{string_id}: {key}.{position} is missing")
             encoded = _encode_display(
-                _text_of(row), string_id, row["component_id"], resolved)
-            # Guard: a branch (after the first) starting with '%' would be read
-            # as the "#%" selector terminator, so prefix a space.
-            if position > 1 and encoded.startswith("%"):
+                _text_of(row), string_id, row["component_id"], resolved, dialect)
+            # Guard: a branch (after the first) that starts like the terminator ("#%" for the
+            # newspaper, "#x" for BMH commentary) would be read as the end of the selector.
+            if position > 1 and dialect.needs_guard(encoded):
                 encoded = " " + encoded
             parts.append(encoded)
-        resolved[key] = "%x" + codes[key] + "#".join(parts) + "#%"
+        resolved[key] = "%x" + codes[key] + "#".join(parts) + dialect.terminator
 
     root = by_id["ROOT"]
-    return _encode_display(_text_of(root), string_id, "ROOT", resolved)
+    return _encode_display(_text_of(root), string_id, "ROOT", resolved, dialect)
 
 
 def _text_of(row):
@@ -264,6 +298,6 @@ def _text_of(row):
     return value
 
 
-__all__ = ["MARKER_META", "SELECTOR_META",
+__all__ = ["MARKER_META", "SELECTOR_META", "BMH_MARKER_META", "Dialect", "NEWSPAPER", "BMH_COMMENTARY",
            "MARKERS", "MARKER_BY_NAME", "KNOWN_SELECTORS", "NewspaperGrammarError",
            "parse", "components", "rebuild", "selector_codes"]

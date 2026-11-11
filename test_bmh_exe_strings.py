@@ -55,6 +55,26 @@ class Base:
             self.assertEqual(model.strings, texts)
             self.assertEqual(model.apply(model.strings), cur)
 
+    def test_template_grammar(self):
+        """Commentary strings are templates: they parse with the BMH dialect, rebuild byte for byte,
+        and random selectors (%x02..%x05) have at least as many branches as their second digit says
+        (one string of the game has a %x02 with 3 branches: it is in the data, in every version)."""
+        import newspaper_grammar as NG
+        templates = [s.decode("latin-1") for s in self.m.strings if b"%x" in s]
+        self.assertGreater(len(templates), 15)
+        for text in templates:
+            rows = NG.components(text, "t", NG.BMH_COMMENTARY)
+            for row in rows:
+                row["translated_text"] = None
+            self.assertEqual(NG.rebuild(rows, "t", NG.BMH_COMMENTARY), text)
+            self.assertRaises(NG.NewspaperGrammarError, NG.parse, text, "t", NG.NEWSPAPER)
+            branches = {}
+            for row in rows:
+                if row["selector"] and row["selector_code"][0] == "0":
+                    branches.setdefault((row["selector"], row["selector_code"]), []).append(1)
+            for (_sel, code), found in branches.items():
+                self.assertGreaterEqual(len(found), int(code[1]))
+
     def test_overflow_and_empty(self):
         with self.assertRaises(BMHExeSpaceError):
             self.m.apply([s + b"x" * 400 for s in self.m.strings])

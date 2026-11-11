@@ -17,8 +17,8 @@ _SELECTOR_CODE_NAMES = NG.SELECTOR_META
 def _is_random_code(selector_code: str) -> bool:
     return selector_code[:1] == "0"
 
-def _instance_colour(code: str, instance_index: int) -> tuple[str, str]:
-    base_hex = _SELECTOR_CODE_NAMES.get(code.upper(), ("", _SEL_COLOUR))[1]
+def _instance_colour(code: str, instance_index: int, names=None) -> tuple[str, str]:
+    base_hex = (names if names is not None else _SELECTOR_CODE_NAMES).get(code.upper(), ("", _SEL_COLOUR))[1]
     if instance_index == 0 or not base_hex.startswith("#") or len(base_hex) != 7:
         return (base_hex, _TEXT_FG)
     step = 18 * instance_index
@@ -34,6 +34,25 @@ _CONTEXT_BRANCH_LABELS: dict[str, list[str]] = {
     "40": ["Unsatisfied", "Satisfied"],
     "50": ["Undeserved", "Deserved"],
 }
+
+
+class EditorStyle:
+    """Everything the editor needs to know about one template language: the grammar dialect, the
+    placeholder badges, the selector badges and how many branches a context selector has.
+    NEWSPAPER_STYLE is the original one; the BMH commentary editor passes its own (bmh_editor.py)."""
+
+    def __init__(self, dialect, marker_ui, selector_names, context_branch_count=None,
+                 context_branch_labels=None, title="📰  Newspaper String Editor"):
+        self.dialect = dialect
+        self.marker_ui = marker_ui                    # marker name -> (badge text, colour)
+        self.selector_names = selector_names          # selector code -> (badge text, colour)
+        self.context_branch_count = context_branch_count or {}
+        self.context_branch_labels = context_branch_labels or {}
+        self.title = title
+
+
+NEWSPAPER_STYLE = EditorStyle(NG.NEWSPAPER, _MARKER_UI, _SELECTOR_CODE_NAMES,
+                              _CONTEXT_BRANCH_COUNT, _CONTEXT_BRANCH_LABELS)
 
 class _DragState:
     def __init__(self):
@@ -305,6 +324,7 @@ class _ComponentEditor:
         self._encode_fn   = encode_fn or (lambda t: t)
         self._fixed_width = fixed_width
         self._panel       = panel
+        self._style       = panel._style if panel is not None else NEWSPAPER_STYLE
         self._undo:        list[str] = []
         self._committed: str       = component["source_text"]
         outer = tk.Frame(parent, bg="#BDC3C7", bd=1)
@@ -472,7 +492,7 @@ class _ComponentEditor:
 
     def _insert_marker(self, tw: tk.Text, name: str):
         if name == "BREAK":
-            display, colour = _MARKER_UI["BREAK"]
+            display, colour = self._style.marker_ui["BREAK"]
             badge = _TagLabel(tw, "BREAK", display, colour, _TEXT_FG,
                               self._ds, deletable=True,
                               on_change=self._on_change, row=self)
@@ -481,16 +501,16 @@ class _ComponentEditor:
             sel_key = name[4:]
             if sel_key in self._sel_meta:
                 display, colour = self._sel_meta[sel_key]
-            elif sel_key.upper() in _SELECTOR_CODE_NAMES:
-                display = _SELECTOR_CODE_NAMES[sel_key.upper()][0]
-                colour  = _instance_colour(sel_key.upper(), 0)
+            elif sel_key.upper() in self._style.selector_names:
+                display = self._style.selector_names[sel_key.upper()][0]
+                colour  = _instance_colour(sel_key.upper(), 0, self._style.selector_names)
             else:
                 display = sel_key
                 colour  = (_SEL_COLOUR, _TEXT_FG)
             badge = _TagLabel(tw, name, display, *colour, self._ds,deletable=False,on_change=self._on_change, row=self)
             tw.window_create(tk.END, window=badge)
         else:
-            display, colour = _MARKER_UI.get(name, (name, "#607D8B"))
+            display, colour = self._style.marker_ui.get(name, (name, "#607D8B"))
             badge = _TagLabel(tw, name, display, colour, _TEXT_FG,self._ds, deletable=False,on_change=self._on_change, row=self)
             tw.window_create(tk.END, window=badge)
 
@@ -600,6 +620,8 @@ class _ComponentEditor:
             self._on_change()
 
     def _on_return(self, _e=None):
+        if "BREAK" not in self._style.marker_ui:      # this language has no line-break marker
+            return "break"
         cursor = self.widget.index(tk.INSERT)
         tokens = self._tokenise(self.widget)
         tw = self.widget
@@ -755,7 +777,7 @@ class _PoolDragBadge:
         if self.marker_name.startswith("SEL:"):
             raw_key = self.marker_name[4:]
             code_upper = raw_key.upper()
-            if code_upper in _SELECTOR_CODE_NAMES:
+            if code_upper in self._panel._style.selector_names:
                 selector, selector_code, label, colour, n_branches = \
                     self._panel._allocate_selector(code_upper)
                 final_marker = f"SEL:{selector}"
@@ -798,8 +820,23 @@ class NewspaperEditorPanel(ttk.Frame):
 
     def __init__(self, parent: tk.Widget, editor,
                  on_show: "Callable | None" = None,
-                 on_hide: "Callable | None" = None):
+                 on_hide: "Callable | None" = None,
+                 style: "EditorStyle | None" = None,
+                 codec: "tuple[Callable, Callable] | None" = None,
+                 commit: "Callable | None" = None,
+                 pack_kwargs: "dict | None" = None):
+        """editor    : host with _update_save_state(), optional _reg / translation_bar
+        style     : EditorStyle (default: the newspaper one)
+        codec     : (decode(entry, text) -> display, encode(entry, display) -> text) for the text pieces;
+                    default = the MZ editor's per-font charmap
+        commit    : commit(entry, rebuilt_template) -> error text or None.  Default = MZ transaction
+                    (repack_transaction) on the host editor
+        pack_kwargs: how show() packs the panel (default: bottom of the edit frame)"""
         super().__init__(parent)
+        self._style    = style or NEWSPAPER_STYLE
+        self._codec    = codec
+        self._commit_fn = commit
+        self._pack_kwargs = pack_kwargs or {"side": tk.BOTTOM, "fill": tk.X, "pady": (4, 4)}
         self._editor   = editor
         self._editors: list[_ComponentEditor] = []
         self._ds       = _DragState()
@@ -816,7 +853,7 @@ class NewspaperEditorPanel(ttk.Frame):
     def _build_shell(self):
         self._hdr = ttk.Frame(self)
         self._hdr.pack(fill=tk.X, pady=(8, 2))
-        ttk.Label(self._hdr,text="📰  Newspaper String Editor",font=("Segoe UI", 10, "bold"),foreground="#1565C0").pack(side=tk.LEFT)
+        ttk.Label(self._hdr,text=self._style.title,font=("Segoe UI", 10, "bold"),foreground="#1565C0").pack(side=tk.LEFT)
         self._status_lbl = ttk.Label(self._hdr, text="",font=("Segoe UI", 9, "italic"),foreground="#27AE60")
         self._status_lbl.pack(side=tk.RIGHT, padx=(0, 8))
         self._err_lbl = ttk.Label(self._hdr, text="",font=("Segoe UI", 9, "italic"),foreground="#C0392B")
@@ -861,16 +898,16 @@ class NewspaperEditorPanel(ttk.Frame):
         row1 = tk.Frame(self._pool_inner, bg="#E8EAF6")
         row1.pack(fill=tk.X, pady=1)
         _pool_label(row1, "TAG:")
-        for name, (display, colour) in _MARKER_UI.items():
+        for name, (display, colour) in self._style.marker_ui.items():
             self._make_pool_badge(row1, name, display, colour, _TEXT_FG)
         row2 = tk.Frame(self._pool_inner, bg="#E8EAF6")
         row2.pack(fill=tk.X, pady=1)
         _pool_label(row2, "RANDOM:")
-        for code, (display, bg) in _SELECTOR_CODE_NAMES.items():
+        for code, (display, bg) in self._style.selector_names.items():
             if _is_random_code(code):
                 self._make_pool_badge(row2, f"SEL:{code}", display, bg, _TEXT_FG)
         _pool_label(row2, "CONTEXT:", left_pad=16)
-        for code, (display, bg) in _SELECTOR_CODE_NAMES.items():
+        for code, (display, bg) in self._style.selector_names.items():
             if not _is_random_code(code):
                 self._make_pool_badge(row2, f"SEL:{code}", display, bg, _TEXT_FG)
 
@@ -918,16 +955,16 @@ class NewspaperEditorPanel(ttk.Frame):
             except Exception:
                 n_branches = 2
         else:
-            n_branches = _CONTEXT_BRANCH_COUNT.get(code_upper, 2)
+            n_branches = self._style.context_branch_count.get(code_upper, 2)
 
         instance_index = sum(
             1 for c in self._comps
-            if c.get("selector_code", "").upper() in _SELECTOR_CODE_NAMES
+            if c.get("selector_code", "").upper() in self._style.selector_names
             and _is_random_code(c.get("selector_code", "")) == is_rnd
             and c.get("branch_index") == "1"
         )
-        semantic = _SELECTOR_CODE_NAMES[code_upper][0]
-        colour   = _instance_colour(code_upper, instance_index)
+        semantic = self._style.selector_names[code_upper][0]
+        colour   = _instance_colour(code_upper, instance_index, self._style.selector_names)
         label    = f"{semantic}({instance_index + 1})"
 
         return selector, code_upper, label, colour, n_branches
@@ -944,7 +981,7 @@ class NewspaperEditorPanel(ttk.Frame):
                 except CharmapEncodeError:
                     pass
 
-        if code_upper in _SELECTOR_CODE_NAMES:
+        if code_upper in self._style.selector_names:
             if selector_override:
                 selector = selector_override
                 selector_code = code_upper
@@ -955,7 +992,7 @@ class NewspaperEditorPanel(ttk.Frame):
                     except Exception:
                         n_branches = 2
                 else:
-                    n_branches = _CONTEXT_BRANCH_COUNT.get(code_upper, 2)
+                    n_branches = self._style.context_branch_count.get(code_upper, 2)
             else:
                 selector, selector_code, _label, _colour, n_branches = \
                     self._allocate_selector(code_upper)
@@ -1036,8 +1073,13 @@ class NewspaperEditorPanel(ttk.Frame):
         self._raw_decode_fn = decode_fn
 
         try:
-            self._decode_fn = lambda text, _e=entry: self._editor._decode_raw_for_entry( _e, text.encode("latin-1", errors="replace"))
-            self._encode_fn = lambda text, _e=entry: self._editor._encode_entry_text(_e, text).decode("latin-1")
+            if self._codec is not None:
+                decode, encode = self._codec
+                self._decode_fn = lambda text, _e=entry: decode(_e, text)
+                self._encode_fn = lambda text, _e=entry: encode(_e, text)
+            else:
+                self._decode_fn = lambda text, _e=entry: self._editor._decode_raw_for_entry( _e, text.encode("latin-1", errors="replace"))
+                self._encode_fn = lambda text, _e=entry: self._editor._encode_entry_text(_e, text).decode("latin-1")
         except Exception:
             self._decode_fn = lambda t: t
             self._encode_fn = lambda t: t
@@ -1045,7 +1087,7 @@ class NewspaperEditorPanel(ttk.Frame):
         self._status_lbl.config(text="")
         try:
             raw_template = decode_fn(entry)
-            self._comps  = NG.components(raw_template,entry.get("string_id", "?"))
+            self._comps  = NG.components(raw_template,entry.get("string_id", "?"), self._style.dialect)
         except Exception as exc:
             self._err_lbl.config(text=f"Parse error: {exc}")
             self._comps = []
@@ -1060,7 +1102,7 @@ class NewspaperEditorPanel(ttk.Frame):
                 self._on_show_cb()
             except Exception:
                 pass
-        self.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 4))
+        self.pack(**self._pack_kwargs)
 
     def hide(self):
         self.pack_forget()
@@ -1092,9 +1134,9 @@ class NewspaperEditorPanel(ttk.Frame):
                 code = item[0].get("selector_code", "") 
                 if sel in sel_meta:
                     continue
-                if code.upper() in _SELECTOR_CODE_NAMES:
-                    semantic = _SELECTOR_CODE_NAMES[code.upper()][0]
-                    colour   = _instance_colour(code.upper(), instance_counter)
+                if code.upper() in self._style.selector_names:
+                    semantic = self._style.selector_names[code.upper()][0]
+                    colour   = _instance_colour(code.upper(), instance_counter, self._style.selector_names)
                     label    = f"{semantic}({instance_counter + 1})"
                     instance_counter += 1
                 else:
@@ -1158,7 +1200,7 @@ class NewspaperEditorPanel(ttk.Frame):
         sel_name = branches[0]["selector"]
         sel_code = branches[0].get("selector_code", "").upper()
         is_rnd   = _is_random_code(sel_code)
-        branch_sublabels = _CONTEXT_BRANCH_LABELS.get(sel_code, [])
+        branch_sublabels = self._style.context_branch_labels.get(sel_code, [])
         indent_px = indent_level * 20
         outer = tk.Frame(self._inner, bg="#F4F6F9")
         outer.pack(fill=tk.X, padx=(4 + indent_px, 4), pady=(0, 3))
@@ -1231,15 +1273,30 @@ class NewspaperEditorPanel(ttk.Frame):
             })
         sid = self._entry.get("string_id", "?") if self._entry else "?"
         try:
-            return NG.rebuild(rows_data, sid)
+            return NG.rebuild(rows_data, sid, self._style.dialect)
         except Exception as exc:
             self._err_lbl.config(text=f"Rebuild error: {exc}")
             return None
+
+    def _apply_with_commit(self, rebuilt):
+        """apply() for hosts that commit through their own callback (the BMH EXE panel)."""
+        problem = self._commit_fn(self._entry, rebuilt)
+        if problem:
+            self._err_lbl.config(text=problem)
+            return
+        for ed in self._editors:
+            ed.commit()
+        self._dirty_hint = False
+        self._err_lbl.config(text="")
+        self._status_lbl.config(text="✔ Saved")
+        self.after(2500, lambda: self._status_lbl.config(text=""))
 
     def apply(self):
         rebuilt = self._get_rebuilt_template()
         if rebuilt is None:
             return
+        if self._commit_fn is not None:
+            return self._apply_with_commit(rebuilt)
 
         editor = self._editor
         if editor.current_index is None or not editor._supported_loaded():
@@ -1315,7 +1372,7 @@ class NewspaperEditorPanel(ttk.Frame):
             try:
                 raw_template = self._raw_decode_fn(self._entry)
                 self._comps  = NG.components(
-                    raw_template, self._entry.get("string_id", "?"))
+                    raw_template, self._entry.get("string_id", "?"), self._style.dialect)
             except Exception:
                 pass
             self._build_layout(False, None)

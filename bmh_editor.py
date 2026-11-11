@@ -25,6 +25,9 @@ try:                                        # control-token shield already used 
 except ImportError:                         # pragma: no cover
     _SHARED_TOKENS = None
 from preview_dialog import make_preview_tree
+import newspaper_grammar as NG
+import newspaper_editor as _ne
+from charmap import CharmapEncodeError
 from bmh_exe_strings import BMHExeStrings, BMHExeError, BMHExeSpaceError  # noqa: F401  (re-exported)
 
 TEXT_COUNT = 0x566  # pointer table TextPointerTable[1382]
@@ -97,6 +100,25 @@ _ESCAPE_RE = re.compile(r"\\x([0-9A-Fa-f]{2})")
 # Control codes inside the strings of the EXE (never to be sent to a translation engine):
 #   %x02 %x10 ... colour/attribute codes, %c %z %V %0 ... placeholders, %% literal, # alternatives
 #   separator, #x end of an alternatives group (only when no letter follows).
+# Look of the template editor for the commentary strings: same editor as the newspaper strings of the
+# MZ games (newspaper_editor.NewspaperEditorPanel) with the BMH grammar dialect.  Random selectors
+# %x02..%x05 have as many branches as the code says; the context selectors found in the EXEs (10 11 20
+# 21 40 50 60 70 80 90) have the branch counts below.  What each context code means is not known, so
+# they are shown by code only.
+_BMH_RANDOM = {code: (f"RANDOM{code[1]}", colour) for code, colour in
+               (("02", "#4A235A"), ("03", "#6C3483"), ("04", "#8E44AD"), ("05", "#A569BD"))}
+_BMH_CONTEXT = {code: (f"CTX {code}", colour) for code, colour in
+                (("10", "#3A1F14"), ("11", "#4A2818"), ("20", "#512A18"), ("21", "#5E3019"),
+                 ("40", "#874415"), ("50", "#A65D20"), ("60", "#B8742A"), ("70", "#7B5B3A"),
+                 ("80", "#8D6E63"), ("90", "#6D4C41"))}
+BMH_STYLE = _ne.EditorStyle(
+    dialect=NG.BMH_COMMENTARY,
+    marker_ui={meta[0]: (meta[1], meta[2]) for meta in NG.BMH_MARKER_META.values()},
+    selector_names={**_BMH_RANDOM, **_BMH_CONTEXT},
+    context_branch_count={"10": 2, "11": 2, "20": 2, "21": 3, "40": 4, "50": 2,
+                          "60": 2, "70": 2, "80": 2, "90": 2},
+    title="💬  Commentary Template Editor",
+)
 _EXE_TOKEN_RE = re.compile(r"%x[0-9A-Fa-f]{2}|%%|%[A-Za-z0-9]|#x(?![A-Za-z0-9])|#")
 
 
@@ -257,6 +279,7 @@ class BMHStringsPanel(ttk.Frame):
         self.edit_text.bind("<Return>", lambda _e: (self.apply_edit(), "break")[1])
         info = ttk.Frame(edit)
         info.pack(fill=tk.X)
+        self._info_row = info
         self.info_label = ttk.Label(info, text="", font=("Segoe UI", 9, "bold"), foreground="#27AE60")
         self.info_label.pack(side=tk.LEFT)
         self.size_label = ttk.Label(info, text="", font=("Segoe UI", 9, "italic"), foreground="#2980B9")
@@ -487,7 +510,11 @@ class BMHStringsPanel(ttk.Frame):
     @classmethod
     def _translate_text(cls, translate_fn, text):
         """Translate text chunk by chunk so control codes are never sent to the engine."""
-        spans = sorted((m.start(), m.end()) for rx in cls._protected_patterns() for m in rx.finditer(text))
+        return cls._translate_chunks(translate_fn, text, cls._protected_patterns())
+
+    @staticmethod
+    def _translate_chunks(translate_fn, text, patterns):
+        spans = sorted((m.start(), m.end()) for rx in patterns for m in rx.finditer(text))
         merged = []
         for start, end in spans:
             if merged and start <= merged[-1][1]:
@@ -651,6 +678,17 @@ class BMHExeStringsPanel(BMHStringsPanel):
         """space_bar_factory(parent) -> the free-space bar widget (FreeSpaceBar of main_editor.py:
         it is defined there once and handed in, to avoid a circular import)."""
         super().__init__(parent, **kwargs)
+        self._template_active = False
+        self._translate_on = False
+        self.template_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(self._btn_row, text="Template editor", variable=self.template_var,
+                        command=self._sync_template_panel).pack(side=tk.LEFT, padx=(12, 0))
+        # the same editor as the newspaper strings: replaces the plain text box for templates
+        self.template_panel = _ne.NewspaperEditorPanel(
+            self._edit_frame, self, on_show=self._template_shown, on_hide=self._template_hidden,
+            style=BMH_STYLE, codec=(self._template_decode, self._template_encode),
+            commit=self._commit_template,
+            pack_kwargs={"fill": tk.X, "pady": (0, 6), "before": self._info_row})
         self.space_bar = space_bar_factory(self._edit_frame) if space_bar_factory else None
         if self.space_bar is not None:
             self.space_bar.pack(fill=tk.X, pady=(8, 0), before=self._btn_row)
@@ -662,6 +700,7 @@ class BMHExeStringsPanel(BMHStringsPanel):
         self._strings = list(model.strings)
         self._original = list(model.strings)
         self._baseline = list(model.strings)
+        self._hide_template()
         self.current_id = None
         self.search_var.set("")
         self.modified_only_var.set(False)
@@ -670,6 +709,7 @@ class BMHExeStringsPanel(BMHStringsPanel):
         self._on_change()
 
     def clear(self):
+        self._hide_template()
         super().clear()
         if self.space_bar is not None:
             self.space_bar.clear()
@@ -686,6 +726,183 @@ class BMHExeStringsPanel(BMHStringsPanel):
         self._refresh_tree()
         self._on_change()
 
+    # ------------------------------------------------------------ grammar
+    # Commentary strings are templates (selectors %xNN ... #x with "#"-separated branches and %c/%z/%0
+    # markers).  Same language as the newspaper strings of the MZ games: newspaper_grammar.py with the
+    # BMH_COMMENTARY dialect (terminator "#x").
+    @staticmethod
+    def _is_template(text):
+        return "%x" in text
+
+    @classmethod
+    def _template_rows(cls, text, string_id="?"):
+        return NG.components(text, string_id, NG.BMH_COMMENTARY)
+
+    @classmethod
+    def _translate_text(cls, translate_fn, text):
+        """Templates are translated component by component (one branch at a time) and rebuilt, so the
+        structure can never be damaged; any other text is protected token by token."""
+        if cls._is_template(text):
+            try:
+                rows = cls._template_rows(text)
+            except NG.NewspaperGrammarError:
+                rows = None
+            if rows is not None:
+                patterns = (_ESCAPE_RE, NG.MARKER_PATTERN)
+                for row in rows:
+                    row["translated_text"] = cls._translate_chunks(translate_fn, row["source_text"], patterns)
+                try:
+                    return NG.rebuild(rows, "?", NG.BMH_COMMENTARY)
+                except NG.NewspaperGrammarError as exc:
+                    raise TranslationIntegrityError(str(exc))
+        return cls._translate_chunks(translate_fn, text, cls._protected_patterns())
+
+    def _grammar_problem(self, index, raw):
+        """Error text when a string that is (or was) a template no longer parses, else None."""
+        text, original = raw.decode("latin-1"), self._original[index].decode("latin-1")
+        if not (self._is_template(text) or self._is_template(original)):
+            return None
+        try:
+            NG.parse(text, str(index), NG.BMH_COMMENTARY)
+        except NG.NewspaperGrammarError as exc:
+            return "Template grammar error: " + str(exc)
+        return None
+
+    def _structure(self, raw):
+        try:
+            return NG.selector_codes(raw.decode("latin-1"), "?", NG.BMH_COMMENTARY)
+        except NG.NewspaperGrammarError:
+            return None
+
+    # ---------------------------------------------------- template editor
+    @property
+    def translation_bar(self):
+        return self.bar                       # shared with the template editor's own bar
+
+    @staticmethod
+    def _template_decode(_entry, text):
+        return decode_text(text.encode("latin-1", errors="replace"))
+
+    @staticmethod
+    def _template_encode(_entry, text):
+        try:
+            return encode_text(text).decode("latin-1")
+        except BMHEncodeError as exc:
+            raise CharmapEncodeError(str(exc)) from exc
+
+    def _parses(self, text):
+        try:
+            NG.parse(text, "?", NG.BMH_COMMENTARY)
+            return True
+        except NG.NewspaperGrammarError:
+            return False
+
+    def _hide_template(self):
+        if self.template_panel.winfo_manager():
+            self.template_panel.hide()
+
+    def _sync_template_panel(self):
+        """Template strings are edited with the newspaper editor, every other string in the text box."""
+        if not self.loaded or self.current_id is None:
+            self._hide_template()
+            return
+        text = self._strings[self.current_id].decode("latin-1")
+        if self.template_var.get() and self._is_template(text) and self._parses(text):
+            entry = {"string_id": f"#{self.current_id}", "text": text}
+            self.template_panel.show(entry, decode_fn=lambda e: e["text"],
+                                     translate_enabled=self._translate_on)
+        else:
+            self._hide_template()
+
+    def _template_shown(self):
+        self._template_active = True
+        self.edit_text.pack_forget()
+        if self.bar.winfo_manager():          # the template editor has its own translation bar
+            self.bar.pack_forget()
+        self.info_label.config(text=f"ID {self.current_id}  -  offset 0x{self._offsets()[self.current_id]:05X}",
+                               foreground="#27AE60")
+        self._update_save_state()
+
+    def _template_hidden(self):
+        self._template_active = False
+        if not self.edit_text.winfo_manager():
+            self.edit_text.pack(fill=tk.X, pady=(0, 6), before=self._info_row)
+        if self._translate_on and not self.bar.winfo_manager():
+            self.bar.pack(fill=tk.X, pady=(8, 0))
+        if self.loaded and self.current_id is not None:
+            self._set_edit_text(decode_text(self._strings[self.current_id]))
+            self._on_text_modified()
+
+    def _commit_template(self, _entry, rebuilt):
+        raw = rebuilt.encode("latin-1")
+        problem = self._check_raw(raw)
+        if problem:
+            return problem
+        self._strings[self.current_id] = raw
+        self._refresh_tree()
+        self._set_edit_text(decode_text(raw))
+        self._update_save_state()
+        return None
+
+    def _update_save_state(self):
+        """Called by the template editor on every change (and by us): buttons, size and space."""
+        if self._template_active and self.current_id is not None:
+            dirty = self.template_panel.is_dirty()
+            rebuilt = self.template_panel._get_rebuilt_template()
+            problem = None
+            if rebuilt is not None:
+                raw = rebuilt.encode("latin-1")
+                problem = self._check_raw(raw)
+                if problem is None:
+                    self.size_label.config(text=self._size_text(raw))
+                else:
+                    self.size_label.config(text="")
+            self.apply_button.config(state=tk.NORMAL if (dirty and rebuilt is not None and problem is None)
+                                     else tk.DISABLED)
+            self.discard_button.config(state=tk.NORMAL if dirty else tk.DISABLED)
+            if problem:
+                self.info_label.config(text=problem, foreground="#C0392B")
+        self._on_change()
+
+    def has_pending_edit(self):
+        if self._template_active:
+            return self.template_panel.is_dirty()
+        return super().has_pending_edit()
+
+    def apply_edit(self):
+        if self._template_active:
+            self.template_panel.apply()
+            return not self.template_panel.is_dirty()
+        return super().apply_edit()
+
+    def discard_edit(self):
+        if self._template_active:
+            self.template_panel.discard()
+            self._update_save_state()
+            return
+        super().discard_edit()
+
+    def _show(self, text_id):
+        super()._show(text_id)
+        self._sync_template_panel()
+
+    def set_translate_enabled(self, enabled):
+        self._translate_on = bool(enabled)
+        if self._template_active:
+            if self.bar.winfo_manager():
+                self.bar.pack_forget()
+            self.template_panel.refresh_translation(self._translate_on)
+        else:
+            super().set_translate_enabled(enabled)
+
+    def payload(self) -> bytes:
+        for index, (raw, old) in enumerate(zip(self._strings, self._baseline)):
+            if raw != old:
+                problem = self._grammar_problem(index, raw)
+                if problem:
+                    raise BMHExeError(f"String #{index}: {problem}")
+        return super().payload()
+
     # --------------------------------------------------------------- hooks
     @classmethod
     def _protected_patterns(cls):
@@ -698,7 +915,7 @@ class BMHExeStringsPanel(BMHStringsPanel):
     def _check_raw(self, raw):
         if not raw:
             return "Empty text is not supported in the EXE (use a single space)."
-        return None
+        return self._grammar_problem(self.current_id, raw) if self.current_id is not None else None
 
     def _planned(self, pending=None):
         strings = list(self._strings)
@@ -716,7 +933,11 @@ class BMHExeStringsPanel(BMHStringsPanel):
         else:
             note = "unchanged"
         self._update_space(self._planned(raw))
-        return f"{len(raw)} / {item.slot - 1} bytes in place - {note}"
+        text = f"{len(raw)} / {item.slot - 1} bytes in place - {note}"
+        if self._is_template(raw.decode("latin-1")):
+            same = self._structure(raw) == self._structure(self._original[self.current_id])
+            text += " - template OK" if same else " - template structure changed"
+        return text
 
     def _update_space(self, strings=None):
         """Bytes needed by the current texts / room available for these strings."""
