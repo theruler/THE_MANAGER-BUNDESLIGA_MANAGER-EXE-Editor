@@ -140,7 +140,7 @@ class SingleMatchMixin: # Team / formation / roster selection for the quick matc
     # ---------- drawing ----------
     def draw_single_match(self, s, bd, hits, vx, vy): # Team / formation / roster screen of the single match.
         W = SU_W # The page background is the 22.CP picture (draw_intro); the surface is transparent.
-        self._put(tr("intro.title"), 56, (232, 236, 255), 26, cx=W // 2, shadow=True)
+        self._put(tr("menu.quick_match"), 56, (232, 236, 255), 26, cx=W // 2, shadow=True)
         self._put(tr("intro.subtitle"), 15, (205, 215, 235), 58, cx=W // 2, w=W - 300, shadow=True)
         self.back_button_br(s, hits, vx, vy) # Framed INDIETRO picture, always in the bottom right corner.
         names_ctl = (tr("intro.team_home"), tr("intro.team_away"))
@@ -156,9 +156,11 @@ class SingleMatchMixin: # Team / formation / roster selection for the quick matc
         row = 672 # START row.
         sb = pygame.Rect(W // 2 - 140, row - 22, 280, 44)
         hov = sb.collidepoint(vx, vy)
-        pygame.draw.rect(s, ((60, 150, 90) if hov else (44, 112, 70)) if ok else (40, 44, 58), sb, border_radius=8)
-        pygame.draw.rect(s, (200, 255, 210) if ok else (80, 86, 104), sb, 2, border_radius=8)
-        self._put(tr("intro.start"), 26, (255, 255, 255) if ok else (120, 126, 146), sb.centery, cx=sb.centerx, w=sb.w - 14)
+        self.draw_generic_button(s, sb, tr("intro.start"), False, hov and ok, px=26)
+        if not ok:
+            shade = pygame.Surface(sb.size, pygame.SRCALPHA)
+            shade.fill((8, 12, 24, 125))
+            s.blit(shade, sb.topleft)
         if ok:
             hits.append((sb, ("start",)))
         self._put(tr("intro.footer"), 16, (205, 215, 235), ROSTER_BOTTOM + 17, cx=W // 2, w=W - 30, shadow=True) # Right under the team and player lists.
@@ -180,7 +182,7 @@ class SingleMatchMixin: # Team / formation / roster selection for the quick matc
         img = self.gfx.logo(td["logo"])
         if img is not None:
             k = min(98.0 / img.get_width(), 98.0 / img.get_height())
-            im = pygame.transform.smoothscale(img, (max(1, int(img.get_width() * k)), max(1, int(img.get_height() * k))))
+            im = pygame.transform.scale(img, (max(1, int(img.get_width() * k)), max(1, int(img.get_height() * k))))
             s.blit(im, im.get_rect(center=lg.center))
         pygame.draw.rect(s, bd.FRAME, lg, 3)
         mp = pygame.Rect(x0 + 128, top, 98, 110)

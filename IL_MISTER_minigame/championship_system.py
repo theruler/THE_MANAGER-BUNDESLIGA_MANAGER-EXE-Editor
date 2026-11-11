@@ -284,6 +284,8 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
     def championship_open(self): # CAMPIONATO button / C key.
         self.menu_page = "champ"
         self.champ_page = self.champ_cur // SLOTS_PER_PAGE
+        if self.champ is not None:
+            self.manager = self.champ.manager or ""
         if self.champ is None:
             self.champ_view = "slots"
             self.champ_refresh_slots()
@@ -301,6 +303,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             return
         self._champ_drop_match()
         self.champ, self.champ_slot, self.champ_dirty, self._champ_str = ch, i, False, None
+        self.manager = ch.manager or ""
         self.champ_view, self.champ_tab, self.champ_div, self.champ_team = "hub", "table", ch.user_div, None
         self._champ_repair()
         self._champ_view_round(ch.played_rounds() if not ch.finished else ch.total_rounds() - 1)
@@ -309,6 +312,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         if not self._champ_guard():
             return
         self.champ_slot, self.champ_view, self.champ_div, self.champ_over = i, "setup", 0, None
+        self.manager = self.champ_manager.strip()
         divs, _ = cm.layout_divisions(len(self.teams))
         self._champ_set_pick(divs[0][0] if divs else 0)
 
@@ -328,6 +332,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         self._champ_drop_match()
         self.champ = cm.Championship.new(len(self.teams), prev.team, formation=prev.formation, lineup=copy.deepcopy(prev.lineup))
         self.champ.manager, self.champ.face = self.champ_manager.strip(), self.champ_face
+        self.manager = self.champ.manager
         self._champ_str, self.champ_dirty = None, True
         self.champ_view, self.champ_tab, self.champ_div, self.champ_team = "hub", "table", self.champ.user_div, None
         self._champ_view_round(0)
@@ -771,10 +776,12 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
                 u = getattr(ev, "unicode", "")
                 if ev.key == pygame.K_BACKSPACE:
                     self.champ_manager = self.champ_manager[:-1]
+                    self.manager = self.champ_manager
                     return True
                 if u and u.isprintable() and ev.key not in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE, pygame.K_TAB):
                     if len(self.champ_manager) < MANAGER_MAX and (u != " " or self.champ_manager):
                         self.champ_manager += u.upper()
+                        self.manager = self.champ_manager
                     return True
             if ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE: # The global handler of input_system would quit the game: here ESC steps back / suspends.
@@ -1089,19 +1096,14 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         note = self.champ_note
         if note and time.time() < note[1]:
             col = WARN if note[2] else GOLD
-            if hub and len(note) > 3 and note[3]: # One line, right-justified, on the row of the SIMULA label.
-                x1 = 16
-                w = W - 32
-                txt = self.fit_text(note[0], 16, w)
-                self._put(txt, 16, col, self._champ_geom()["row_y"] - 16, left=W - 16 - self.board.font(16).size(txt)[0])
-            elif hub: # Hub: the message sits in the last third of the page, on the row of the SIMULA label (up to two lines, the last one on that row).
-                x1 = 16
-                w = W - 32
-                lines = self._wrap_text(note[0], 16, w, 2)
+            if hub and len(note) > 3 and note[3]: # One line, on the row of the SIMULA label.
+                self._put_right(note[0], 16, col, self._champ_geom()["row_y"] - 16, W - 16, W - 32)
+            elif hub: # Hub: up to two lines, right-aligned on the row of the SIMULA label.
+                lines = self._wrap_text(note[0], 16, W - 32, 2)
                 for j, ln in enumerate(reversed(lines)):
-                    self._put(ln, 16, col, self._champ_geom()["row_y"] - 16 - j * 18, cx=x1 + w // 2, w=w)
+                    self._put_right(ln, 16, col, self._champ_geom()["row_y"] - 16 - j * 18, W - 16, W - 32)
             else:
-                self._put(note[0], 18, col, H - 14, cx=W // 2, w=W - 60)
+                self._put_right(note[0], 18, col, H - 14, W - 30, W - 60)
 
     def _champ_place(self, n): # the text champ.place of the language files when it exists, otherwise this default.
         return ctr("final_pos", n=n)
@@ -1232,10 +1234,12 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             self._put_right(tr("intro.hint_numbers"), 17, DIM, 622, W - 30, W - 60)
         sb = pygame.Rect(W // 2 - 140, 650, 280, 44)
         hov = sb.collidepoint(vx, vy)
-        pygame.draw.rect(s, ((60, 150, 90) if hov else (44, 112, 70)) if n == 11 else (40, 44, 58), sb, border_radius=8)
-        pygame.draw.rect(s, (200, 255, 210) if n == 11 else (80, 86, 104), sb, 2, border_radius=8)
-        self._put(ctr("start"), 24, WHITE if n == 11 else (120, 126, 146), sb.centery, cx=sb.centerx, w=sb.w - 14)
-        if n == 11:
+        self.draw_generic_button(s, sb, ctr("start"), False, hov and n == 11, px=24)
+        if n != 11:
+            shade = pygame.Surface(sb.size, pygame.SRCALPHA)
+            shade.fill((8, 12, 24, 125))
+            s.blit(shade, sb.topleft)
+        else:
             hits.append((sb, ("ch_start",)))
 
     def _champ_faces(self): # [(file stem, index)] of every manager face: 0.VGA (4 faces of 40x40, 41 px apart), then 0a.VGA, 0b.VGA ... when they exist.
@@ -1312,7 +1316,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         logo = self.gfx.logo(td["logo"])
         if logo is not None:
             k = min((lg.w - 8) / float(logo.get_width()), (lg.h - 8) / float(logo.get_height()))
-            im = pygame.transform.smoothscale(logo, (max(1, int(logo.get_width() * k)), max(1, int(logo.get_height() * k))))
+            im = pygame.transform.scale(logo, (max(1, int(logo.get_width() * k)), max(1, int(logo.get_height() * k))))
             s.blit(im, im.get_rect(center=lg.center))
         sh = box("sheet") # date of the round (the next one to play; the last one when the season is over)
         d = ch.round_date(n - 1)
@@ -1447,7 +1451,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         self.draw_chip(s, chip, sq.formation or "-", True, chip.collidepoint(vx, vy), TEAM_COL[0])
         hits.append((chip, ("sq_form", fl[(cur + 1) % len(fl)])))
         note = self.champ_note
-        if not (note and time.time() < note[1] and len(note) > 3 and note[3]): # The hint gives way to the one-line message (lineup_short).
+        if not (note and time.time() < note[1]): # Any timed note temporarily replaces the squad hint.
             txt = self.fit_text(ctr("sq_hint"), 15, tw)
             self._put(txt, 15, DIM, g["row_y"] - 16, left=SU_W - 16 - self.board.font(15).size(txt)[0])
         roles = [self.natural_pool(i) for i in range(cm.ROSTER)]

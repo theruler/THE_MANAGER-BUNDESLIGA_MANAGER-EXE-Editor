@@ -14,7 +14,7 @@ import os
 
 import pygame
 
-from fonts import FONTS
+from fonts import FONTS, ScaledFont
 from i18n import Note, T, tr
 from joystick import JOY_ACTIONS, JOY_HOTSPOTS, JOY_IMG
 from graphics_system import (ART_RECTS, ART_SHEET, ART_SHEET_OF, FRAME_H, FRAME_W, NO_TRIM, SU_H, SU_W,
@@ -210,6 +210,48 @@ class IntroMixin: # Main menu, OPTIONS, joypad mapping and intro input dispatch.
         txt = self.fit_text(txt, px, w)
         self._put(txt, px, col, cy, left=right - self.board.font(px).size(txt)[0], shadow=shadow)
 
+    def draw_exit_popup(self, s, box, mouse_pos, question, hits=None): # Shared exit confirmation style for the main menu and an active match.
+        pygame.draw.rect(s, (0, 0, 0), box.move(3, 4))
+        pygame.draw.rect(s, (9, 13, 34), box)
+        pygame.draw.rect(s, (94, 104, 145), box, 2)
+        inner = box.inflate(-6, -6)
+        pygame.draw.rect(s, (78, 0, 0), inner)
+        pygame.draw.rect(s, (0, 0, 0), inner, 1)
+
+        manager = str(getattr(self, "manager", "") or "").strip() or "manager"
+        manager = manager.upper()
+        flow = ScaledFont(FONTS.flow, 2) if FONTS.flow is not None else self.board.font(22)
+        micro = FONTS.small(2) if FONTS.micro is not None else self.board.font(16)
+        while manager and flow.size(manager)[0] > box.w - 28:
+            manager = manager[:-1]
+        self.board.put(s, flow.render(manager, True, (238, 238, 238)), cx=box.centerx, cy=box.y + 20)
+
+        rule = (215, 215, 215)
+        pygame.draw.line(s, rule, (inner.x + 4, box.y + 40), (inner.right - 4, box.y + 40), 1)
+        lines = [line for part in str(question).splitlines() for line in self._wrap(part, micro, box.w - 28)]
+        lines = lines[:3] or [""]
+        gap = 14
+        first_y = box.y + 72 - (len(lines) - 1) * gap // 2
+        for i, line in enumerate(lines):
+            txt = self.board.fit(line, micro, box.w - 28)
+            self.board.put(s, micro.render(txt, True, (224, 224, 224)), cx=box.centerx, cy=first_y + i * gap)
+        pygame.draw.line(s, rule, (inner.x + 4, box.y + 102), (inner.right - 4, box.y + 102), 1)
+
+        buttons = (("exit_yes", tr("menu.exit_yes"), (224, 55, 62)),
+                   ("exit_no", tr("menu.exit_no"), (222, 226, 244)))
+        out = []
+        for i, (tag, label, col) in enumerate(buttons):
+            r = pygame.Rect(box.x + 26 + i * 173, box.y + 120, 160, 30)
+            hov = r.collidepoint(mouse_pos)
+            pygame.draw.rect(s, (5, 5, 10), r)
+            pygame.draw.rect(s, (178, 190, 220) if hov else (105, 116, 158), r, 2 if hov else 1)
+            txt = self.board.fit(label, micro, r.w - 12)
+            self.board.put(s, micro.render(txt, True, (255, 255, 255) if hov else col), cx=r.centerx, cy=r.centery)
+            if hits is not None:
+                hits.append((r, (tag,)))
+            out.append(r)
+        return tuple(out)
+
     def blue_panel(self, s, rect): # The blue box with a black shadow of the OPTIONS page.
         pygame.draw.rect(s, (0, 0, 0), rect.move(4, 4))
         pygame.draw.rect(s, (0, 0, 112), rect)
@@ -252,24 +294,14 @@ class IntroMixin: # Main menu, OPTIONS, joypad mapping and intro input dispatch.
         if msg:
             self._put(msg, 30, (255, 224, 90), y - 30, cx=W // 2, w=W - 60, shadow=True)
         for tag, label in items:
-            ask = self.exit_ask
-            r = self.framed_button(s, hits, vx, vy, "menu_exit_sure" if tag == "menu_exit" and ask else tag, 0, sc, x, y, (tag,), False, label, not ask)
-            self._put(label, 24, (255, 255, 255) if r.collidepoint(vx, vy) and not ask else (225, 235, 250), r.bottom + 18, cx=r.centerx, w=w + gap - 4, shadow=True)
+            art_name = "menu_exit_sure" if self.exit_ask and tag == "menu_exit" else tag
+            r = self.framed_button(s, hits, vx, vy, art_name, 0, sc, x, y, (tag,), False, label, not self.exit_ask)
+            self._put(label, 24, (255, 255, 255) if r.collidepoint(vx, vy) and not self.exit_ask else (225, 235, 250), r.bottom + 18, cx=r.centerx, w=w + gap - 4, shadow=True)
             x += w + gap
-        if self.exit_ask: # Question in the middle of the screen.
-            box = pygame.Rect(W // 2 - 240, H // 2 - 100, 480, 200)
-            panel = pygame.Surface(box.size, pygame.SRCALPHA)
-            pygame.draw.rect(panel, (8, 14, 40, 235), panel.get_rect(), border_radius=12)
-            s.blit(panel, box)
-            pygame.draw.rect(s, (255, 224, 90), box, 3, border_radius=12)
-            self._put(tr("menu.sure"), 40, (255, 255, 255), box.y + 62, cx=box.centerx, w=box.w - 30, shadow=True)
-            for j, (tag, lab) in enumerate((("exit_yes", tr("menu.yes")), ("exit_no", tr("menu.no")))):
-                r = pygame.Rect(box.centerx + (-150 if j == 0 else 20), box.y + 118, 130, 46)
-                hov = r.collidepoint(vx, vy)
-                pygame.draw.rect(s, (60, 150, 90) if (hov and j == 0) else (44, 112, 70) if j == 0 else (150, 60, 60) if hov else (112, 44, 44), r, border_radius=8)
-                pygame.draw.rect(s, (230, 235, 245), r, 2, border_radius=8)
-                self._put(lab, 28, (255, 255, 255), r.centery, cx=r.centerx, w=r.w - 12, shadow=True)
-                hits.append((r, (tag,)))
+        if self.exit_ask:
+            box = pygame.Rect(0, 0, 385, 171)
+            box.center = (W // 2, H // 2)
+            self.draw_exit_popup(s, box, (vx, vy), tr("menu.exit_question"), hits)
 
     # ---------- button pictures (3.VGA) ----------
     def art(self, name, idx=0, scale=1): # Picture `name` (see the UI button pictures in graphics_system.py) scaled by an integer factor, opaque (no alpha); None when its sheet is not available.
@@ -474,7 +506,7 @@ class IntroMixin: # Main menu, OPTIONS, joypad mapping and intro input dispatch.
             if img is not None:
                 self.screen.blit(img, ((self.W - img.get_width()) // 2, (self.H - img.get_height()) // 2))
         sc, ox, oy = self.su_scale()
-        self.screen.blit(pygame.transform.smoothscale(self.su_surf, (int(SU_W * sc), int(SU_H * sc))), (int(ox), int(oy)))
+        self.screen.blit(pygame.transform.scale(self.su_surf, (int(SU_W * sc), int(SU_H * sc))), (int(ox), int(oy)))
 
     def draw_joymap(self): # Draw the joystick-mapping and control-assignment screen.
         s, bd, j = self.su_surf, self.board, self.joy
@@ -490,37 +522,38 @@ class IntroMixin: # Main menu, OPTIONS, joypad mapping and intro input dispatch.
         self.jm_flash = {k: v - dt for k, v in self.jm_flash.items() if v - dt > 0}
         flash_ctrl = {j.control_of(t) for t in self.jm_flash}
         focus = None
-        y = 80
+        y = 78
         for act, _k, _u, label in JOY_ACTIONS:
-            r = pygame.Rect(20, y, 410, 24)
+            r = pygame.Rect(20, y, 410, 22)
             toks = j.cfg["buttons"].get(act, [])
             hov = r.collidepoint(vx, vy)
             waiting = self.jm_wait == act
             if waiting or (hov and not self.jm_wait):
                 focus = act
-            col = (96, 82, 20) if waiting else ((36, 44, 92) if hov else (22, 26, 56))
-            pygame.draw.rect(s, col, r, border_radius=4)
+            self.draw_generic_button(s, r, "", waiting, hov, px=16)
             if j.is_held(act):
-                pygame.draw.rect(s, (90, 220, 120), r, 2, border_radius=4)
-            bd.put(s, bd.font(16).render(tr("joy.act." + act), True, (255, 236, 150) if waiting else (255, 255, 255)), left=r.left + 8, cy=r.centery)
+                pygame.draw.rect(s, (90, 220, 120), r, 2)
+            bd.put(s, bd.font(16).render(tr("joy.act." + act), True, (255, 224, 90) if waiting else (255, 255, 255)), left=r.left + 8, cy=r.centery)
             txt = tr("joy.press") if waiting else (", ".join(j.token_label(t) for t in toks) or "-")
             bd.put(s, bd.font(16).render(self.fit_text(txt, 16, 150), True, (255, 224, 90) if waiting else (255, 255, 255)), cx=r.right - 80, cy=r.centery)
             hits.append((r, ("act", act)))
-            y += 26
+            y += 24
         bx, by0, bw, bh = 48, 0, 945, 800
         sc = min(560.0 / bw, 500.0 / bh)
-        ox, oy = 450, 92
+        ox, oy = 450, 142
         if self.jm_img is None and self.joy_img_path:
             try:
                 im = pygame.image.load(self.joy_img_path).convert_alpha()
-                self.jm_img = pygame.transform.smoothscale(im.subsurface(pygame.Rect(bx, by0, bw, bh)).copy(), (int(bw * sc), int(bh * sc)))
+                self.jm_img = pygame.transform.scale(im.subsurface(pygame.Rect(bx, by0, bw, bh)).copy(), (int(bw * sc), int(bh * sc)))
             except (pygame.error, ValueError, OSError):
                 self.jm_img = False
+        img_w, img_h = self.jm_img.get_size() if self.jm_img else (560, int(bh * sc))
+        panel = pygame.Rect(ox - 10, oy - 10, img_w + 20, img_h + 20)
+        self.blue_panel(s, panel)
         if self.jm_img:
-            pygame.draw.rect(s, (22, 26, 56), (ox - 6, oy - 6, self.jm_img.get_width() + 12, self.jm_img.get_height() + 12), border_radius=8)
             s.blit(self.jm_img, (ox, oy))
         else:
-            bd.put(s, bd.font(18).render(tr("joy.img_missing", name=JOY_IMG), True, (255, 170, 110)), cx=ox + 280, cy=oy + 200)
+            bd.put(s, bd.font(18).render(tr("joy.img_missing", name=JOY_IMG), True, (255, 170, 110)), cx=ox + img_w // 2, cy=oy + img_h // 2)
         sel_ctrl = {j.control_of(t) for t in j.cfg["buttons"].get(focus, [])} if focus else set()
         bound = {j.control_of(t) for toks in j.cfg["buttons"].values() for t in toks}
         self.jm_spots = {}
@@ -562,20 +595,23 @@ class IntroMixin: # Main menu, OPTIONS, joypad mapping and intro input dispatch.
             bd.put(s, bd.font(14).render(lab, True, (80, 84, 120)), cx=cx, cy=int(oy + (712 - by0) * sc))
         if self.jm_wait:
             msg = tr("joy.wait") + tr("joy.act." + self.jm_wait) + tr("joy.cancel_hint")
-            colr = (255, 255, 255)
         else:
             msg = tr("joy.hint")
-            colr = (255, 255, 255)
-        for i, line in enumerate(self._wrap(msg, bd.font(16), 560)):
-            bd.put(s, bd.font(16).render(line, True, colr), cx=ox + 280, cy=oy + int(bh * sc) + 28 + i * 20)
-        for rect, lab, tag in ((pygame.Rect(690, 660, 140, 34), tr("joy.reset"), ("reset",)),
-                               (pygame.Rect(850, 660, 140, 34), tr("joy.close"), ("close",))):
-            self.draw_chip(s, rect, lab, False, rect.collidepoint(vx, vy), (120, 170, 230), 18, fg=(255, 255, 255))
-            hits.append((rect, tag))
+        hint_font = bd.font(20)
+        hint_lines = self._wrap(msg, hint_font, img_w - 20)
+        for i, line in enumerate(hint_lines):
+            bd.put(s, hint_font.render(line, True, (255, 255, 255)), cx=ox + img_w // 2, cy=oy + 14 + i * 16)
+        reset = pygame.Rect(690, 660, 140, 32)
+        self.draw_generic_button(s, reset, tr("joy.reset"), False, reset.collidepoint(vx, vy), px=18)
+        hits.append((reset, ("reset",)))
+        self.back_button_br(s, hits, vx, vy, 2)
         info = "File: " + os.path.abspath(j.write_path)
         if j.error:
             info += "   !  " + j.error
-        bd.put(s, bd.font(13).render(self.fit_text(info, 13, 640), True, (255, 170, 110) if j.error else (255, 255, 255)), left=450, cy=700)
+        info_font = bd.font(18)
+        info_text = self.fit_text(info, 18, img_w - 20)
+        bd.put(s, info_font.render(info_text, True, (255, 170, 110) if j.error else (255, 255, 255)),
+               cx=panel.centerx, cy=panel.top - 20)
         self.present_su("options")
 
     def draw_lang_dropdown(self, s, bd, hits, vx, vy): # Draw the language selection dropdown.

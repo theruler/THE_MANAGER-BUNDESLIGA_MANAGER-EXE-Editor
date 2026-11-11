@@ -22,6 +22,10 @@ class InputMixin: # Keyboard, mouse, and joystick input handling.
         if ev.type == pygame.MOUSEMOTION:
             self.mouse_xy, self.mouse_moved_at = ev.pos, time.time()
         if ev.type == pygame.QUIT:
+            if self.mode == "intro" and not self.exit_ask:
+                self.options_open, self.joymap_open, self.lang_open = False, False, False
+                self.menu_page, self.exit_ask = "main", True
+                return None
             return "quit"
         if ev.type in JOY_EVENTS:
             return self.handle_joy(ev)
@@ -48,6 +52,9 @@ class InputMixin: # Keyboard, mouse, and joystick input handling.
                 self.confirm_exit = False
             return None
         if k == pygame.K_ESCAPE:
+            if self.mode == "intro" and self.exit_ask:
+                self.exit_ask = False
+                return None
             if self.mode == "intro" and self.options_open:
                 self.options_open, self.lang_open = False, False
                 return None

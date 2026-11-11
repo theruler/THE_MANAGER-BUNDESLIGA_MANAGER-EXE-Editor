@@ -34,7 +34,7 @@ import sprite_data
 import stats_system
 import substitution_system
 
-VERSION = "1.6.1"
+VERSION = "1.6.2"
 
 class Game(intro_system.IntroMixin, championship_system.ChampionshipMixin, single_match_system.SingleMatchMixin, stats_system.StatsMixin, agonism_system.AgonismMixin,
              restart_system.RestartMixin, input_system.InputMixin, match_log_system.MatchLogMixin, replay_system.ReplayMixin,
@@ -47,6 +47,8 @@ class Game(intro_system.IntroMixin, championship_system.ChampionshipMixin, singl
         self.sel = [0, 1 if len(teams) > 1 else 0]
         self.form_names = [match_config.DEFAULT_FORMATION, match_config.DEFAULT_FORMATION]
         self.team_data = [teams[self.sel[0]], teams[self.sel[1]]]
+        self.manager = "" # Name shown in the exit confirmation (set by championship setup when available).
+        self.exit_ask = False # Exit confirmation modal state.
         self.board = graphics_system.Scoreboard(gfx.board_path, fonts.FONTS, i18n.ROLE_TAG, match_config.TEAM_COL, match_config.TEAM_NAMES, i18n.tr)
         self.board.gfx_icon = gfx.roster_icon
         self.lineup = [None, None]
@@ -1144,7 +1146,7 @@ class Game(intro_system.IntroMixin, championship_system.ChampionshipMixin, singl
                 return
         for r, tag in self.su_hits:
             if r.collidepoint(vx, vy):
-                if tag[0] == "close":
+                if tag[0] in ("close", "back"):
                     self.joymap_open = False
                 elif tag[0] == "reset":
                     self.joy.reset()
@@ -1591,7 +1593,6 @@ def selftest(game, seconds, shots_dir=None): # Run the automated match self-test
 def main(): # Parse launch options, load resources, initialize the game, and run the main loop.
     ap = argparse.ArgumentParser(description="IL MISTER (pygame)")
     ap.add_argument("--pic", help="cartella PIC originale (sprite, loghi delle squadre, immagini del tabellone)")
-    ap.add_argument("--data", help="cartella con tore_actions.json")
     ap.add_argument("--mana", help="percorso di MANA.DAT (default: cartella del programma)")
     ap.add_argument("--geometria-originale", "--original-geometry", action="store_true", dest="orig_geom",
                     help="tela 320x112 come nell'editor TORE (default: tela estesa con gli angoli vicini)")
@@ -1627,8 +1628,6 @@ def main(): # Parse launch options, load resources, initialize the game, and run
         args.no_slowmo = True
     if args.seed is not None:
         random.seed(args.seed)
-    dirs = ([args.data] if args.data else []) + [os.path.join(exe_dir, "data"), exe_dir, os.path.join(app_dir, "data"), app_dir, os.path.join(cwd, "data"), cwd]
-    notes = sprite_data.load_data(dirs)
     teams, team_note = resources.load_teams([exe_dir, app_dir, cwd], args.mana)
     pic = resources.locate_pic(exe_dir, args.pic) or (resources.locate_pic(app_dir, args.pic) if app_dir != exe_dir else None)
     if pic is None and not (args.selftest or args.no_dialog):
@@ -1665,7 +1664,7 @@ def main(): # Parse launch options, load resources, initialize the game, and run
         gfx = graphics_system.Graphics(pic, field_path, board_path, sheet_path, (geometry.FW, geometry.FH), geometry.FIELD_X0, geometry.Y_OFFSET, i18n.tr)
     except OSError as ex:
         resources.fatal([str(ex)], [])
-    notes = [team_note] + notes
+    notes = [team_note] if team_note else []
     print(team_note.text())
     voc_path = resources.find_original_sound("digi.voc", asset_dirs) # .\SOUND\DIGI.VOC: crowd chorus loop.
     cmf_path = resources.find_original_sound("bm2title.cmf", asset_dirs) # .\SOUNDS\BM2TITLE.CMF: intro music.

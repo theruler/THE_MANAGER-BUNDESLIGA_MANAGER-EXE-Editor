@@ -38,7 +38,7 @@ class FakeGfx:
     shadow_top = 0
 
 
-M.Scoreboard = DummyBoard
+M.graphics_system.Scoreboard = DummyBoard
 
 # ---- read-only instrumentation: shot/goal distance buckets and touchline exits with a player nearby ----
 shot_b = dict(near=0, mid=0, far=0, free=0, penalty=0); goal_b = dict(shot_b); exits = dict(n=0, near12=0, near20=0)
@@ -68,11 +68,10 @@ if hasattr(M.Game, "keeper_save_chance"):
                              round(abs(b.wv - geo.V_GC) / geo.HALF_MOUTH, 3), bool(b.pen)))
         return _o_ksc(self, gk, speed, reach_d)
     M.Game.keeper_save_chance = _ksc
-M.load_data(["/nonexistent"]) # Built-in default animation tables.
 random.seed(cli.seed)
 args = argparse.Namespace(zoom=5, half=3.0, noscroll=False, no_replay=True, replay_secs=5, tore_dir=None, joy_dirs=[],
                           joy_write_dir=None, joy_img=None, no_slowmo=True, selftest=None)
-game = M.Game(args, FakeGfx(), M.Audio(False, os.path.join(os.environ.get("TMPDIR", "/tmp"), ".tore_audio")),
+game = M.Game(args, FakeGfx(), M.audio_system.Audio(False, os.path.join(os.environ.get("TMPDIR", "/tmp"), ".tore_audio")),
               pygame.Surface((300, 200)), [], default_teams())
 game.user_team = None # Both sides are driven by the AI.
 game.mode = "restart"

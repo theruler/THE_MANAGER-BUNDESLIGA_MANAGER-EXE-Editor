@@ -11,11 +11,11 @@ import il_mister as M, geometry as geo, restart_system as RS, physics_system as 
 class DB:
     def __init__(s, *a, **k): s.hit_rows = []; s.gfx_icon = None
 class FG: board_path = None; roster_icon = None; shadow_top = 0
-M.Scoreboard = DB; M.load_data(["/nonexistent"]); random.seed(5)
+M.graphics_system.Scoreboard = DB; random.seed(5)
 args = argparse.Namespace(zoom=5, half=3.0, noscroll=False, no_replay=True, replay_secs=5, tore_dir=None, joy_dirs=[], joy_write_dir=None,
                           joy_img=None, no_slowmo=True, selftest=None)
 def new_game():
-    g = M.Game(args, FG(), M.Audio(False, os.path.join(os.environ.get("TMPDIR", "/tmp"), ".tore_audio")), pygame.Surface((300, 200)), [], __import__("resources").default_teams())
+    g = M.Game(args, FG(), M.audio_system.Audio(False, os.path.join(os.environ.get("TMPDIR", "/tmp"), ".tore_audio")), pygame.Surface((300, 200)), [], __import__("resources").default_teams())
     g.user_team = 0; g.mode = "play"; g.restart = None; return g
 ok = True
 def check(name, cond, info=""):
@@ -31,14 +31,14 @@ def tackle_trial(aim, kind, seed):
     o.wx, o.wv, o.vx, o.vv, o.dx, o.dv = 150.0, geo.V_GC, 0.0, 0.0, -1.0, 0.0
     t.wx, t.wv, t.state, t.dx, t.dv = 142.0, geo.V_GC, "free", 1.0, 0.0
     b.owner = o; b.wx, b.wv = o.wx - 4.5, o.wv
-    ux, uv = M.unit(o.wx - t.wx, o.wv - t.wv)          # lunge direction toward the carrier
+    ux, uv = M.game_utils.unit(o.wx - t.wx, o.wv - t.wv)          # lunge direction toward the carrier
     g.give_ball = lambda q: None            # observe the raw knock-on, not the optional immediate pick-up
     t.act_cd = 0.0; g.start_tackle(t, ux, uv, kind, aim=aim)
     for _ in range(90):
         g.step_player(t, dt) if False else None
         if t.state == "action": g.step_action(t, dt)
         if b.owner is None and math.hypot(b.vx, b.vv) > 5: break
-    return (b.owner is None and math.hypot(b.vx, b.vv) > 5), M.unit(b.vx, b.vv)
+    return (b.owner is None and math.hypot(b.vx, b.vv) > 5), M.game_utils.unit(b.vx, b.vv)
 for kind in ("slide", "stand"):
     aim = (0.0, 1.0); cs = []; hits = 0
     for sd in range(200):
@@ -57,7 +57,7 @@ g.cam = [60.0, 8.0]
 gx, gy, _w = g.screen_to_ground(100, 60)
 tx, tv = _w
 g.mouse_xy, g.mouse_moved_at = (100, 60), time.time()
-d = g.aim_dir(p); exp = M.unit(tx - p.wx, tv - p.wv)
+d = g.aim_dir(p); exp = M.game_utils.unit(tx - p.wx, tv - p.wv)
 check("cursor aim points at the mouse when it just moved", d[0] * exp[0] + d[1] * exp[1] > 0.999, f"{d}")
 g.mouse_moved_at = time.time() - 5
 p.dx, p.dv = -1.0, 0.0

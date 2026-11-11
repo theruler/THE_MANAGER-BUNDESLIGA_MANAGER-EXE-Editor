@@ -16,6 +16,9 @@ TEXTS_DE = {
     'menu.sure': 'Wirklich beenden?',
     'menu.yes': 'JA',
     'menu.no': 'NEIN',
+    'menu.exit_question': 'WOLLT IHR WIRKLICH\nDIESEM ERLEBNIS EIN ENDE\nSETZEN?',
+    'menu.exit_yes': 'JA, LEIDER',
+    'menu.exit_no': 'NIEMALS!',
     'menu.championship_soon': 'Demnächst verfügbar',
 
     # --- Applicazione / avvio
@@ -26,8 +29,6 @@ TEXTS_DE = {
     'dlg.pick_pic': 'PIC-Ordner auswählen (enthält 27.VGA und die Logos)',
 
     # --- Note di avvio (riga sotto il titolo dell'intro)
-    'note.actions_file': 'Aktionen: {path}',
-    'note.actions_default': 'Aktionen: eingebaute Standardwerte ({reason})',
     'note.mana_missing': 'MANA.DAT im Programmordner nicht gefunden',
     'note.mana_ok': 'MANA.DAT: {path} ({n} Mannschaften)',
     'note.mana_bad': 'MANA.DAT nicht lesbar ({reason}): Ersatzmannschaften',

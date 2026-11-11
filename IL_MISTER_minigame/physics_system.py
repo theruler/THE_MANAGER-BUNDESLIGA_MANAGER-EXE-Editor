@@ -666,8 +666,7 @@ class PhysicsMixin: # Ball motion, player movement, collisions, and action execu
             p.state = "out"
             return
         if p.state == "cele" and sp < 6:
-            # Use the main module's current action configuration. ACTIONS is
-            # reassigned by load_data(), so a copied global binding can be stale.
+            # Use the built-in action sequence shared by the sprite-data module.
             seq = action_sids(p.team, "cele", "E")
             p.cele_t += dt
             p.sid = seq[int(p.cele_t / 0.11) % len(seq)]

@@ -128,7 +128,7 @@ class Graphics: # VGA assets, field graphics, sprites, and crowd animation resou
         except pygame.error as ex:
             raise OSError(self.translate("err.gfx_unreadable_ex", path=field_path, reason=ex))
         if field.get_size() != (fw, fh):
-            field = pygame.transform.smoothscale(field, (fw, fh))
+            field = pygame.transform.scale(field, (fw, fh))
         self.field = field
         self._cache = {}
         self._logos = {}
@@ -412,7 +412,7 @@ class Scoreboard: # Scoreboard, team roster, and match-information rendering.
         except pygame.error as ex:
             raise OSError(translate("err.gfx_unreadable_ex", path=path, reason=ex))
         if img.get_size() != BOARD_SRC:
-            img = pygame.transform.smoothscale(img, BOARD_SRC)
+            img = pygame.transform.scale(img, BOARD_SRC)
         base = img.subsurface(pygame.Rect(0, 0, BOARD_W, BOARD_H)).copy()
         goal_letters = [img.subsurface(pygame.Rect(243 + i * DIGIT_PITCH, 84, DIGIT_W, DIGIT_H)).copy()
                         for i in range(4)]
@@ -428,7 +428,7 @@ class Scoreboard: # Scoreboard, team roster, and match-information rendering.
         if img is not None:
             iw, ih = img.get_size()
             k = min(LOGO_SZ / float(iw), LOGO_SZ / float(ih))
-            im = pygame.transform.smoothscale(img, (max(1, int(iw * k)), max(1, int(ih * k))))
+            im = pygame.transform.scale(img, (max(1, int(iw * k)), max(1, int(ih * k))))
         if len(self._logo) > 64:
             self._logo.clear()
         self._logo[key] = im
@@ -627,7 +627,7 @@ class Scoreboard: # Scoreboard, team roster, and match-information rendering.
             src = self.gfx_icon
             h = ROSTER_BALL_PX
             w = max(2, int(round(src.get_width() * h / float(max(1, src.get_height())))))
-            icon = pygame.transform.smoothscale(src, (w, h))
+            icon = pygame.transform.scale(src, (w, h))
             self._roster_icon_cache[ROSTER_BALL_PX] = icon
         return icon
 

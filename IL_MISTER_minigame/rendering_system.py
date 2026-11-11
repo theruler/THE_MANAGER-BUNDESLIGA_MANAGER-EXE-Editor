@@ -107,27 +107,11 @@ class RenderingMixin: # Shared rendering of the pitch, HUD, overlays, and reusab
                 pygame.draw.rect(self.screen, (60, 70, 130), rr)
             row(rr, idx + 1, pl[idx], self.natural_role(idx), td["stats"][idx], (235, 235, 245), (200, 205, 225))
 
-    def draw_exit_dialog(self): # Draw the confirmation dialog used when exiting the match.
+    def draw_exit_dialog(self): # Draw the same manager-branded confirmation used by the main menu.
         s = self.screen
-        dim = pygame.Surface(s.get_size(), pygame.SRCALPHA)
-        dim.fill((0, 0, 0, 170))
-        s.blit(dim, (0, 0))
-        w, h = min(self.W - 40, 560), 190
-        box = pygame.Rect(0, 0, w, h)
+        box = pygame.Rect(0, 0, 385, 171)
         box.center = (self.W // 2, self.H // 2)
-        pygame.draw.rect(s, (22, 26, 52), box, border_radius=10)
-        pygame.draw.rect(s, (214, 218, 238), box, 2, border_radius=10)
-        bd = self.board
-        bd.put(s, bd.font(40).render(tr("dlg.exit_title"), True, (255, 255, 255)), cx=box.centerx, cy=box.top + 66)
-        yes = pygame.Rect(0, 0, 140, 40)
-        no = pygame.Rect(0, 0, 140, 40)
-        yes.center = (box.centerx - 110, box.bottom - 42)
-        no.center = (box.centerx + 110, box.bottom - 42)
-        mp = pygame.mouse.get_pos()
-        for r, label, col in ((yes, tr("dlg.exit_yes"), (200, 90, 90)), (no, tr("dlg.exit_no"), (90, 170, 110))):
-            pygame.draw.rect(s, col if r.collidepoint(mp) else tuple(int(c * 0.6) for c in col), r, border_radius=8)
-            pygame.draw.rect(s, (240, 240, 250), r, 2, border_radius=8)
-            bd.put(s, bd.font(20).render(label, True, (255, 255, 255)), cx=r.centerx, cy=r.centery)
+        yes, no = self.draw_exit_popup(s, box, pygame.mouse.get_pos(), tr("dlg.exit_title"))
         self.exit_btns = ((yes, True), (no, False))
 
     def draw_replay_badge(self): # Draw the indicator showing that replay recording or playback is active.
@@ -521,7 +505,9 @@ class RenderingMixin: # Shared rendering of the pitch, HUD, overlays, and reusab
 
     def draw_generic_button(self, s, r, label, active, hover, px=18): # OPTIONS button on BUTTON_GENERIC.
         img = self.gfx.make_generic_button(r.w)
-        pos = img.get_rect(center=r.center)
+        if img.get_size() != r.size:
+            img = pygame.transform.scale(img, r.size)
+        pos = r
         s.blit(img, pos)
     
         if active:
@@ -534,12 +520,13 @@ class RenderingMixin: # Shared rendering of the pitch, HUD, overlays, and reusab
         if hover:
             pygame.draw.rect(s, (255, 224, 90), pos.inflate(4, 4), 2)
     
-        txt = self.fit_text(label, px, r.w - 20)
-        font = self.board.font(px)
-        shadow = font.render(txt, True, (0, 0, 0))
-        t = font.render(txt, True, (192, 112, 32) if active else (255, 255, 255))
-        self.board.put(s, shadow, cx=r.centerx + 2, cy=r.centery + 2)
-        self.board.put(s, t, cx=r.centerx, cy=r.centery)
+        if label:
+            txt = self.fit_text(label, px, r.w - 20)
+            font = self.board.font(px)
+            shadow = font.render(txt, True, (0, 0, 0))
+            t = font.render(txt, True, (192, 112, 32) if active else (255, 255, 255))
+            self.board.put(s, shadow, cx=r.centerx + 2, cy=r.centery + 2)
+            self.board.put(s, t, cx=r.centerx, cy=r.centery)
 
     def draw_summary(self): # Draw the end-of-match summary and statistics.
         W, _H = self.overlay(150)

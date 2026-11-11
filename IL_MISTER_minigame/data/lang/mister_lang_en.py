@@ -16,6 +16,9 @@ TEXTS_EN = {
     'menu.sure': 'Are you sure?',
     'menu.yes': 'YES',
     'menu.no': 'NO',
+    'menu.exit_question': 'DO YOU REALLY WANT TO\nPUT AN END TO THIS\nINCREDIBLE EXPERIENCE?',
+    'menu.exit_yes': 'YES, UNFORTUNATELY',
+    'menu.exit_no': 'NEVER!',
     'menu.championship_soon': 'Coming soon',
 
     # --- Applicazione / avvio
@@ -26,8 +29,6 @@ TEXTS_EN = {
     'dlg.pick_pic': 'Select the PIC folder (contains 27.VGA and the logos)',
 
     # --- Note di avvio (riga sotto il titolo dell'intro)
-    'note.actions_file': 'actions: {path}',
-    'note.actions_default': 'actions: built-in defaults ({reason})',
     'note.mana_missing': 'MANA.DAT not found in the program folder',
     'note.mana_ok': 'MANA.DAT: {path} ({n} teams)',
     'note.mana_bad': 'MANA.DAT unreadable ({reason}): fallback teams',

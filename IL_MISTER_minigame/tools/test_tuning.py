@@ -12,11 +12,11 @@ for _kv in filter(None, os.environ.get('TUNE', '').split(',')): # e.g. TUNE=ai_s
 class DB:
     def __init__(s, *a, **k): s.hit_rows = []; s.gfx_icon = None
 class FG: board_path = None; roster_icon = None; shadow_top = 0
-M.Scoreboard = DB; M.load_data(["/nonexistent"])
+M.graphics_system.Scoreboard = DB
 args = argparse.Namespace(zoom=5, half=3.0, noscroll=False, no_replay=True, replay_secs=5, tore_dir=None, joy_dirs=[], joy_write_dir=None,
                           joy_img=None, no_slowmo=True, selftest=None)
 def new_game(user=None):
-    g = M.Game(args, FG(), M.Audio(False, os.path.join(os.environ.get("TMPDIR", "/tmp"), ".tore_audio")), pygame.Surface((300, 200)), [], default_teams())
+    g = M.Game(args, FG(), M.audio_system.Audio(False, os.path.join(os.environ.get("TMPDIR", "/tmp"), ".tore_audio")), pygame.Surface((300, 200)), [], default_teams())
     g.user_team = user; g.mode = "play"; g.restart = None; return g
 ok = True; dt = 1 / 60.0
 def check(name, cond, info=""):

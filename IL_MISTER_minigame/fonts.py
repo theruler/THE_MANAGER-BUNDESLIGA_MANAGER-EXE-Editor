@@ -67,6 +67,9 @@ class BitmapFont: # Legacy bitmap-font decoding and text rendering.
                     if (v >> (bpr * 8 - 1 - x)) & 1:
                         surf.set_at((x, y), (255, 255, 255, 255))
             self.glyphs[code] = surf
+        slash, backslash = self.glyphs.get(0x2F), self.glyphs.get(0x5C)
+        if slash is not None and backslash is not None and not backslash.get_bounding_rect(): # Some FON files reserve an empty backslash slot.
+            self.glyphs[0x5C] = pygame.transform.flip(slash, True, False)
         self.width = {c: s.get_width() for c, s in self.glyphs.items()}
         self._lut, self._scaled, self._text = {}, {}, {}
 

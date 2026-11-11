@@ -10,7 +10,7 @@ python -m PyInstaller --noconfirm --clean --onefile --noconsole ^
   --add-data "data\lang\mister_lang_it.py;.\data\lang" ^
   --add-data "data\lang\mister_lang_en.py;.\data\lang" ^
   --add-data "data\lang\mister_lang_de.py;.\data\lang" ^
-  --upx-dir "e:\WESTWOOD" ^
+  --upx-dir "c:\intel" ^
   --exclude-module "tkinterdnd2" ^
   --exclude-module "wheel" ^
   --exclude-module "numpy" ^

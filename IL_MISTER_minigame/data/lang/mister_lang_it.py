@@ -16,6 +16,9 @@ TEXTS_IT = {
     'menu.sure': 'Sei sicuro?',
     'menu.yes': 'Sì',
     'menu.no': 'NO',
+    'menu.exit_question': 'VOLETE VERAMENTE\nPORRE FINE A QUESTA\nINCREDIBILE ESPERIENZA?',
+    'menu.exit_yes': 'SÌ, PURTROPPO',
+    'menu.exit_no': 'GIAMMAI!',
     'menu.championship_soon': 'Prossimamente',
 
     # --- Applicazione / avvio
@@ -26,8 +29,6 @@ TEXTS_IT = {
     'dlg.pick_pic': 'Seleziona la cartella PIC (contiene 27.VGA e i loghi)',
 
     # --- Note di avvio (riga sotto il titolo dell'intro)
-    'note.actions_file': 'azioni: {path}',
-    'note.actions_default': 'azioni: default incorporati ({reason})',
     'note.mana_missing': 'MANA.DAT non trovato nella cartella del programma',
     'note.mana_ok': 'MANA.DAT: {path} ({n} squadre)',
     'note.mana_bad': 'MANA.DAT illeggibile ({reason}): squadre di ripiego',
