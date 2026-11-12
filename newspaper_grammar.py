@@ -60,15 +60,20 @@ class Dialect:
 
 NEWSPAPER = Dialect("newspaper", "#%", MARKER_META)
 
-# Commentary strings of BMH.EXE / BMH_1.EXE / FLTD.EXE.  Which game value each placeholder stands for
-# is only known from context (%c = the acting player, %z = the other player, %0 = a number ...), so the
-# names stay neutral.
+# Commentary strings of BMH.EXE / BMH_1.EXE / FLTD.EXE.  The ten tags are exactly the ones the game's
+# text interpreter knows (found in its code): a b c d f z s e x 0.  Names come from what the handlers
+# read:  a, b = names from the team table;  c, d, f, z = names from the player table;  s = title + name
+# from the referee table;  e = stop;  0 = a computed number (the distance, in meters).
 BMH_MARKER_META: dict[str, tuple[str, str, str]] = {
-    "c": ("MARK_C", "%c", "#558B2F"),
-    "d": ("MARK_D", "%d", "#827717"),
-    "f": ("MARK_F", "%f", "#2E7D32"),
-    "z": ("MARK_Z", "%z", "#00838F"),
-    "0": ("MARK_0", "%0", "#1565C0"),
+    "a": ("TEAM_A",   "TEAM A",     "#1565C0"),
+    "b": ("TEAM_B",   "TEAM B",     "#AD1457"),
+    "c": ("PLAYER",   "PLAYER",     "#558B2F"),   # the player the event is about
+    "d": ("PLAYER_2", "2ND PLAYER", "#827717"),   # the second player (pass receiver)
+    "f": ("DEFENDER", "DEFENDER",   "#2E7D32"),   # a player of the other team (touches / blocks the ball)
+    "z": ("OPPONENT", "OPPONENT",   "#00838F"),   # the opponent in a duel (tackle, foul, dribble)
+    "s": ("REFEREE",  "REFEREE",    "#F57F17"),   # the referee's name
+    "0": ("METERS",   "METERS",     "#6A1B9A"),   # a number: distance from the goal
+    "e": ("END",      "END",        "#C0392B"),   # stops the text
 }
 BMH_COMMENTARY = Dialect("bmh-commentary", "#x", BMH_MARKER_META)
 

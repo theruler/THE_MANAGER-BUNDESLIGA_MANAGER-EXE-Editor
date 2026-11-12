@@ -56,18 +56,25 @@ class Base:
             self.assertEqual(model.apply(model.strings), cur)
 
     def test_template_grammar(self):
-        """Commentary strings are templates: they parse with the BMH dialect, rebuild byte for byte,
-        and random selectors (%x02..%x05) have at least as many branches as their second digit says
-        (one string of the game has a %x02 with 3 branches: it is in the data, in every version)."""
+        """Commentary strings are templates (selectors %xNN and the game's tags a b c d f z s e 0): they
+        parse with the BMH dialect and rebuild byte for byte; random selectors (%x02..%x05) have at
+        least as many branches as their second digit says (one string of the game has a %x02 with
+        3 branches: it is in the data, in every version); %s (referee) is a valid tag."""
+        import re
         import newspaper_grammar as NG
-        templates = [s.decode("latin-1") for s in self.m.strings if b"%x" in s]
-        self.assertGreater(len(templates), 15)
+        hint = re.compile(r"%(?:x[0-9A-Fa-f]{2}|[abcdfzse0])")
+        templates = [s.decode("latin-1") for s in self.m.strings if hint.search(s.decode("latin-1"))]
+        self.assertEqual(len(templates), 22)
+        self.assertTrue(any("%s" in text for text in templates))
+        tags = set(NG.BMH_COMMENTARY.markers)
+        self.assertEqual(tags, set("abcdfzse0"))
         for text in templates:
             rows = NG.components(text, "t", NG.BMH_COMMENTARY)
             for row in rows:
                 row["translated_text"] = None
             self.assertEqual(NG.rebuild(rows, "t", NG.BMH_COMMENTARY), text)
-            self.assertRaises(NG.NewspaperGrammarError, NG.parse, text, "t", NG.NEWSPAPER)
+            if "%x" in text:
+                self.assertRaises(NG.NewspaperGrammarError, NG.parse, text, "t", NG.NEWSPAPER)
             branches = {}
             for row in rows:
                 if row["selector"] and row["selector_code"][0] == "0":

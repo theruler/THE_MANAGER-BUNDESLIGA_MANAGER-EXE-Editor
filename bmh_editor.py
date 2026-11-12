@@ -101,24 +101,47 @@ _ESCAPE_RE = re.compile(r"\\x([0-9A-Fa-f]{2})")
 #   %x02 %x10 ... colour/attribute codes, %c %z %V %0 ... placeholders, %% literal, # alternatives
 #   separator, #x end of an alternatives group (only when no letter follows).
 # Look of the template editor for the commentary strings: same editor as the newspaper strings of the
-# MZ games (newspaper_editor.NewspaperEditorPanel) with the BMH grammar dialect.  Random selectors
-# %x02..%x05 have as many branches as the code says; the context selectors found in the EXEs (10 11 20
-# 21 40 50 60 70 80 90) have the branch counts below.  What each context code means is not known, so
-# they are shown by code only.
+# MZ games (newspaper_editor.NewspaperEditorPanel) with the BMH grammar dialect.
+# How the game reads %xNN (from its text interpreter): first digit 0 = pick a RANDOM branch 1..second
+# digit; otherwise the number NN is a game variable, index = first digit + 10 * second digit, and the
+# value of that variable (filled in by the game before it writes the comment) is the number of the
+# branch that is used.  The names below say what the variable decides, taken from the branch texts.
 _BMH_RANDOM = {code: (f"RANDOM{code[1]}", colour) for code, colour in
                (("02", "#4A235A"), ("03", "#6C3483"), ("04", "#8E44AD"), ("05", "#A569BD"))}
-_BMH_CONTEXT = {code: (f"CTX {code}", colour) for code, colour in
-                (("10", "#3A1F14"), ("11", "#4A2818"), ("20", "#512A18"), ("21", "#5E3019"),
-                 ("40", "#874415"), ("50", "#A65D20"), ("60", "#B8742A"), ("70", "#7B5B3A"),
-                 ("80", "#8D6E63"), ("90", "#6D4C41"))}
+_BMH_CONTEXT = {
+    "10": ("SUBJECT",     "#3A1F14"),   # HE / the player's name
+    "11": ("VOLLEY",      "#4A2818"),   # " VOLLEY" / nothing
+    "20": ("PASS TYPE",   "#512A18"),   # long or high ball / short pass
+    "21": ("CARD",        "#5E3019"),   # yellow / red and yellow / red
+    "40": ("FLIGHT",      "#874415"),   # long / long / high / to the other side
+    "50": ("CROSS",       "#A65D20"),   # cross into the box / long pass
+    "60": ("BACKWARDS",   "#B8742A"),   # " BACK" / nothing
+    "70": ("DESTINATION", "#7B5B3A"),   # INTO / TOWARDS or ACROSS
+    "80": ("SHOT SIDE",   "#8D6E63"),   # OVER THE / PAST THE
+    "90": ("SHOT END",    "#6D4C41"),   # near the goal / OUT
+}
+_BMH_BRANCH_LABELS = {
+    "10": ["pronoun", "name"],
+    "11": ["volley", "no volley"],
+    "20": ["long / high ball", "short pass"],
+    "21": ["yellow", "red and yellow", "red"],
+    "40": ["long", "long", "high", "to the other side"],
+    "50": ["cross", "long pass"],
+    "60": ["backwards", "(nothing)"],
+    "70": ["into", "towards / across"],
+    "80": ["over", "past"],
+    "90": ["near the goal", "out"],
+}
 BMH_STYLE = _ne.EditorStyle(
     dialect=NG.BMH_COMMENTARY,
     marker_ui={meta[0]: (meta[1], meta[2]) for meta in NG.BMH_MARKER_META.values()},
     selector_names={**_BMH_RANDOM, **_BMH_CONTEXT},
-    context_branch_count={"10": 2, "11": 2, "20": 2, "21": 3, "40": 4, "50": 2,
-                          "60": 2, "70": 2, "80": 2, "90": 2},
+    context_branch_count={code: len(labels) for code, labels in _BMH_BRANCH_LABELS.items()},
+    context_branch_labels=_BMH_BRANCH_LABELS,
     title="💬  Commentary Template Editor",
 )
+# a string is a template when it holds a selector (%xNN) or one of the game's tags
+_TEMPLATE_HINT = re.compile(r"%(?:x[0-9A-Fa-f]{2}|[abcdfzse0])")
 _EXE_TOKEN_RE = re.compile(r"%x[0-9A-Fa-f]{2}|%%|%[A-Za-z0-9]|#x(?![A-Za-z0-9])|#")
 
 
@@ -727,12 +750,12 @@ class BMHExeStringsPanel(BMHStringsPanel):
         self._on_change()
 
     # ------------------------------------------------------------ grammar
-    # Commentary strings are templates (selectors %xNN ... #x with "#"-separated branches and %c/%z/%0
-    # markers).  Same language as the newspaper strings of the MZ games: newspaper_grammar.py with the
+    # Commentary strings are templates (selectors %xNN ... #x with "#"-separated branches and the
+    # %a %b %c %d %f %z %s %e %0 tags).  Same language as the newspaper strings of the MZ games: newspaper_grammar.py with the
     # BMH_COMMENTARY dialect (terminator "#x").
     @staticmethod
     def _is_template(text):
-        return "%x" in text
+        return bool(_TEMPLATE_HINT.search(text))
 
     @classmethod
     def _template_rows(cls, text, string_id="?"):
