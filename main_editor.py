@@ -14,6 +14,7 @@ import extended_layout
 from mana_editor import ManaEditorPanel
 from vga_editor import PicEditorPanel
 from tore_editor import ToreEditorPanel
+from savegame_editor import SavegamePanel
 import bmh_editor
 import newspaper_csv
 from newspaper_grammar import NewspaperGrammarError
@@ -48,7 +49,7 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "3.0.0"
+APP_VERSION = "2.9.13"
 APP_TITLE = f"THE MANAGER/BMP-FLTD/BMH Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -234,6 +235,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         view_menu.add_command(label="MANA.DAT Editor", command=lambda: self._select_tab("tab_mana"))
         view_menu.add_command(label="VGA Editor", command=lambda: self._select_tab("tab_vga"))
         view_menu.add_command(label="TORE Editor", command=lambda: self._select_tab("tab_tore"))
+        view_menu.add_command(label="Savegame Editor (.MAN)", command=lambda: self._select_tab("tab_savegame"))
         view_menu.add_separator()
         lang_menu = tk.Menu(view_menu, tearoff=0)
         self.language_var = tk.StringVar(value=self.language)
@@ -251,7 +253,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         ]
         self.supported_menu_entries = [
             (tools_menu, 0), (tools_menu, 11),
-            (view_menu, 0), (view_menu, 1), (view_menu, 2), (view_menu, 3), (view_menu, 4)
+            (view_menu, 0), (view_menu, 1), (view_menu, 2), (view_menu, 3), (view_menu, 4), (view_menu, 5)
         ]
         self.root.config(menu=self.menubar)
         self._set_menu_state(self.save_menu_entries + self.exchange_menu_entries, False)
@@ -283,7 +285,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             (self.view_menu, (
                 (0, "menu.view.strings"), 
                 (1, "menu.view.fonts"),
-                (5, "menu.view.language")
+                (7, "menu.view.language")
             )),
         ):
             for index, key in items:
@@ -356,6 +358,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             return
         self.language = chosen
         i18n.set_language(chosen)
+        self.savegame_editor_panel.set_language(chosen)
         self._apply_translation_defaults(target=True)
         self._retranslate_menu()
         for widget, key in self._i18n_widgets:
@@ -691,6 +694,10 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.notebook.add(self.tab_tore, text="TORE Editor")
         self.tore_editor = ToreEditorPanel(self.tab_tore, standalone=False)
         self.tore_editor.pack(fill=tk.BOTH, expand=True)
+        self.tab_savegame = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_savegame, text="Savegame (.MAN)")
+        self.savegame_editor_panel = SavegamePanel(self.tab_savegame, standalone=False)
+        self.savegame_editor_panel.pack(fill=tk.BOTH, expand=True)
         self.tab_bmh = ttk.Frame(self.notebook)
         self.bmh_panel = bmh_editor.BMHStringsPanel(
             self.tab_bmh,
@@ -723,7 +730,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
 
     def _exe_tabs(self):
         return (self.tab_strings, self.tab_fonts, self.tab_settings,
-                self.tab_mana, self.tab_vga, self.tab_tore)
+                self.tab_mana, self.tab_vga, self.tab_tore, self.tab_savegame)
 
     def _refresh_tab_visibility(self):
         """Once an EXE is loaded, tabs that are not active for it disappear.
@@ -2200,6 +2207,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._set_filter_status(None)
         self.font_editor.reset_state()
         self.mana_editor_panel.show_placeholder()
+        self.savegame_editor_panel.clear()
         self.bmh_panel.clear()
         self._hide_tab(self.tab_bmh)
         self.bmh_exe_panel.clear()
@@ -2260,7 +2268,16 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         except Exception:
             return False
 
+    def _savegame_dirty(self) -> bool:
+        panel = getattr(self, "savegame_editor_panel", None)
+        try:
+            return bool(panel is not None and panel.is_dirty())
+        except Exception:
+            return False
+
     def _confirm_discard_for_load(self) -> bool:
+        if self._savegame_dirty() and not messagebox.askyesno("Savegame Editor", "Il savegame .MAN ha modifiche non salvate. Continuare e scartarle?"):
+            return False
         if self._tore_dirty() and not messagebox.askyesno("TORE Editor", "La scena TORE ha modifiche non salvate. Continuare e scartarle?"):
             return False
         if not self._has_unsaved_changes():
@@ -2275,6 +2292,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         if unsaved and not messagebox.askyesno(self.tr("dlg.unsaved.title"), self.tr("dlg.unsaved.close")):
             return
         if self._tore_dirty() and not messagebox.askyesno("TORE Editor", "La scena TORE ha modifiche non salvate. Chiudere comunque?"):
+            return
+        if self._savegame_dirty() and not messagebox.askyesno("Savegame Editor", "Il savegame .MAN ha modifiche non salvate. Chiudere comunque?"):
             return
         self._cancel_free_space_update()
         self.root.destroy()
@@ -2661,6 +2680,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             self.mana_editor_panel.load_file(mana_path)
         else:
             self.mana_editor_panel.show_placeholder(f"MANA.DAT not found in: {exe_dir}")
+        self.savegame_editor_panel.set_dir(exe_dir)
 
         self._set_supported_state(True)
         for read_from_exe in (

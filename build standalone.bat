@@ -1,0 +1,4 @@
+py -m PyInstaller --onefile --noconsole --upx-dir e:\WESTWOOD --exclude-module "numpy" vga_editor.py
+py -m PyInstaller --onefile --noconsole --upx-dir e:\WESTWOOD --exclude-module "numpy" mana_editor.py
+py -m PyInstaller --onefile --noconsole --upx-dir e:\WESTWOOD --exclude-module "numpy" --add-data "data\lang\tore_lang_de.py;.\data\lang" --add-data "data\lang\tore_lang_en.py;.\data\lang" --add-data "data\lang\tore_lang_es.py;.\data\lang" --add-data "data\lang\tore_lang_fr.py;.\data\lang" --add-data "data\lang\tore_lang_it.py;.\data\lang" tore_editor.py
+py -m PyInstaller --onefile --noconsole --upx-dir e:\WESTWOOD --exclude-module "numpy" --add-data "data\lang\savegame_de.py;.\data\lang" --add-data "data\lang\savegame_en.py;.\data\lang" --add-data "data\lang\savegame_it.py;.\data\lang" --add-data "data\lang\savegame_fr.py;.\data\lang" --add-data "data\lang\savegame_es.py;.\data\lang" savegame_editor.py
