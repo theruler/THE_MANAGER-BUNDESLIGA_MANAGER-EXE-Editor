@@ -29,6 +29,7 @@ Executable profiles are detected automatically. File names do not matter.
 - MANA.DAT editor
 - VGA/CP editor
 - GOAL Scenes (TORE) Editor
+- SAVEGAME editor
 - "IL MISTER" Mini Arcade Tactical Soccer Game
 
 
@@ -125,6 +126,12 @@ Usable as standalone or a built-in main editor TAB, TORE editor is a modern scen
 Your new scene is only one click away!
 
 <img width="1248" height="769" alt="immagine" src="https://github.com/user-attachments/assets/68031d9d-a414-4e75-9803-3b4f63e1a7b0" />
+
+## SAVEGAME Editor
+The program handles the encryption, editing of almost all parameters (5% is still unmapped) and features save capability.
+
+<img width="1175" height="806" alt="immagine" src="https://github.com/user-attachments/assets/04dd48fc-b011-4a9b-97cd-2324435d50d7" />
+
 
 ## "IL MISTER"
 
