@@ -40,6 +40,51 @@ _1st_LEAGUE_TEAMS = {
     ),
     }
 
+# BUNDESLIGA MANAGER PROFESSIONAL: the "Pausa invernale" window.
+# The game keeps a day counter C (days since 29 July, calendar slot s <-> C = 7*(s//2) + 4*(s%2)).
+# The break is "active" when  START + 7*N < C < 207 - 14*N  (N = byte at DS:0x224D).
+# The same test is repeated in 5 places of the code (message + player development + other routines);
+# the constants must follow the calendar, otherwise the break is flagged on matchdays / after the restart.
+#   18 teams (German calendar): last matchday slot 36 (2 Dec), restart slot 59 (21 Feb) -> 130 .. 207
+#   20 teams (Italian calendar): last matchday slot 38 (9 Dec), restart slot 55 (7 Feb)  -> 137 .. 193
+# Every entry is the 16-bit immediate of an `add ax, imm16` (start) or `sub ax, imm16` (end).
+_PRO_WINTER_START_SITES = (0x2460D, 0x15873, 0x1593E, 0x15CB3)
+_PRO_WINTER_START_SITE_B = 0x8EF4        # same test, the original uses START-2 here
+_PRO_WINTER_END_SITES = (0x24632, 0x15892, 0x1595D, 0x15CD2, 0x8F13)
+
+
+def _winter_break_patches(start, end, start_sites=_PRO_WINTER_START_SITES,
+                          start_site_b=_PRO_WINTER_START_SITE_B, end_sites=_PRO_WINTER_END_SITES):
+    imm = lambda v: struct.pack("<H", v).hex().upper()
+    patches = [(off, imm(start)) for off in start_sites]
+    patches.append((start_site_b, imm(start - 2)))
+    patches += [(off, imm(end)) for off in end_sites]
+    return tuple(patches)
+
+
+# Per-league flag array at teams.offset + 0x10 (DS:0x226A + league; masked '??' in _1st_LEAGUE_TEAMS).
+# German stock: 01 00 00 (league 1 has the end-of-season extra match, the calendar codes 0x10 in slots 91/92).
+# English/Italian stock: 00 00 00, and the calendar has no 0x10 slots. 20 teams = English championship -> 00.
+_PRO_LEAGUE_FLAG_OFFSET = 0x55A4A
+_PRO_LEAGUE_FLAG = {"18": "01", "20": "00"}
+
+# "Last match before the winter break" start-of-day message (file 0x1B1D2..0x1B1EB): fires when
+# day-of-month == 2 (+1 in the special year: ax = cond + 2) and month == 11 (December), both hard-coded.
+# The block `mov ax,1 / jmp / sub ax,ax / inc ax / inc ax` is rewritten so that the day is 9 (+1): the last
+# matchday of the 20-team calendar is 9 Dec (slot 38). Same length (10 bytes), so it is fully reversible.
+_PRO_LAST_MATCH_MSG_OFFSET = 0x1B1E2
+_PRO_LAST_MATCH_MSG = {
+    "18": "B80100EB022BC0404099",   # mov ax,1; jmp +2; sub ax,ax; inc ax; inc ax; cdq   -> day 2 / 3
+    "20": "B80A00EB04B8090090" "99",  # mov ax,10; jmp +4; mov ax,9; nop; cdq              -> day 9 / 10
+}
+
+_PRO_WINTER_BREAK = {
+    k: _winter_break_patches(*se) + ((_PRO_LEAGUE_FLAG_OFFSET, _PRO_LEAGUE_FLAG[k]),
+                                     (_PRO_LAST_MATCH_MSG_OFFSET, _PRO_LAST_MATCH_MSG[k]))
+    for k, se in (("18", (130, 207)), ("20", (137, 193)))
+}
+
+
 _MAX_FRAMES = {
     "256": (0xA1, 0x90),
     "128": (0xA0, 0x98),
@@ -121,6 +166,7 @@ GAME_PROFILES = {
         "teams": {
             "offset": 0x55A3A,
             "number": _1st_LEAGUE_TEAMS,
+            "winter_break": _PRO_WINTER_BREAK,
         },
         "tore_255": {
             "tore_offsets": (0x134a8, 0x136b3, 0x1b83b, 0x1b8db, 0x1bed7, 0x1bf09, 0x1bfb3),
@@ -139,7 +185,10 @@ GAME_PROFILES = {
             "header_size": 0x6CB0,
             "relocation_table_offset": 0x1C,
             "relocation_count": 6946,
-            "relocation_topology_sha256": "8D0F8560784383D50D92DB5902B9ABF4ADA29D34035CD6FE18F14E2EEE29611E",
+            "relocation_topology_sha256": [
+                "8D0F8560784383D50D92DB5902B9ABF4ADA29D34035CD6FE18F14E2EEE29611E",
+                "7A3E76BF470E0CC8F760A9BB231BC25EEDBA7E70EFEA434BD0F810FBC4155AE1", # patch conceded points in history with 3 points rule
+            ],
             "entry_cs": 0x3A01,
             "entry_ip": 0x0016,
             "diagnostic_stack_ss": 0x5709,

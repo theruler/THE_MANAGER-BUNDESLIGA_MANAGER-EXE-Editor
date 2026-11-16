@@ -851,6 +851,46 @@ class _20TeamsMixin:
             self.teams_var.set(matched_key if matched_key is not None else "")
         self._sync_teams_widget()
 
+    def _winter_break_config(self):
+        """{team_count: ((offset, 'HEX'), ...)} or None (only profiles that define teams.winter_break)."""
+        teams_cfg, offset, _ = self._teams_config()
+        if teams_cfg is None:
+            return None
+        cfg = teams_cfg.get("winter_break")
+        return cfg if isinstance(cfg, dict) and cfg else None
+
+    def _winter_break_state_ok(self, cfg):
+        """Every patched immediate must hold one of the known values (original or already patched)."""
+        for off in {o for patches in cfg.values() for o, _ in patches}:
+            known = {bytes.fromhex(h) for patches in cfg.values() for o, h in patches if o == off}
+            size = len(next(iter(known)))
+            if off + size > len(self.exe_data) or bytes(self.exe_data[off:off + size]) not in known:
+                return False
+        return True
+
+    def _apply_winter_break(self, key):
+        """Align the 'Pausa invernale' window to the calendar chosen for `key` teams. True if bytes changed."""
+        cfg = self._winter_break_config()
+        if cfg is None or key not in cfg:
+            return False
+        if not self._winter_break_state_ok(cfg):
+            print("[winter_break] unexpected bytes at the patch sites: window NOT updated")
+            return False
+        changed = False
+        for off, hex_str in cfg[key]:
+            new = bytes.fromhex(hex_str)
+            if bytes(self.exe_data[off:off + len(new)]) != new:
+                self.exe_data[off:off + len(new)] = new
+                changed = True
+        return changed
+
+    def _winter_break_changed(self):
+        cfg = self._winter_break_config()
+        if cfg is None:
+            return False
+        return any(self._range_changed(off, len(bytes.fromhex(h)))
+                   for patches in cfg.values() for off, h in patches)
+
     def _commit_teams(self, event=None):
         _, offset, teams_dict = self._teams_config()
         if offset is None or teams_dict is None or self._teams_offset() is None:
@@ -864,10 +904,14 @@ class _20TeamsMixin:
             return
         if _masked_equal(self.exe_data, offset, pattern):
             self._last_valid_teams = key
+            if self._apply_winter_break(key):
+                self._invalidate_diff_preview("teams-change")
+                self._update_save_state()
             return
         for i, p in enumerate(pattern):
             if p is not None:
                 self.exe_data[offset + i] = p
+        self._apply_winter_break(key)
         self.teams_var.set(key)
         self._last_valid_teams = key
         self._invalidate_diff_preview("teams-change")

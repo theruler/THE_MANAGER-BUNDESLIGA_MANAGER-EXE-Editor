@@ -49,7 +49,7 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.9.13"
+APP_VERSION = "2.9.14"
 APP_TITLE = f"THE MANAGER/BMP-FLTD/BMH Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
@@ -2102,6 +2102,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         for name, (offset, size) in fields.items():
             kwargs[f"{name}_offset"] = offset
             kwargs[f"{name}_changed"] = self._range_changed(offset, size)
+        kwargs["teams_changed"] = kwargs["teams_changed"] or self._winter_break_changed()
         kwargs["goal_frames_offset"] = self._goal_frames_offset()
         kwargs["goal_frames_changed"] = self._goal_frames_changed()
         match_flag_config = self._match_flag_config()
