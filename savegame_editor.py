@@ -751,7 +751,7 @@ class SavegamePanel(ttk.Frame):
                           (P("series"), self._pg_series, None),
                           (P("records"), self._pg_records, None), (P("versus"), self._pg_versus, "mgr")]),
             (G("messages"), [(P("messages"), self._pg_messages, None)]),
-            (G("advanced"), [(P("raw"), self._pg_raw, None)]),
+            (G("advanced"), [(P("options"), self._pg_options, None), (P("raw"), self._pg_raw, None)]),
         ]
         self.nb = ttk.Notebook(self.body)
         for gname, pages in layout:
@@ -1282,9 +1282,8 @@ class SavegamePanel(ttk.Frame):
         self._note(body, T("prof.note")).grid(row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(2, 5))
 
         ext = self._labeled(body, T("prof.extra"), row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
-        extra = [(480, "u16"), (482, "u16"), (432, "u16"), (436, "u16"), (310, "u16"), (376, "u16"), (384, "u16"),
+        extra = [(480, "u16"), (482, "u16"), (310, "u16"), (376, "u16"), (384, "u16"),
                  (392, "u16"), (400, "u16"), (502, "u16"), (506, "u16"), (313, "u8"), (315, "u8"), (318, "u8")]
-        extra += [(x, "u8") for x in (32, 35, 36, 40, 43, 44, 45, 46, 47, 48, 49, 53, 56)]
         for k, (x, t) in enumerate(extra):
             self._field(ext, k // 6, T("prof.extra_item", off=x), self._num_field(ext, o + x, t, width=8), col=k % 6)
         self._note(body, T("prof.extra_note")).grid(row=4, column=0, columnspan=2, sticky="w", padx=10,
@@ -1320,8 +1319,12 @@ class SavegamePanel(ttk.Frame):
 
         bil = ttk.LabelFrame(left, text=T("hist.balance"), padding=8)
         bil.pack(fill="x", pady=(10, 0))
+        labs = _tl("hist.balance_items")
+        labs = labs + ["Games played", "Points conceded (2G-Pts)"][max(0, len(labs) - 6):]   # fallback for older language files
         rows = [[lab, self._num(o + x, "u16"), self._num(o + x + 2, "u16")]
-                for lab, x in zip(_tl("hist.balance_items"), (420, 424, 428, 440, 444, 448))]
+                for lab, x in zip(labs[:6], (420, 424, 428, 440, 444, 448))]
+        rows.append([labs[6], self._num(o + 436, "u16"), self._num(o + 438, "u16")])
+        rows.append([labs[7], self._num(o + 432, "i16"), self._num(o + 434, "i16")])
         EditableGrid(bil, [("", 110, "w"), (T("c.home"), 80), (T("c.away_full"), 80)], rows,
                      height=len(rows)).pack()
 
@@ -1788,6 +1791,47 @@ class SavegamePanel(ttk.Frame):
             + [(c[13], 160)]
         EditableGrid(host, cols, rows, height=20).pack(fill="both", expand=True, padx=10, pady=(10, 6))
         self._note(host, T("xs.note")).pack(anchor="w", padx=10, pady=(0, 8))
+
+    # =================================================================== PAGE: Opzioni di gioco
+    def _pg_options(self, host):
+        """Pannello OPZIONI del gioco: 15 interruttori ATT/DIS (byte 33447-33461) e velocita' (byte 34222)."""
+        def tx(key, default):
+            t = T(key)
+            return default if t == key else t
+        body = self._scroll_page(host)
+        lf = ttk.LabelFrame(body, text=tx("opt.panel", "Opzioni di gioco (ATT/DIS)"), padding=8)
+        lf.pack(fill="x", padx=10, pady=(10, 5))
+        series = tx("opt.series", "Serie A|Serie B|Serie C").split("|")
+        items = tx("opt.items", "Parziali 1° tempo|Risultati finali|Tabella").split("|")
+        others = tx("opt.others", "Azioni di gioco|Coppa Italia|Coppe europee|Recuperi|Giornale|Oscurire").split("|")
+        self._opt_vars = []
+
+        def check(parent, off, row, col):
+            var = tk.BooleanVar(value=bool(self.sf.buf[off]))
+
+            def toggled(*_a, off=off, var=var):
+                self.sf.wr(off, "u8", 1 if var.get() else 0)
+                self._changed()
+            ttk.Checkbutton(parent, variable=var, command=toggled).grid(row=row, column=col, padx=14, pady=2)
+            self._opt_vars.append(var)
+        for c, name in enumerate(series):
+            ttk.Label(lf, text=name, font=("", 9, "bold")).grid(row=0, column=1 + c, padx=14)
+        for r, name in enumerate(items):
+            ttk.Label(lf, text=name).grid(row=1 + r, column=0, sticky="w", padx=(0, 10))
+            for c in range(3):
+                check(lf, 33447 + 3 * c + r, 1 + r, 1 + c)          # ordine in file: per serie, poi per voce
+        of = ttk.LabelFrame(body, text=tx("opt.other", "Altre opzioni"), padding=8)
+        of.pack(fill="x", padx=10, pady=5)
+        for k, name in enumerate(others):
+            ttk.Label(of, text=name).grid(row=k, column=0, sticky="w", padx=(0, 10))
+            check(of, 33456 + k, k, 1)
+        sp = ttk.LabelFrame(body, text=tx("opt.speed", "Velocità di gioco"), padding=8)
+        sp.pack(fill="x", padx=10, pady=5)
+        self._field(sp, 0, tx("opt.speed_byte", "Valore (byte 34222; 40 = predefinito, 70 = massimo, ipotesi)"),
+                    self._num_field(sp, 34222, width=6))
+        self._note(body, tx("opt.note", "Ordine dei byte ricavato dall'EXE: Serie A (Parziali, Risultati, Tabella), "
+                            "Serie B, Serie C, poi Azioni di gioco, Coppa Italia, Coppe europee, Recuperi, Giornale, Oscurire. "
+                            "La velocità è dedotta dal confronto tra salvataggi.")).pack(anchor="w", padx=10, pady=(2, 10))
 
     def _pg_raw(self, host):
         body = self._scroll_page(host)
