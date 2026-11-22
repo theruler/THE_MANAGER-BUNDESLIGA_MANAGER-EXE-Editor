@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-"""Savegame editor texts (EN)."""
-
 LANG_NAME = 'English'
 
 TEXTS_EN = {
@@ -189,9 +186,9 @@ TEXTS_EN = {
     'loan.total': 'Total debt',
     'loan.interest_total': 'Total monthly interest',
     'squad.avg': 'Squad average – Fit {c} · Tec {t} · Form {f}',
-    'squad.extra_cols': '?14|?20|?25|?26|?28|?30|?34|?2|?4|?5|?9|?12|?23|?24|?48|?50',
+    'squad.extra_cols': '?14|?20|?25|?26|Rec apps|Rec apps cup|Rec goals|Sent off|Cup goals|EU goals|?9|?12|?23|?24|?48|?50',
     'pl.extra_cols': '?27|?32|?33',
-    'squad.extra_note': 'The “?” columns are record bytes not yet deciphered (?20 is a signed 16-bit value).',
+    'squad.extra_note': 'Goals and Apps are league. Rec = record in brackets on the player screen (league apps, cup apps, league goals). Sent off = expulsions; Cup goals / EU goals = national cup / European cups.',
     'mk.cols': 'Player|Pos.|Fit|Tec|Form|Fresh.|?14|?20|Price',
     'mk.count': '{n} players listed',
     'mk.note': 'Slots 100–124 of the squad table belong to no manager: they hold a few players with a price (probable meaning: transfer list; not verified in the game). The player of a slot cannot be changed here.',
@@ -221,4 +218,10 @@ TEXTS_EN = {
     'opt.speed': 'Game speed',
     'opt.speed_byte': 'Value (byte 34222; 40 = default, 70 = maximum, assumed)',
     'opt.note': 'Byte order taken from the EXE: Series A (half-time, final results, table), Series B, Series C, then match actions, national cup, European cups, injury time, newspaper, dim screen. The speed was inferred by comparing savegames.',
+    'info.version': 'Version',
+    'info.unknown': 'unknown',
+    'info.edited': 'EDITED WITH THE EDITOR',
+    'info.ingame': 'in-game',
+    'info.bmp_ita_mod': 'ITA mod on German EXE',
+    'mark.name': 'CHEATER',
 }

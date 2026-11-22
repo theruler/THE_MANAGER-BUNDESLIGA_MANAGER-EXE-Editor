@@ -368,4 +368,14 @@ TEXTS_FR = {
     # ---- types de drapeaux
     "flag.3v": "3 bandes verticales",
     "flag.3h": "3 bandes horizontales",
+
+    # ---- credits editor
+    "credits.title": "Crédits",
+    "credits.main_font": "Police des crédits :",
+    "credits.footer_font": "Police des noms inférieurs + pied de page :",
+    "credits.font.flow": "1 - FLOW",
+    "credits.font.micro4": "2 - MICRO4",
+    "credits.pool": "Pool : {used}/{capacity} octets",
+    "credits.pool_overflow": "Limite du pool dépassée : {used}/{capacity} octets",
+    "credits.unsupported": "Cet exécutable utilise une structure de crédits non prise en charge.",
 }

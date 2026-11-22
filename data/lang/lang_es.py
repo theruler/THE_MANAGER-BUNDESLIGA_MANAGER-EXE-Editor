@@ -366,4 +366,14 @@ TEXTS_ES = {
     # ---- tipos de bandera
     "flag.3v": "3 bandas verticales",
     "flag.3h": "3 bandas horizontales",
+
+    # ---- credits editor
+    "credits.title": "Créditos",
+    "credits.main_font": "Fuente de créditos:",
+    "credits.footer_font": "Fuente de nombres inferiores + pie:",
+    "credits.font.flow": "1 - FLOW",
+    "credits.font.micro4": "2 - MICRO4",
+    "credits.pool": "Pool: {used}/{capacity} bytes",
+    "credits.pool_overflow": "Límite del pool excedido: {used}/{capacity} bytes",
+    "credits.unsupported": "Este ejecutable utiliza una estructura de créditos no compatible.",
 }

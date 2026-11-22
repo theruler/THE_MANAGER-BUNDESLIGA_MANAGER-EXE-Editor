@@ -366,4 +366,14 @@ TEXTS_DE = {
     # ---- Flaggentypen
     "flag.3v": "3 vertikale Streifen",
     "flag.3h": "3 horizontale Streifen",
+
+    # ---- credits editor
+    "credits.title": "Mitwirkende",
+    "credits.main_font": "Schrift der Credits:",
+    "credits.footer_font": "Schrift der unteren Namen + Fußzeile:",
+    "credits.font.flow": "1 - FLOW",
+    "credits.font.micro4": "2 - MICRO4",
+    "credits.pool": "Pool: {used}/{capacity} Bytes",
+    "credits.pool_overflow": "Pool überschritten: {used}/{capacity} Bytes",
+    "credits.unsupported": "Diese EXE verwendet ein nicht unterstütztes Credits-Layout.",
 }

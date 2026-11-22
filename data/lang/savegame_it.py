@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-"""Savegame editor texts (Italiano)."""
-
 LANG_NAME = 'Italiano'
 
 TEXTS_IT = {
@@ -196,9 +193,9 @@ TEXTS_IT = {
     'loan.total': 'Debito totale',
     'loan.interest_total': 'Interessi mensili totali',
     'squad.avg': 'Media rosa – Cond {c} · Tec {t} · Forma {f}',
-    'squad.extra_cols': '?14|?20|?25|?26|?28|?30|?34|?2|?4|?5|?9|?12|?23|?24|?48|?50',
+    'squad.extra_cols': '?14|?20|?25|?26|Rec pres.|Rec pres. coppa|Rec gol|Espuls.|Gol coppa|Gol Europa|?9|?12|?23|?24|?48|?50',
     'pl.extra_cols': '?27|?32|?33',
-    'squad.extra_note': 'Le colonne “?” sono byte del record non ancora decifrati (?20 è un valore con segno a 16 bit).',
+    'squad.extra_note': 'Gol e Pres. = campionato. Rec = record tra parentesi nella scheda giocatore (presenze campionato, presenze coppa, gol campionato). Espuls. = espulsioni; Gol coppa / Gol Europa = Coppa Italia / coppe europee.',
     'mk.cols': 'Giocatore|Pos.|Cond|Tec|Forma|Fresch.|?14|?20|Prezzo',
     'mk.count': '{n} giocatori in lista',
     'mk.note': 'Gli slot 100–124 della tabella rosa non appartengono a nessun manager: contengono pochi giocatori con un prezzo (interpretazione probabile: lista trasferimenti; non verificata nel gioco). Il giocatore di uno slot non si può cambiare qui.',
@@ -221,4 +218,10 @@ TEXTS_IT = {
     'stats.chart': 'Grafico del pubblico (non verificato)',
     'opt.speed_byte': 'Valore (byte 34222; 40 = predefinito, 70 = massimo, ipotesi)',
     'opt.note': 'Ordine dei byte ricavato dall\'EXE: Serie A (Parziali, Risultati, Tabella), Serie B, Serie C, poi Azioni di gioco, Coppa Italia, Coppe europee, Recuperi, Giornale, Oscurire. La velocità è dedotta dal confronto tra salvataggi.',
+    'info.version': 'Versione',
+    'info.unknown': 'sconosciuta',
+    'info.edited': "MODIFICATO CON L'EDITOR",
+    'info.ingame': 'in-game',
+    'info.bmp_ita_mod': 'mod ITA su EXE tedesco',
+    'mark.name': 'IMBROGLIONE',
 }

@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-"""Savegame editor texts (DE)."""
-
 LANG_NAME = 'Deutsch'
 
 TEXTS_DE = {
@@ -189,9 +186,9 @@ TEXTS_DE = {
     'loan.total': 'Gesamtschulden',
     'loan.interest_total': 'Zinsen pro Monat gesamt',
     'squad.avg': 'Kaderschnitt – Kond {c} · Tec {t} · Form {f}',
-    'squad.extra_cols': '?14|?20|?25|?26|?28|?30|?34|?2|?4|?5|?9|?12|?23|?24|?48|?50',
+    'squad.extra_cols': '?14|?20|?25|?26|Rek. Eins.|Rek. Eins. Pokal|Rek. Tore|Platzverw.|Pokaltore|EC-Tore|?9|?12|?23|?24|?48|?50',
     'pl.extra_cols': '?27|?32|?33',
-    'squad.extra_note': 'Die „?“-Spalten sind noch nicht entschlüsselte Bytes des Eintrags (?20 ist ein vorzeichenbehafteter 16-Bit-Wert).',
+    'squad.extra_note': 'Tore und Eins. gelten für die Liga. Rek. = Rekord in Klammern auf dem Spielerbildschirm (Einsätze Liga, Einsätze Pokal, Tore Liga). Platzverw. = Platzverweise; Pokaltore / EC-Tore = nationaler Pokal / Europapokale.',
     'mk.cols': 'Spieler|Pos.|Kond|Tec|Form|Frische|?14|?20|Preis',
     'mk.count': '{n} Spieler gelistet',
     'mk.note': 'Die Plätze 100–124 der Kadertabelle gehören keinem Manager: sie enthalten wenige Spieler mit einem Preis (wahrscheinlich Transferliste; im Spiel nicht überprüft). Der Spieler eines Platzes lässt sich hier nicht ändern.',
@@ -221,4 +218,10 @@ TEXTS_DE = {
     'opt.speed': 'Spielgeschwindigkeit',
     'opt.speed_byte': 'Wert (Byte 34222; 40 = Standard, 70 = Maximum, Annahme)',
     'opt.note': 'Byte-Reihenfolge aus der EXE: Serie A (Halbzeit, Endergebnisse, Tabelle), Serie B, Serie C, dann Spielszenen, Pokal, Europapokale, Nachspielzeit, Zeitung, Abdunkeln. Die Geschwindigkeit wurde aus dem Vergleich von Spielständen abgeleitet.',
+    'info.version': 'Version',
+    'info.unknown': 'unbekannt',
+    'info.edited': 'MIT DEM EDITOR BEARBEITET',
+    'info.ingame': 'im Spiel',
+    'info.bmp_ita_mod': 'ITA-Mod auf deutscher EXE',
+    'mark.name': 'SCHUMMLER',
 }

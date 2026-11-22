@@ -368,4 +368,14 @@ TEXTS_IT = {
     # ---- tipi di flag
     "flag.3v": "3 bande verticali",
     "flag.3h": "3 bande orizzontali",
+
+    # ---- credits editor
+    "credits.title": "Crediti",
+    "credits.main_font": "Font crediti:",
+    "credits.footer_font": "Font nomi inferiori + frase finale:",
+    "credits.font.flow": "1 - FLOW",
+    "credits.font.micro4": "2 - MICRO4",
+    "credits.pool": "Pool: {used}/{capacity} byte",
+    "credits.pool_overflow": "Pool superato: {used}/{capacity} byte",
+    "credits.unsupported": "Questo eseguibile usa una struttura dei crediti non supportata.",
 }

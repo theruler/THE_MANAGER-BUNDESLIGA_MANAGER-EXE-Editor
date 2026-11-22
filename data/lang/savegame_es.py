@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-"""Savegame editor texts (ES)."""
-
 LANG_NAME = 'Español'
 
 TEXTS_ES = {
@@ -189,9 +186,9 @@ TEXTS_ES = {
     'loan.total': 'Deuda total',
     'loan.interest_total': 'Intereses mensuales totales',
     'squad.avg': 'Media de la plantilla – Cond. {c} · Tec. {t} · Forma {f}',
-    'squad.extra_cols': '?14|?20|?25|?26|?28|?30|?34|?2|?4|?5|?9|?12|?23|?24|?48|?50',
+    'squad.extra_cols': '?14|?20|?25|?26|Réc. part.|Réc. part. copa|Réc. goles|Expuls.|Goles copa|Goles Eur.|?9|?12|?23|?24|?48|?50',
     'pl.extra_cols': '?27|?32|?33',
-    'squad.extra_note': 'Las columnas «?» son bytes del registro cuyo significado aún no se ha descifrado (?20 es un valor de 16 bits con signo).',
+    'squad.extra_note': 'Goles y Part. son de liga. Réc. = récord entre paréntesis en la ficha del jugador (partidos de liga, partidos de copa, goles de liga). Expuls. = expulsiones; Goles copa / Goles Eur. = copa nacional / copas europeas.',
     'mk.cols': 'Jugador|Pos.|Cond.|Tec.|Forma|Fresc.|?14|?20|Precio',
     'mk.count': '{n} jugadores en la lista',
     'mk.note': 'Las posiciones 100–124 de la tabla de plantilla no pertenecen a ningún manager: contienen unos pocos jugadores con un precio (interpretación probable: lista de transferibles; no verificada en el juego). Aquí no se puede cambiar el jugador de una posición.',
@@ -221,4 +218,10 @@ TEXTS_ES = {
     'opt.speed': 'Velocidad de juego',
     'opt.speed_byte': 'Valor (byte 34222; 40 = predeterminado, 70 = máximo, hipótesis)',
     'opt.note': 'Orden de los bytes obtenido del EXE: Serie A (parciales, resultados finales, clasificación), Serie B, Serie C, y después acciones de juego, copa nacional, copas europeas, descuento, periódico y oscurecer. La velocidad se ha deducido comparando partidas.',
+    'info.version': 'Versión',
+    'info.unknown': 'desconocida',
+    'info.edited': 'MODIFICADO CON EL EDITOR',
+    'info.ingame': 'en el juego',
+    'info.bmp_ita_mod': 'mod ITA sobre EXE alemán',
+    'mark.name': 'TRAMPOSO',
 }

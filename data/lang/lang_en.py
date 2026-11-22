@@ -368,4 +368,14 @@ TEXTS_EN = {
     # ---- flag types
     "flag.3v": "3 vertical bands",
     "flag.3h": "3 horizontal bands",
+
+    # ---- credits editor
+    "credits.title": "Credits",
+    "credits.main_font": "Credits font:",
+    "credits.footer_font": "Lower names + footer font:",
+    "credits.font.flow": "1 - FLOW",
+    "credits.font.micro4": "2 - MICRO4",
+    "credits.pool": "Pool: {used}/{capacity} bytes",
+    "credits.pool_overflow": "Pool limit exceeded: {used}/{capacity} bytes",
+    "credits.unsupported": "This executable uses an unsupported Credits layout.",
 }

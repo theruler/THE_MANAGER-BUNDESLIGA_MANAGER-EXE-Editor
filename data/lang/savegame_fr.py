@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-"""Savegame editor texts (FR)."""
-
 LANG_NAME = 'Français'
 
 TEXTS_FR = {
@@ -189,9 +186,9 @@ TEXTS_FR = {
     'loan.total': 'Dette totale',
     'loan.interest_total': 'Total des intérêts mensuels',
     'squad.avg': 'Moyenne de l’effectif – Cond. {c} · Tech. {t} · Forme {f}',
-    'squad.extra_cols': '?14|?20|?25|?26|?28|?30|?34|?2|?4|?5|?9|?12|?23|?24|?48|?50',
+    'squad.extra_cols': '?14|?20|?25|?26|Rec. matchs|Rec. matchs coupe|Rec. buts|Expuls.|Buts coupe|Buts Eur.|?9|?12|?23|?24|?48|?50',
     'pl.extra_cols': '?27|?32|?33',
-    'squad.extra_note': 'Les colonnes « ? » sont des octets de l’enregistrement dont le sens n’a pas encore été décodé (?20 est une valeur signée de 16 bits).',
+    'squad.extra_note': 'Buts et Matchs concernent le championnat. Rec. = record entre parenthèses sur la fiche du joueur (matchs de championnat, matchs de coupe, buts de championnat). Expuls. = expulsions ; Buts coupe / Buts Eur. = coupe nationale / coupes européennes.',
     'mk.cols': 'Joueur|Poste|Cond.|Tech.|Forme|Fraîch.|?14|?20|Prix',
     'mk.count': '{n} joueurs sur la liste',
     'mk.note': 'Les emplacements 100–124 du tableau de l’effectif n’appartiennent à aucun manager : ils contiennent quelques joueurs avec un prix (interprétation probable : liste des transferts ; non vérifiée dans le jeu). Le joueur d’un emplacement ne peut pas être modifié ici.',
@@ -221,4 +218,10 @@ TEXTS_FR = {
     'opt.speed': 'Vitesse de jeu',
     'opt.speed_byte': 'Valeur (octet 34222 ; 40 = par défaut, 70 = maximum, hypothèse)',
     'opt.note': 'Ordre des octets tiré de l’EXE : Série A (mi-temps, résultats finaux, classement), Série B, Série C, puis actions de jeu, coupe nationale, coupes européennes, arrêts de jeu, journal, assombrir. La vitesse a été déduite en comparant des sauvegardes.',
+    'info.version': 'Version',
+    'info.unknown': 'inconnue',
+    'info.edited': 'MODIFIÉ AVEC L’ÉDITEUR',
+    'info.ingame': 'en jeu',
+    'info.bmp_ita_mod': 'mod ITA sur EXE allemand',
+    'mark.name': 'TRICHEUR',
 }
