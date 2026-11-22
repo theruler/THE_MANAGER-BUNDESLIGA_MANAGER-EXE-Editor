@@ -49,8 +49,8 @@ from exe_settings_mixin import ExeSettingsMixin
 from string_codec_mixin import StringCodecMixin, TextTransactionError
 from preview_dialog import show_preview_dialog, show_integrity_dialog
 
-APP_VERSION = "2.9.15"
-APP_TITLE = f"THE MANAGER/BMP-FLTD/BMH Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
+APP_VERSION = "2.9.16"
+APP_TITLE = f"THE MANAGER/BMP - FLTD/BMH Editor v{APP_VERSION} ——— by TheRuler76 & Nobody"
 DEFAULT_LANGUAGE = "en"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
 
@@ -567,8 +567,10 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self.tab_settings = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_settings, text=self.tr("tab.options"))
         self._reg_tab(self.tab_settings, "tab.options") 
-        settings_frame = ttk.LabelFrame(self.tab_settings)
-        settings_frame.pack(fill=tk.X, padx=15, pady=15)
+        settings_body = ttk.Frame(self.tab_settings)
+        settings_body.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+        settings_frame = ttk.LabelFrame(settings_body)
+        settings_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 12), anchor="n")
         self.year_container = ttk.Frame(settings_frame)
         self.year_label = self._reg(ttk.Label(self.year_container, font=("Segoe UI", 9, "bold")), "header.year")
         self.year_label.pack(side=tk.LEFT, padx=(0, 8))
@@ -682,6 +684,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._flag_colors = [0, 0, 0]
         self._flag_font_color = 0
         self._flag_last_valid_type = None
+        self._build_credits_widgets(settings_body)
         self.tab_mana = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_mana, text="MANA.DAT")
         self.mana_editor_panel = ManaEditorPanel(self.tab_mana)
@@ -763,6 +766,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
         self._sync_goal_frames_widget()
         self._sync_wdl_widget()
         self._sync_flag_widget()
+        self._sync_credits_widget()
         self._update_save_state()
 
     def _supported_loaded(self) -> bool:
@@ -946,6 +950,8 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             self._set_menu_state(self.save_menu_entries, can_save)
             return
         can_save      = self._can_save()
+        if self._supported_loaded() and not getattr(self, "_credits_input_valid", True):
+            can_save = False
         can_exchange  = self._can_exchange_strings()
         has_selection = self.current_index is not None and self._supported_loaded()
         has_pending   = self._has_pending_text_edit()
@@ -2690,6 +2696,7 @@ class DOSTranslationEditor(ExeSettingsMixin, StringCodecMixin):
             self._read_teams_from_exe, self._read_goal_frames_from_exe,
             self._read_wdl_from_exe,
             self._read_flag_from_exe,
+            self._read_credits_from_exe,
         ):
             read_from_exe()
         self.notebook.select(self.tab_strings)

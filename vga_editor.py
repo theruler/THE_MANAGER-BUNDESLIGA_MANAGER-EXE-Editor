@@ -1,9 +1,12 @@
 from __future__ import annotations
+import json
 import os
 import re
 import sys
+import unicodedata
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+from tkinter import font as tkfont
 from PIL import Image, ImageTk, ImageDraw
 
 def _hex_palette(s: str, scale: int = 1) -> list[tuple[int, int, int]]:
@@ -52,7 +55,6 @@ def _palette_to_flat_rgb(pal: list[tuple[int, int, int]], size: int = 256) -> li
         flat.extend((0, 0, 0))
     return flat[:size * 3]
 
-# ---------------------------------------------------------------------------
 # File formats
 #
 #   BMP (Bundesliga Manager Professional / Eishockey Manager):
@@ -62,7 +64,6 @@ def _palette_to_flat_rgb(pal: list[tuple[int, int, int]], size: int = 256) -> li
 #
 # The RLE payload is identical in both. The payload length includes the final
 # offset byte. Anything after the payload is an embedded palette (3 bytes/entry).
-# ---------------------------------------------------------------------------
 FMT_BMP = "BMP"
 FMT_BMH = "BMH"
 
@@ -360,6 +361,16 @@ TOOL_FILL       = "fill"
 TOOL_MOVE_PASTE = "move_paste"
 TOOL_HAND       = "hand"
 TOOL_SOFTEN     = "soften"
+TOOL_TEXT       = "text"
+TOOL_SHAPE      = "shape"
+
+_TEXT_FONTS = ("MICRO4.FON", "FLOW.FON", "NORMAL.FON")   # original game fonts, loaded through fonts.py
+_NONZERO_TABLE = bytes([0]) + bytes([255]) * 255
+
+
+def _nonzero_mask(img: Image.Image) -> Image.Image:
+    """'L' mask that is 255 wherever the indexed image is not the alpha index 0."""
+    return Image.frombytes("L", img.size, img.tobytes().translate(_NONZERO_TABLE))
 
 ZOOM_LEVELS = [1, 2, 4, 8, 16]
 
@@ -423,10 +434,246 @@ def _quantize_rgba_to_palette(
     return result
 
 
+#  Bitmap fonts (.FON) — pure PIL/tkinter port of the game's font loader.
+#  Fonts are looked up in the ".\\data" folder (next to the editor, then the working dir).
+FONT_ROWS = {"MICRO4.FON": 6, "FLOW.FON": 8, "NORMAL.FON": 16}   # glyph row counts of the bitmap fonts
+FONT_CODES = {   # character codes stored in each font, in file order
+    "MICRO4.FON": list(range(0x20, 0x60)) + list(range(0x61, 0x7F)),
+    "FLOW.FON": [0x20, 0x21, 0x22, 0x24, 0x25, 0x27, 0x28, 0x29] + list(range(0x2A, 0x40)) + list(range(0x41, 0x5F)) + list(range(0x61, 0x7F)),
+    # NORMAL.FON: 44 glyphs, 16 rows, uppercase only: space, '-', '.', 0-9, ':', A-Z, then I-grave, A-grave, O-grave, degree.
+    "NORMAL.FON": [0x20, 0x2D, 0x2E] + list(range(0x30, 0x3B)) + list(range(0x41, 0x5B)) + [0x5B, 0x2A, 0x7D, 0x7E],
+}
+UPPERCASE_ONLY = {"NORMAL.FON"}   # fonts without lowercase glyphs: text is upper-cased before lookup
+_ACC = {"7e": "\u00b0", "24": "\u20ac", "5b": "\u00ec", "5d": "\u00e9", "7b": "\u00e8", "7c": "\u00f9", "7d": "\u00f2", "2a": "\u00e0"}
+DEFAULT_CHARMAPS = {"MICRO4.FON": dict(_ACC), "FLOW.FON": dict(_ACC), "NORMAL.FON": dict(_ACC)}
+CHARMAP_GAME = "BUNDESLIGA MANAGER PROFESSIONAL"   # game edition whose character map is used
+CHAR_FALLBACK = {"|": "/", "{": "(", "}": ")", "~": "-", "[": "(", "]": ")", "*": "+", "$": "S", "#": "+", "&": "+", "@": "a",
+                 "_": "-", "`": "'", "\\": "/", "^": "'", "\u00df": "s", "\u00e6": "a", "\u00f8": "o", "\u0153": "o",
+                 "\u2019": "'", "\u2018": "'", "\u201c": "\"", "\u201d": "\"", "\u2013": "-", "\u2014": "-", "\u2026": ".",
+                 "\u00a0": " ", "\t": " "}
+
+
+def _font_data_dirs() -> list[str]:
+    """Folders searched for .FON / char-mapping.json: <editor folder>\\data, then <working dir>\\data."""
+    out: list[str] = []
+    for base in (os.path.dirname(os.path.abspath(__file__)), os.getcwd()):
+        d = os.path.join(base, "data")
+        if d not in out:
+            out.append(d)
+    return out
+
+
+def _read_charmaps(dirs):
+    for d in dirs:
+        p = os.path.join(d, "char-mapping.json") if d else None
+        if p and os.path.isfile(p):
+            try:
+                with open(p, encoding="utf-8") as f:
+                    raw = re.sub(r",\s*([}\]])", r"\1", f.read())
+                maps = json.loads(raw)[CHARMAP_GAME]["charmaps"]
+                return {k: {str(b).lower(): ch for b, ch in v.items()} for k, v in maps.items()}
+            except (OSError, ValueError, KeyError):
+                continue
+    return DEFAULT_CHARMAPS
+
+
+def parse_fon(path, rows, codes):
+    """Parse a .FON file into {code: (width, [row bits], bytes_per_row)}."""
+    with open(path, "rb") as f:
+        d = f.read()
+    out, i = {}, 0
+    for code in codes:
+        if i >= len(d):
+            break
+        w = d[i]
+        bpr = max(1, (w + 7) // 8)
+        body = d[i + 1:i + 1 + rows * bpr]
+        if len(body) < rows * bpr:
+            break
+        out[code] = (w, [int.from_bytes(body[r * bpr:(r + 1) * bpr], "big") for r in range(rows)], bpr)
+        i += 1 + rows * bpr
+    return out
+
+
+class BitmapFont:
+    """Legacy bitmap font: glyphs are PIL 'L' masks (255 = lit pixel)."""
+
+    def __init__(self, path, name, charmap):
+        self.name, self.rows = name, FONT_ROWS[name]
+        raw = parse_fon(path, self.rows, FONT_CODES[name])
+        self.rev = {ch: int(b, 16) for b, ch in charmap.items()}
+        self.remap = {int(b, 16) for b in charmap}
+        self.upper_only = name in UPPERCASE_ONLY
+        if self.upper_only:   # accented lowercase mappings also serve their uppercase form
+            for ch, c in list(self.rev.items()):
+                u = ch.upper()
+                if len(u) == 1:
+                    self.rev.setdefault(u, c)
+        self.glyphs: dict[int, Image.Image] = {}
+        for code, (w, bits, bpr) in raw.items():
+            g = Image.new("L", (max(1, w), self.rows), 0)
+            px = g.load()
+            for y, v in enumerate(bits):
+                for x in range(w):
+                    if (v >> (bpr * 8 - 1 - x)) & 1:
+                        px[x, y] = 255
+            self.glyphs[code] = g
+        slash, backslash = self.glyphs.get(0x2F), self.glyphs.get(0x5C)
+        if slash is not None and backslash is not None and backslash.getbbox() is None:   # empty backslash slot
+            self.glyphs[0x5C] = slash.transpose(Image.FLIP_LEFT_RIGHT)
+        self.width = {c: g.width for c, g in self.glyphs.items()}
+        self._lut: dict[str, int] = {}
+        self._text: dict[tuple, Image.Image] = {}
+
+    def code(self, ch):
+        """Resolve a character to the glyph code supported by this font."""
+        c = self._lut.get(ch)
+        if c is not None:
+            return c
+        orig = ch
+        if self.upper_only and len(ch.upper()) == 1:
+            ch = ch.upper()
+        c = self.rev.get(ch)
+        if c is None or c not in self.glyphs:
+            o = ord(ch)
+            if o < 0x80 and o in self.glyphs and o not in self.remap:
+                c = o
+            else:
+                alt = CHAR_FALLBACK.get(ch)
+                if alt is None:
+                    base = unicodedata.normalize("NFD", ch)[0]
+                    alt = base if base != ch else None
+                if alt is not None and self.upper_only and len(alt.upper()) == 1:
+                    alt = alt.upper()
+                c = None
+                if alt is not None:
+                    ao = ord(alt)
+                    c = ao if (ao in self.glyphs and ao not in self.remap) else self.rev.get(alt)
+                if c is None or c not in self.glyphs:
+                    c = 0x3F if 0x3F in self.glyphs else 0x20
+        self._lut[orig] = c
+        return c
+
+    def text_width(self, text, scale=1):
+        return sum(self.width[self.code(ch)] for ch in text) * scale
+
+    def render_mask(self, text, scale=1) -> Image.Image:
+        """Render a string as an 'L' mask (255 = lit pixel)."""
+        key = (text, scale)
+        im = self._text.get(key)
+        if im is None:
+            if len(self._text) > 4000:
+                self._text.clear()
+            im = Image.new("L", (max(1, self.text_width(text, 1)), self.rows), 0)
+            x = 0
+            for ch in text:
+                c = self.code(ch)
+                im.paste(self.glyphs[c], (x, 0))
+                x += self.width[c]
+            if scale != 1:
+                im = im.resize((im.width * scale, im.height * scale), Image.NEAREST)
+            self._text[key] = im
+        return im
+
+    def render(self, text, color, scale=1) -> Image.Image:
+        """Render a string as an RGBA image in `color`."""
+        mask = self.render_mask(text, scale)
+        im = Image.new("RGBA", mask.size, tuple(color[:3]) + (255,))
+        im.putalpha(mask)
+        return im
+
+
+class ScaledFont:
+    """Scaled wrapper around a bitmap font."""
+
+    def __init__(self, font, scale):
+        self.font, self.scale = font, scale
+
+    def render(self, text, antialias=True, color=(255, 255, 255)):
+        return self.font.render(text, color, self.scale)
+
+    def size(self, text):
+        return self.font.text_width(text, self.scale), self.font.rows * self.scale
+
+    def get_height(self):
+        return self.font.rows * self.scale
+
+
+class FontBank:
+    """Loading and caching of the bitmap fonts (plus an optional tkinter 'modern' font)."""
+    SMALL_MAX_PX = 23
+
+    def __init__(self):
+        self.micro = self.flow = self.normal = None
+        self.modern = False
+        self._px: dict = {}
+
+    def load(self, dirs):
+        maps = _read_charmaps(dirs)
+        for attr, name in (("micro", "MICRO4.FON"), ("flow", "FLOW.FON"), ("normal", "NORMAL.FON")):
+            for d in dirs:
+                p = os.path.join(d, name) if d else None
+                if p and os.path.isfile(p):
+                    try:
+                        setattr(self, attr, BitmapFont(p, name, maps.get(name, DEFAULT_CHARMAPS[name])))
+                        break
+                    except (OSError, ValueError):
+                        continue
+        self._px.clear()
+        return self.micro is not None and self.flow is not None
+
+    def bitmap(self, name):
+        return {"MICRO4.FON": self.micro, "FLOW.FON": self.flow, "NORMAL.FON": self.normal}.get(name)
+
+    def small(self, scale=1):
+        key = ("m", scale)
+        f = self._px.get(key)
+        if f is None:
+            f = self._px[key] = ScaledFont(self.micro, scale)
+        return f
+
+    def normal_font(self, scale=1):
+        key = ("n", scale)
+        f = self._px.get(key)
+        if f is None:
+            f = self._px[key] = ScaledFont(self.normal, scale)
+        return f
+
+    def modern_font(self, px):
+        key = ("mod", px)
+        f = self._px.get(key)
+        if f is None:
+            fams = {n.lower(): n for n in tkfont.families()}
+            fam = next((fams[n] for n in ("dejavu sans", "segoe ui", "arial", "helvetica", "liberation sans") if n in fams), "TkDefaultFont")
+            f = self._px[key] = tkfont.Font(family=fam, size=-int(px))
+        return f
+
+    def get(self, px):
+        px = max(8, int(px))
+        if self.modern:
+            return self.modern_font(max(8, int(px * 0.8)))
+        f = self._px.get(px)
+        if f is None:
+            if px <= self.SMALL_MAX_PX:
+                f = ScaledFont(self.micro, max(1, int(round(px * 0.55 / 5.0))))
+            else:
+                f = ScaledFont(self.flow, max(1, int(round(px * 0.55 / 7.0))))
+            self._px[px] = f
+        return f
+
+
+FONTS = FontBank()   # shared font bank used by the TEXT tool
+
+
 class _ImageCanvas(tk.Frame):
 
-    def __init__(self, parent, on_modified=None, on_color_picked=None, **kw):
+    def __init__(self, parent, on_modified=None, on_color_picked=None, on_text_request=None, **kw):
         super().__init__(parent, bg="#1a1a2e", **kw)
+        self._on_text_request = on_text_request
+        self._paste_transparent: bool = False   # True for TEXT pastes: index 0 is see-through
+        self._shape_mode: str = "line"          # "line" | "rect" | "rect_fill"
+        self._shape_start: tuple[int, int] | None = None
+        self._shape_end: tuple[int, int] | None = None
         self._on_modified = on_modified
         self._on_color_picked = on_color_picked
         self._img: Image.Image | None = None
@@ -583,6 +830,7 @@ class _ImageCanvas(tk.Frame):
         if tool != TOOL_MOVE_PASTE and self._tool == TOOL_MOVE_PASTE:
             self._commit_paste()
         self._tool = tool
+        self._shape_start = self._shape_end = None
         self._update_cursor()
 
     def _update_cursor(self, event=None):
@@ -596,6 +844,8 @@ class _ImageCanvas(tk.Frame):
             cursor = "target"
         elif self._tool == TOOL_FILL:
             cursor = "spraycan"
+        elif self._tool == TOOL_TEXT:
+            cursor = "xterm"
         elif self._tool == TOOL_MOVE_PASTE:
             if event is not None:
                 corner = self._paste_corner_at(event.x, event.y)
@@ -650,6 +900,7 @@ class _ImageCanvas(tk.Frame):
             return False
         self._commit_paste()
         self._paste_buf = self._clipboard.copy()
+        self._paste_transparent = False
         self._paste_src = self._paste_buf.copy()
         self._paste_resize_corner = None
         pw, ph = self._paste_buf.size
@@ -670,20 +921,23 @@ class _ImageCanvas(tk.Frame):
     def commit_paste_now(self):
         if self._paste_buf is None:
             return
+        back = TOOL_TEXT if self._paste_transparent else TOOL_SELECT
         self._commit_paste()
-        self._tool = TOOL_SELECT
-        self._canvas.config(cursor="crosshair")
+        self._tool = back
+        self._update_cursor()
         self._redraw()
 
     def delete_selection(self):
         if self._paste_buf is not None:
+            back = TOOL_TEXT if self._paste_transparent else TOOL_SELECT
             self._paste_buf = None
             self._paste_src = None
+            self._paste_transparent = False
             self._paste_resize_corner = None
             self._sel = None
             self._paste_drag_start = None
-            self._tool = TOOL_SELECT
-            self._canvas.config(cursor="crosshair")
+            self._tool = back
+            self._update_cursor()
             self._redraw()
         elif self._sel is not None and self._img is not None:
             self._notify_stroke_start()
@@ -716,14 +970,16 @@ class _ImageCanvas(tk.Frame):
         self._redraw()
 
     def deselect(self, _event=None):
+        back = TOOL_TEXT if self._paste_transparent else TOOL_SELECT
+        self._shape_start = self._shape_end = None
         self._commit_paste()
         self._sel = None
         self._sel_start = None
         self._dragging = False
         self._paste_drag_start = None
         if self._tool == TOOL_MOVE_PASTE:
-            self._tool = TOOL_SELECT
-            self._canvas.config(cursor="crosshair")
+            self._tool = back
+            self._update_cursor()
         self._redraw()
         parent = self.master
         if hasattr(parent, "_update_selection_buttons"):
@@ -745,9 +1001,13 @@ class _ImageCanvas(tk.Frame):
         dst_y = max(0, py)
         if src_x1 > src_x0 and src_y1 > src_y0:
             region = self._paste_buf.crop((src_x0, src_y0, src_x1, src_y1))
-            self._img.paste(region, (dst_x, dst_y))
+            if self._paste_transparent:
+                self._img.paste(region, (dst_x, dst_y), _nonzero_mask(region))
+            else:
+                self._img.paste(region, (dst_x, dst_y))
         self._paste_buf = None
         self._paste_src = None
+        self._paste_transparent = False
         self._paste_resize_corner = None
         self._notify_modified()
 
@@ -759,6 +1019,10 @@ class _ImageCanvas(tk.Frame):
         if len(flat_pal) >= 3:
             flat_pal[0:3] = (255, 0, 255) if self._show_alpha else (0, 0, 0)
         img.putpalette(flat_pal)
+        layer = self._shape_layer()
+        if layer is not None:
+            smask, (sx, sy) = layer
+            img.paste(self._current_draw_index(), (sx, sy, sx + smask.width, sy + smask.height), smask)
         if self._paste_buf is not None:
             iw, ih = img.size
             px, py = self._paste_pos
@@ -771,8 +1035,9 @@ class _ImageCanvas(tk.Frame):
             dst_y = max(0, py)
             if src_x1 > src_x0 and src_y1 > src_y0:
                 paste = self._paste_buf.crop((src_x0, src_y0, src_x1, src_y1))
+                tmask = _nonzero_mask(paste) if self._paste_transparent else None
                 paste.putpalette(flat_pal)
-                img.paste(paste, (dst_x, dst_y))
+                img.paste(paste, (dst_x, dst_y), tmask)
         return img
 
     def _with_grid_overlay(self, scaled: Image.Image, iw: int, ih: int, z: int,offset: tuple[int, int] = (0, 0)) -> Image.Image:
@@ -855,12 +1120,12 @@ class _ImageCanvas(tk.Frame):
             pw, ph = self._paste_buf.size
             c.create_rectangle(px0 * z, py0 * z, (px0 + pw) * z, (py0 + ph) * z,outline="#FFD700", width=2, dash=(4, 2), tags="paste")
             r = self._HANDLE_R
-            for hx, hy in (
+            for hx, hy in (() if self._paste_src is None else (
                 (px0 * z,        py0 * z),
                 ((px0 + pw) * z, py0 * z),
                 (px0 * z,        (py0 + ph) * z),
                 ((px0 + pw) * z, (py0 + ph) * z),
-            ):
+            )):
                 c.create_rectangle(hx - r, hy - r, hx + r, hy + r,fill="#FFD700", outline="#000", width=1, tags="paste")
         c.configure(scrollregion=(0, 0, dw + 2, dh + 2))
 
@@ -903,8 +1168,8 @@ class _ImageCanvas(tk.Frame):
     _HANDLE_R = 5
 
     def _paste_corner_at(self, cx: int, cy: int) -> "str | None":
-        if self._paste_buf is None:
-            return None
+        if self._paste_buf is None or self._paste_src is None:
+            return None   # text pastes cannot be resized (they have no source image)
         z = self._zoom
         px, py = self._paste_pos
         pw, ph = self._paste_buf.size
@@ -1026,6 +1291,14 @@ class _ImageCanvas(tk.Frame):
         elif self._tool == TOOL_FILL:
             self._flood_fill(*pt)
 
+        elif self._tool == TOOL_TEXT:
+            if self._on_text_request:
+                self._on_text_request(pt)
+
+        elif self._tool == TOOL_SHAPE:
+            self._shape_start = self._shape_end = pt
+            self._redraw()
+
     def _on_b1_motion(self, event):
         if self._tool == TOOL_HAND:
             if self._pan_start is not None:
@@ -1072,6 +1345,12 @@ class _ImageCanvas(tk.Frame):
             self._update_cursor(event)
             return
 
+        if self._tool == TOOL_SHAPE:
+            if self._shape_start is not None and self._img is not None:
+                self._shape_end = self._shape_target(event)
+                self._redraw()
+            return
+
         if pt is None:
             return
 
@@ -1089,6 +1368,10 @@ class _ImageCanvas(tk.Frame):
             self._redraw()
 
     def _on_b1_release(self, event):
+        if self._tool == TOOL_SHAPE and self._shape_start is not None:
+            if self._img is not None:
+                self._shape_end = self._shape_target(event)
+            self._commit_shape()
         self._dragging = False
         self._pan_start = None
         self._drawing_stroke = False
@@ -1124,6 +1407,10 @@ class _ImageCanvas(tk.Frame):
         self._update_cursor()
 
     def _on_b3_press(self, event):
+        if self._shape_start is not None:
+            self._shape_start = self._shape_end = None
+            self._redraw()
+            return
         pt = self._canvas_to_pixel(event.x, event.y)
         if self._sel is not None and (pt is None or not self._point_in_selection(pt)):
             self.deselect()
@@ -1307,6 +1594,95 @@ class _ImageCanvas(tk.Frame):
             index = _rgb_to_palette_index(r, g, b, self._palette, start_index=1)
         self._img.putpixel((px, py), index)
 
+    def set_shape_mode(self, mode: str):
+        self._shape_mode = mode
+        self._shape_start = self._shape_end = None
+        self._redraw()
+
+    def _shape_target(self, event) -> tuple[int, int]:
+        """Pixel under the mouse, clamped to the image; Shift snaps to 45° lines / squares."""
+        iw, ih = self._img.size
+        z = self._zoom
+        x = min(max(int(self._canvas.canvasx(event.x)) // z, 0), iw - 1)
+        y = min(max(int(self._canvas.canvasy(event.y)) // z, 0), ih - 1)
+        if event.state & 0x0001 and self._shape_start is not None:
+            x0, y0 = self._shape_start
+            dx, dy = x - x0, y - y0
+            adx, ady = abs(dx), abs(dy)
+            if self._shape_mode == "line" and ady * 2 < adx:
+                dy = 0
+            elif self._shape_mode == "line" and adx * 2 < ady:
+                dx = 0
+            else:
+                m = min(adx, ady)
+                dx = m if dx >= 0 else -m
+                dy = m if dy >= 0 else -m
+            x, y = x0 + dx, y0 + dy
+        return x, y
+
+    def _shape_layer(self):
+        """('L' mask, (left, top)) of the shape being dragged, or None."""
+        if self._img is None or self._shape_start is None or self._shape_end is None:
+            return None
+        (x0, y0), (x1, y1) = self._shape_start, self._shape_end
+        bx, by = min(x0, x1), min(y0, y1)
+        w, h = abs(x1 - x0) + 1, abs(y1 - y0) + 1
+        mask = Image.new("L", (w, h), 0)
+        d = ImageDraw.Draw(mask)
+        if self._shape_mode == "line":
+            d.line([(x0 - bx, y0 - by), (x1 - bx, y1 - by)], fill=255, width=1)
+        else:
+            d.rectangle([0, 0, w - 1, h - 1], outline=255, fill=255 if self._shape_mode == "rect_fill" else None)
+        return mask, (bx, by)
+
+    def _commit_shape(self):
+        layer = self._shape_layer()
+        idx = self._current_draw_index()
+        self._shape_start = self._shape_end = None
+        if layer is None:
+            return
+        mask, (bx, by) = layer
+        self._notify_stroke_start()
+        self._img.paste(idx, (bx, by, bx + mask.width, by + mask.height), mask)
+        self._notify_modified()
+        self._redraw()
+
+    def _current_draw_index(self) -> int:
+        r, g, b, a = self._draw_color
+        if a == 0:
+            return ALPHA_INDEX
+        if (
+            self._draw_index is not None
+            and self._draw_index != ALPHA_INDEX
+            and 0 <= self._draw_index < len(self._palette)
+            and self._palette[self._draw_index] == (r, g, b)
+        ):
+            return self._draw_index
+        return _rgb_to_palette_index(r, g, b, self._palette, start_index=1)
+
+    def begin_text(self, mask: Image.Image, pos: tuple[int, int]) -> bool:
+        """Start a movable text paste: `mask` ('L', 255 = glyph pixel) painted in the current color."""
+        if self._img is None or mask is None:
+            return False
+        idx = self._current_draw_index()
+        if idx == ALPHA_INDEX:
+            return False
+        self._commit_paste()
+        w, h = mask.size
+        buf = Image.new("P", (w, h), ALPHA_INDEX)
+        buf.paste(idx, (0, 0, w, h), mask)
+        self._paste_buf = buf
+        self._paste_src = None            # no source -> no resize handles
+        self._paste_transparent = True
+        self._paste_resize_corner = None
+        self._paste_drag_start = None
+        self._paste_pos = pos
+        self._sel = (pos[0], pos[1], pos[0] + w - 1, pos[1] + h - 1)
+        self._tool = TOOL_MOVE_PASTE
+        self._update_cursor()
+        self._redraw()
+        return True
+
     def _paint_pixel(self, px: int, py: int):
         self._paint_pixel_raw(px, py)
         self._notify_modified()
@@ -1326,6 +1702,11 @@ class PicEditorPanel(ttk.Frame):
     def __init__(self, parent, standalone=True, **kw):
         super().__init__(parent, **kw)
         self._standalone = standalone
+        self._text_last = "TEXT"
+        self._text_font = "FLOW.FON"
+        self._text_scale = 1
+        self._shape_idx = 0
+        self._last_tool_value = TOOL_DRAW
         self._pic_dir:      str         = ""
         self._pic_files:    list[str]   = []
         self._current_idx:  int         = -1
@@ -1359,6 +1740,7 @@ class PicEditorPanel(ttk.Frame):
         s.configure("TButton", font=("Segoe UI", 9, "bold"), padding=5, background=ACCENT, foreground="white", borderwidth=0)
         s.map("TButton", background=[("active", "#2980B9"), ("disabled", "#BDC3C7")])
         s.configure("Toolbutton", font=("Segoe UI", 9))
+        s.configure("Tool.Toolbutton", font=("Segoe UI", 8), padding=(1, 3))   # compact: 3 buttons per row
 
     def _build_ui(self):
         sb = ttk.Frame(self, padding=(8, 2))
@@ -1375,7 +1757,7 @@ class PicEditorPanel(ttk.Frame):
         sidebar.pack(side=tk.RIGHT, fill=tk.Y, padx=(6, 0), pady=6)
         sidebar.pack_propagate(False)
         self._build_toolbox(sidebar)
-        self._canvas_frame = _ImageCanvas(center,on_modified=self._on_canvas_modified,on_color_picked=self._on_color_picked_from_canvas,)
+        self._canvas_frame = _ImageCanvas(center,on_modified=self._on_canvas_modified,on_color_picked=self._on_color_picked_from_canvas,on_text_request=self._on_text_request,)
         self._canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)
         self._canvas_frame._canvas.bind("<Motion>", self._on_mouse_move, add="+")
         self._canvas_frame._zoom_changed_callback = (lambda z: self._zoom_var.set(z))
@@ -1414,12 +1796,17 @@ class PicEditorPanel(ttk.Frame):
         self._fmt_lbl.pack(fill=tk.X, anchor="w")
         f_tools = ttk.LabelFrame(parent, text="Tools", padding=(4, 2))
         f_tools.pack(fill=tk.X, pady=3)
-        f_tools.columnconfigure(0, weight=1)
-        f_tools.columnconfigure(1, weight=1)
-        ttk.Radiobutton(f_tools, text="✏ Pencil", variable=self._tool_var, value=TOOL_DRAW, command=self._on_tool_change, style="Toolbutton").grid(row=0, column=0, sticky="ew", padx=1, pady=1)
-        ttk.Radiobutton(f_tools, text="▢ Select", variable=self._tool_var, value=TOOL_SELECT, command=self._on_tool_change, style="Toolbutton").grid(row=0, column=1, sticky="ew", padx=1, pady=1)
-        ttk.Radiobutton(f_tools, text="🪣 Fill", variable=self._tool_var, value=TOOL_FILL, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=0, sticky="ew", padx=1, pady=1)
-        ttk.Radiobutton(f_tools, text="〜 Soften", variable=self._tool_var, value=TOOL_SOFTEN, command=self._on_tool_change, style="Toolbutton").grid(row=1, column=1, sticky="ew", padx=1, pady=1)
+        for _c in range(3):
+            f_tools.columnconfigure(_c, weight=1, uniform="tools")
+        _tools = (
+            ("✏ Pencil", TOOL_DRAW,   0, 0), ("▢ Select", TOOL_SELECT, 0, 1), ("🪣 Fill", TOOL_FILL, 0, 2),
+            ("〜 Soften", TOOL_SOFTEN, 1, 0), ("T Text",   TOOL_TEXT,   1, 1), (self._SHAPE_MODES[0][1], TOOL_SHAPE, 1, 2),
+        )
+        for _txt, _val, _r, _c in _tools:
+            _rb = ttk.Radiobutton(f_tools, text=_txt, variable=self._tool_var, value=_val, command=self._on_tool_change, style="Tool.Toolbutton")
+            _rb.grid(row=_r, column=_c, sticky="ew", padx=1, pady=1)
+            if _val == TOOL_SHAPE:
+                self._shape_btn = _rb
         f_sel = ttk.LabelFrame(parent, text="Pasted selection", padding=(4, 2))
         f_sel.pack(fill=tk.X, pady=3)
         sel_grid = ttk.Frame(f_sel)
@@ -2085,11 +2472,128 @@ class PicEditorPanel(ttk.Frame):
         TOOL_FILL:   "Fill — Left-click to flood-fill a region with the current color",
         TOOL_HAND:   "Hand — Left-click/drag to pan the canvas  │  Scroll wheel to zoom",
         TOOL_PICK:   "Pick — Left-click to sample a color from the canvas",
+        TOOL_TEXT:   "Text — Left-click where the text should start  │  type it, pick font (MICRO4 / FLOW / NORMAL) and scale  │  drag to move, Enter = commit",
+        TOOL_SHAPE:  "Line/Rect — drag to draw  │  click the button again to switch Line → Rect → Filled rect  │  Shift = 45° line / square  │  Right-click or ESC cancels",
         TOOL_SOFTEN: "Soften/Sharpen — Left-click/drag to soften  │  Right-click/drag to sharpen  │  Middle-click/drag to pan",
     }
 
+    def _ensure_fonts(self):
+        """Return the shared FontBank with the original .FON fonts loaded from .\\data, or None."""
+        if any(FONTS.bitmap(n) is None for n in _TEXT_FONTS):
+            FONTS.load(_font_data_dirs())
+        if all(FONTS.bitmap(n) is None for n in _TEXT_FONTS):
+            messagebox.showerror("Text tool", "No .FON file found (MICRO4.FON, FLOW.FON, NORMAL.FON).\nSearched:\n" + "\n".join(_font_data_dirs()))
+            return None
+        return FONTS
+
+    def _render_text_mask(self, text: str, font_name: str, scale: int) -> Image.Image | None:
+        bank = self._ensure_fonts()
+        bf = bank.bitmap(font_name) if bank else None
+        return bf.render_mask(text, scale) if bf is not None else None
+
+    def _on_text_request(self, pt: tuple[int, int]):
+        cf = self._canvas_frame
+        if cf._img is None:
+            return
+        if cf._current_draw_index() == ALPHA_INDEX:
+            self._set_status("Text: pick an opaque color first (index 0 is transparent).")
+            return
+        bank = self._ensure_fonts()
+        if bank is None:
+            return
+        avail = [n for n in _TEXT_FONTS if bank.bitmap(n) is not None]
+        top = self.winfo_toplevel()
+        dlg = tk.Toplevel(top)
+        dlg.title("Text")
+        dlg.transient(top)
+        dlg.resizable(False, False)
+        body = ttk.Frame(dlg, padding=10)
+        body.pack(fill=tk.BOTH, expand=True)
+        var_text = tk.StringVar(value=self._text_last)
+        var_font = tk.StringVar(value=self._text_font if self._text_font in avail else avail[0])
+        var_scale = tk.IntVar(value=self._text_scale)
+        ttk.Label(body, text="Text:").grid(row=0, column=0, sticky="w", pady=2)
+        ent = ttk.Entry(body, textvariable=var_text, width=36)
+        ent.grid(row=0, column=1, columnspan=3, sticky="ew", pady=2)
+        ttk.Label(body, text="Font:").grid(row=1, column=0, sticky="w", pady=2)
+        cmb = ttk.Combobox(body, textvariable=var_font, values=avail, state="readonly", width=14)
+        cmb.grid(row=1, column=1, sticky="w", pady=2)
+        ttk.Label(body, text="Scale:").grid(row=1, column=2, sticky="e", padx=(10, 4), pady=2)
+        spn = ttk.Spinbox(body, from_=1, to=8, textvariable=var_scale, width=4)
+        spn.grid(row=1, column=3, sticky="w", pady=2)
+        preview = tk.Canvas(body, width=330, height=84, bg="#1a1a2e", highlightthickness=1, highlightbackground="#555")
+        preview.grid(row=2, column=0, columnspan=4, pady=(6, 8))
+        btns = ttk.Frame(body)
+        btns.grid(row=3, column=0, columnspan=4, sticky="e")
+
+        def cur_scale() -> int:
+            try:
+                return max(1, min(8, int(var_scale.get())))
+            except (tk.TclError, ValueError):
+                return 1
+
+        def refresh(*_a):
+            preview.delete("all")
+            txt = var_text.get()
+            if not txt:
+                return
+            mask = self._render_text_mask(txt, var_font.get(), cur_scale())
+            if mask is None:
+                return
+            idx = cf._current_draw_index()
+            fg = cf._palette[idx] if 0 <= idx < len(cf._palette) else (255, 255, 255)
+            im = Image.composite(Image.new("RGB", mask.size, fg), Image.new("RGB", mask.size, (26, 26, 46)), mask)
+            if im.width > 320 or im.height > 74:
+                im.thumbnail((320, 74), Image.NEAREST)
+            preview.image = ImageTk.PhotoImage(im)
+            preview.create_image(4, 4, anchor="nw", image=preview.image)
+
+        def ok(_e=None):
+            txt = var_text.get()
+            if not txt:
+                return "break"
+            sc = cur_scale()
+            mask = self._render_text_mask(txt, var_font.get(), sc)
+            self._text_last, self._text_font, self._text_scale = txt, var_font.get(), sc
+            dlg.destroy()
+            if mask is not None and cf.begin_text(mask, pt):
+                self._update_selection_buttons(True)
+                self._set_status("Text placed — drag to move  │  Rotate/Mirror available  │  Enter = commit  │  ESC = cancel")
+            return "break"
+
+        def cancel(_e=None):
+            dlg.destroy()
+            return "break"
+
+        ttk.Button(btns, text="OK", command=ok).pack(side=tk.RIGHT)
+        ttk.Button(btns, text="Cancel", command=cancel).pack(side=tk.RIGHT, padx=(0, 6))
+        var_text.trace_add("write", refresh)
+        var_scale.trace_add("write", refresh)
+        cmb.bind("<<ComboboxSelected>>", refresh)
+        dlg.bind("<Return>", ok)
+        dlg.bind("<KP_Enter>", ok)
+        dlg.bind("<Escape>", cancel)
+        dlg.update_idletasks()
+        dlg.geometry(f"+{top.winfo_rootx() + 140}+{top.winfo_rooty() + 120}")
+        refresh()
+        dlg.grab_set()
+        ent.focus_set()
+        ent.selection_range(0, tk.END)
+
+    _SHAPE_MODES = (("line", "╱ Line", "Line"), ("rect", "▭ Rect", "Rectangle"), ("rect_fill", "■ Rect", "Filled rectangle"))
+
+    def _cycle_shape_mode(self):
+        self._shape_idx = (self._shape_idx + 1) % len(self._SHAPE_MODES)
+        mode, label, name = self._SHAPE_MODES[self._shape_idx]
+        self._shape_btn.config(text=label)
+        self._canvas_frame.set_shape_mode(mode)
+        self._set_status(f"Shape mode: {name}")
+
     def _on_tool_change(self):
         tool = self._tool_var.get()
+        if tool == TOOL_SHAPE and self._last_tool_value == TOOL_SHAPE:
+            self._cycle_shape_mode()   # clicking the active Line/Rect button cycles its mode
+        self._last_tool_value = tool
         self._canvas_frame.set_tool(tool)
         hint = self._TOOL_HINTS.get(tool, "")
         self._hint_lbl.config(text=hint)
@@ -2207,7 +2711,7 @@ class PicEditorPanel(ttk.Frame):
 
 if __name__ == "__main__":
     _root = tk.Tk()
-    _root.title("VGA Editor - by TheRuler76")
+    _root.title("VGA Editor v1.5.0 - by TheRuler76")
     _root.geometry("1200x800")
     _panel = PicEditorPanel(_root)
     _panel.pack(fill=tk.BOTH, expand=True)

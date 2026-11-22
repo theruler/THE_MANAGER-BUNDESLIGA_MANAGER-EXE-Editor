@@ -1498,7 +1498,7 @@ class ToreEditorPanel(ttk.Frame):
     def _set_title(self, fn, n):
         mod = " *" if self.modified else ""
         if self.standalone:
-            self.top.title("TORE Editor - By Theruler76 - %s%s   %s" % (fn, mod, tr("title.frame", i=self.idx + 1, n=n)))
+            self.top.title("TORE Editor v1.5.0 - By Theruler76 - %s%s   %s" % (fn, mod, tr("title.frame", i=self.idx + 1, n=n)))
         elif self.info_lbl is not None:
             self.info_lbl.config(text="%s%s   %s" % (fn, mod, tr("title.frame", i=self.idx + 1, n=n)))
         cb = self.on_state_change

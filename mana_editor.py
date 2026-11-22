@@ -1697,7 +1697,7 @@ def _rebuild_notebook_tabs(nb, parsed: dict, filepath: str, on_dirty, league_tab
 class ManaEditorWindow(tk.Toplevel):
     def __init__(self, parent=None, filepath: str = ""):
         super().__init__(parent)
-        self.title("MANA.DAT Editor - By TheRuler76")
+        self.title("MANA.DAT Editor v1.5.0 - By TheRuler76")
         self.geometry("1230x690")
         self.minsize(1000, 600)
         self.configure(bg=BG)

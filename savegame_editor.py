@@ -1,21 +1,3 @@
-"""BMP / THE MANAGER savegame (.MAN) editor.
-
-Works in two ways:
-  * standalone:   python savegame_editor.py [cartella | file.MAN]
-  * as a tab:     SavegamePanel(parent, standalone=False) inside the main editor.
-                  The host calls panel.set_dir(<cartella dell'EXE>) and the panel lists every
-                  .MAN found there; picking one opens it.
-
-Layout (nested notebooks):
-  Manager     Profilo (con ritratto 0.VGA e logo club da .\\PIC) | Storico | Statistiche
-  Squadra     Rosa | Giocatori | Mercato
-  Economia    Stadio | Prestiti | Sponsor
-  Campionato  Classifica | Risultati | Calendario
-  Coppe       Stato | Accoppiamenti
-  Club        Dati club | Classifica estesa | Serie in corso | Record | Scontri diretti
-  Messaggi
-  Avanzate    Blocchi grezzi (dati non ancora decifrati, offset reali del file)
-"""
 from __future__ import annotations
 import os
 import re
@@ -23,16 +5,16 @@ import shutil
 import struct
 import sys
 import traceback
+import zlib
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from PIL import Image, ImageTk, ImageDraw
+from PIL import Image, ImageTk
 
 import i18n
 
-APP_TITLE = "BMP / THE MANAGER Savegame Editor"
+APP_TITLE = "BMP / THE MANAGER Savegame Editor v1.0.8"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
 
-# --------------------------------------------------------------------------- PALETTE & VGA DECODE (Native Integration)
 def _hex_palette(s: str, scale: int = 1) -> list[tuple[int, int, int]]:
     return [
         (min(255, int(s[i:i+2], 16) * scale),
@@ -108,12 +90,10 @@ def load_vga_image_safe(path: str) -> Image.Image | None:
     except Exception:
         return None
 
-# --------------------------------------------------------------------------- PIC (manager portraits)
-FACE_W, FACE_STEP, FACE_ZOOM = 40, 41, 3     # 0.VGA: 4 volti 40x40 a passo 41 px, poi 0a.VGA, 0b.VGA ...
+FACE_W, FACE_STEP, FACE_ZOOM = 40, 41, 3
 
 
 def find_pic_dir(*bases):
-    """Cartella PIC (case-insensitive) in una delle basi o nella loro cartella superiore."""
     seen = set()
     for base in bases:
         if not base:
@@ -135,7 +115,6 @@ def find_pic_dir(*bases):
 
 
 def load_faces(pic_dir):
-    """[(stem, indice, PIL.Image 40x40)] di tutti i volti: 0.VGA, poi 0a.VGA, 0b.VGA... se esistono."""
     out = []
     if not pic_dir:
         return out
@@ -157,11 +136,9 @@ def load_faces(pic_dir):
     return out
 
 
-# --------------------------------------------------------------------------- STYLE
 BG, FG, MUTED = "#F4F6F9", "#2C3E50", "#7F8C8D"
 ACCENT, ERR, OK = "#2980B9", "#C0392B", "#27AE60"
 
-# own translator: data/lang/savegame_<code>.py  (same loader as the main editor, different prefix)
 _TR = i18n.Translator("savegame_")
 
 
@@ -169,28 +146,97 @@ def T(key, **fmt):
     return _TR.tr(key, **fmt)
 
 
-# =========================================================================== FORMAT / CORE (no Tk)
+# file header signature
 SIG = b"WeRnEr_krahe~&~JeNs_onnen>V2\x00"
-MB, CB, PB, LB = 2345, 5557, 15813, 21400      # managers, clubs, players, squad tables
-CHK1, FIX = 28006, 34368                         # first checksum byte, start of the message block
-H = 28435                                        # base of the records / series tables
+# base offsets: managers, clubs, players, squad slots
+MB, CB, PB, LB = 2345, 5557, 15813, 21400
+# first checksum offset and start of the message block
+CHK1, FIX = 28006, 34368
+# base of the records and series tables
+H = 28435
 N_MANAGERS_OFF = 2339
 SEASONS_COUNT_OFF = 34224
 
+
+# salt for the hidden edit marker
+EDITOR_TAG = b"MANED"
+# hidden marker copies, 8 bytes each, in always-zero padding
+MARK_OFFS = (2300, 31000, 33700, 34268)
+# values of the cheater player, impossible in normal play
+CHEAT_AGE = 0
+CHEAT_CARDS = 99
+CHEAT_SUSPENSION = 255
+CHEAT_CONTRACT = 99
+CHEAT_STAT = 10
+CHEAT_ROLE = 99
+
+
+# checksum of one marker copy
+def _mark_crc(nonce, off):
+    return zlib.crc32(bytes(nonce) + EDITOR_TAG + struct.pack("<H", off)) & 0xFFFFFFFF
+
+
+# crc32 of every 4th club name per known game version
+VERSION_FPRINTS = (
+    ('ENG 2.0',
+        "aac5ef28,3e26cac8,0123c66e,6b5ad711,83a44028,2d4abc96,4b823d05,0aeaed6a,ff86ad81,70409ad1,b62b6f"
+        "fd,bd6e56a2,de76e294,41c641ac,8c7830c2,4aa321e8,556cb9d1,9afe57fd,35a466b3,fa3450d5,02048724,38c"
+        "94be6,8eb038ea,a44c856e,9c59d0a3,e8c6329f,656a4bf0,1cfd9a38,13e5ad75,5477c7fe,f10610b1,94166204,"
+        "65b89e6d,bb4694a4,57e1e148,e0d37946,4ca3a5f4,ef03ffb7,26ac80f0,f388d152,b624c658,20ded93b,955223"
+        "88,fbf0271c,90a342a4,ad7fcb73,290ee48c,6c847bde,56370287,11664eeb"),
+    ('FRE 2.0',
+        "20c559a6,b09aa235,8e11a92a,e3885186,08a0cbd9,54090715,042d717a,f826ef84,319b1851,b1ae7b31,1acedd"
+        "c6,810171a1,567c0bf1,8f42ce6e,a0753527,74e58816,4f0bc143,83a44028,35a466b3,89884730,2ce27b4e,3fa"
+        "48fff,8eb038ea,2c3fbabd,1b7782a8,e8c6329f,656a4bf0,737e428c,e626d2a8,a9c97d76,f10610b1,7845e069,"
+        "65b89e6d,293bbb8b,57e1e148,e0d37946,adf9acfd,b8aa9bd6,c67969ee,020e22b8,017b590f,32827d11,955223"
+        "88,bb88916c,1d42985d,ad7fcb73,111b84bf,6c847bde,89b473f1,11664eeb"),
+    ('GER 2.0',
+        "ecb16bfd,2c7b0952,606d40e4,2f169703,5ef6f2f8,23819f8a,b24f2729,1b491563,2acae49e,ea891eb5,4f24c7"
+        "34,2b0ce0fa,5dbb4d0e,a88c56aa,ae0c3974,0c2c4acf,d681dc6e,ea3cf985,9721a9d6,65359047,4f0bc143,075"
+        "deb07,02e3b6bb,7f2ff0f1,71d7a7ad,fb684ed3,974ee77f,4ebb2a39,7a2f67d3,f2085b15,5477c7fe,baf3f676,"
+        "e0df70e4,b09aa235,e7bb274d,e548dd10,5d891979,314a8638,26ac80f0,12cd5c3f,7ff72f4c,5f9cfef9,c9533c"
+        "fd,5c0d6060,02c5dc39,9f5c2c20,4b9afa12,f7aeaa81,c6368be4,8c7f7287"),
+    ('ITA 1.1',
+        "6aa86b36,ef3046f9,b711b081,c386fbb2,14a9d374,64f92c4c,58d5701a,ddbf5eb5,9ebd479c,5cc30e77,ff414e"
+        "4c,95c8d0c6,1117f311,87f865d0,205ab462,bb4ea8fe,4f0bc143,83a44028,35a466b3,dc302ef7,8ae8cf2a,38c"
+        "94be6,896cc1cd,2c3fbabd,1b7782a8,e8c6329f,f3eeed45,1cfd9a38,d651859a,5477c7fe,9a950b1c,94166204,"
+        "65b89e6d,293bbb8b,57e1e148,79aec2df,6500e544,ef03ffb7,f385fd78,020e22b8,017b590f,20ded93b,955223"
+        "88,a0845cda,e626d2a8,ad7fcb73,111b84bf,6c847bde,56370287,11664eeb"),
+    ('BMP-ITA',
+        "f6adbd1e,88bef827,6aa86b36,94e4f3a6,9ebd479c,f4cbfa0e,988a808c,f3f9888e,abde0962,66d46b80,d6b7ba"
+        "99,ee4a9212,6b361d3e,e68c6ebf,5f78a05c,0f43b0e1,2999dfcf,8bd4efdf,ea215da0,0ca0eedd,0dd134f6,fe5"
+        "4aa9a,7b5a18e1,656a4bf0,299c626b,2a3127b3,e0d8c0d5,4b9bcc66,f3334fd0,cf75b49e,5c934b23,b578548c,"
+        "241bdaf0,bf0f5b5e,c6ad51e5,12f47bb6,2e7f91c4,ae0e536c,e759693c,1da7254c,07d36bee,0ed4ef4c,f14649"
+        "e1,83c26bd7,86d5c5b9,724c9c8a,92e34e50,ace17560,92ec3b36,0446b1a3"),
+    ('CHAMP99',
+        "7f8a9286,6aa86b36,94e4f3a6,81db1a25,f476767c,054f1960,68d5f2b2,d5a1e445,9ebd479c,17937f35,98d41a"
+        "80,248f5362,ad339ae6,66d46b80,60aff447,fe737125,a2007ee6,a8d4554e,0ca0eedd,90443f76,d1e1e83d,dc0"
+        "b72e9,addea165,efcbe1b8,73b498d2,6b5ad711,71446488,d0fc27d0,9dcb714b,cbd7a699,a51ddede,9724be34,"
+        "2b5df85f,d2b0b8f6,004def88,9db041ed,a4e447d4,3ca9b06d,2811b514,3db49a53,6dbdb232,a28180da,4048c2"
+        "ad,3c8b9f4e,866e5058,10ba9e66,49c9c0e9,02c5dc39,5ed0baf3,22a9fdc8"),
+)
+
+
+# parse fingerprint strings into integer lists
+def _fp_lists():
+    out = []
+    for name, s in VERSION_FPRINTS:
+        out.append((name, [int(x, 16) for x in s.replace("\"", "").split(",")]))
+    return out
+
+# struct formats and value limits per field type
 _FMT = {"u8": "<B", "i16": "<h", "u16": "<H", "i32": "<i"}
 _LIMITS = {"u8": (0, 255), "i16": (-32768, 32767), "u16": (0, 65535), "i32": (-2 ** 31, 2 ** 31 - 1)}
 
 
 class SaveError(Exception):
-    """args[0] is an i18n key (data/lang/savegame_*.py)."""
 
     def __str__(self):
         return T(self.args[0])
 
 
+# save stream cipher, same routine for encode and decode
 def _crypt(src, dst, a, b, st, enc):
-    """Stream cipher c = k + (k ^ p) (mod 256), k += 0xD7.  st = [key, checksum]; the checksum is
-    the running sum of the PLAIN bytes."""
     k, c = st
     if enc:
         for i in range(a, b):
@@ -207,21 +253,71 @@ def _crypt(src, dst, a, b, st, enc):
     st[0], st[1] = k, c
 
 
+# role byte to position label
 def pos4(v):
     return T("pos.gk" if v < 25 else "pos.df" if v < 50 else "pos.mf" if v < 75 else "pos.fw")
 
 
+# decrypted save held in memory
 class SaveFile:
-    """Decrypted savegame held in memory (self.buf is the plaintext)."""
 
     def __init__(self, path, data):
         self.path = path
         self.original = bytes(data)
         self.buf, self.mend = self._decode(self.original)
+        self.league_team_count = self._detect_league_team_count(self.buf)
         self.roundtrip_ok = self.encode() == self.original
         self.dirty = False
 
-    # ----- crypto -----
+    @staticmethod
+    def _is_id_permutation(values, first, count):
+        return len(values) == count and sorted(values) == list(range(first, first + count))
+
+    @classmethod
+    def _detect_league_team_count(cls, buf):
+        if len(buf) < 27960:
+            return 20
+
+        first = list(buf[27900:27920])
+        second = list(buf[27920:27940])
+        third = list(buf[27940:27960])
+
+        if (cls._is_id_permutation(first, 0, 20)
+                and cls._is_id_permutation(second, 20, 20)
+                and cls._is_id_permutation(third, 40, 20)):
+            return 20
+
+        if (cls._is_id_permutation(first[:18], 0, 18)
+                and cls._is_id_permutation(second, 18, 20)
+                and cls._is_id_permutation(third, 38, 20)):
+            return 18
+
+        if len(buf) >= 28304:
+            permutations = [list(buf[28244 + 20 * i:28264 + 20 * i]) for i in range(3)]
+            p0, p1, p2 = permutations
+            if (cls._is_id_permutation(p0, 0, 20)
+                    and cls._is_id_permutation(p1, 20, 20)
+                    and cls._is_id_permutation(p2, 40, 20)):
+                return 20
+            if (cls._is_id_permutation(p0[:18], 0, 18)
+                    and cls._is_id_permutation(p1, 18, 20)
+                    and cls._is_id_permutation(p2, 38, 20)):
+                return 18
+
+        if cls._is_id_permutation(first, 0, 20):
+            return 20
+        if cls._is_id_permutation(first[:18], 0, 18):
+            return 18
+
+        return 20
+
+    def league_club_range(self, league):
+        first = self.league_team_count
+        start = 0 if league == 0 else first + 20 * (league - 1)
+        count = first if league == 0 else 20
+        return start, start + count
+
+    # decrypt and verify both checksums
     @staticmethod
     def _decode(data):
         if len(data) < FIX + 1:
@@ -248,6 +344,7 @@ class SaveFile:
             raise SaveError("err.truncated")
         return p, pos
 
+    # encrypt the buffer and refresh checksums
     def encode(self):
         o = bytearray(self.buf)
         st = [self.buf[34], self.buf[34]]
@@ -257,10 +354,124 @@ class SaveFile:
         o[self.mend] = st[1]
         return bytes(o)
 
-    # ----- field access -----
+
+    # compare club name hashes with known versions
+    def detect_version(self):
+        mine = [zlib.crc32(bytes(self.buf[CB + 34 * i:CB + 34 * i + 23]).split(b"\0")[0]) & 0xFFFFFFFF
+                for i in range(0, 200, 4)]
+        best, pct = None, 0
+        for name, ref in _fp_lists():
+            p = 100 * sum(a == b for a, b in zip(mine, ref)) // len(ref)
+            if p > pct:
+                best, pct = name, p
+        return (best, pct) if pct >= 50 else (None, pct)
+
+    @property
+    def version_name(self):
+        n, p = self.detect_version()
+        if n is None:
+            return None
+        if n == "BMP-ITA":
+            n = f"BMP-ITA ({T('info.bmp_ita_mod')})"
+        return n if p == 100 else f"{n} ~{p}%"
+
+    # count intact hidden marker copies
+    def mark_copies(self):
+        n = 0
+        for off in MARK_OFFS:
+            blk = bytes(self.buf[off:off + 8])
+            if len(blk) == 8 and struct.unpack("<I", blk[4:])[0] == _mark_crc(blk[:4], off):
+                n += 1
+        return n
+
+    # squad slot offsets of one manager
+    def _slot_offs(self, m=0):
+        return [LB + 52 * (m * 25 + i) for i in range(25)]
+
+    # cheater signature: max suspension, 99 cards, age 0, loan flag
+    def is_cheater_slot(self, off):
+        pi = self.buf[off + 15]
+        return (1 <= pi <= 150 and self.buf[off + 13] == CHEAT_SUSPENSION and self.buf[off] == CHEAT_CARDS
+                and self.buf[off + 1] == CHEAT_CARDS and self.buf[off + 12] & 0x80
+                and self.buf[PB + 37 * pi + 26] == CHEAT_AGE)
+
+    def cheater_present(self):
+        return any(self.is_cheater_slot(o) for m in range(self.n_managers) for o in self._slot_offs(m))
+
+    @staticmethod
+    def cheater_name():
+        import unicodedata
+        t = unicodedata.normalize("NFKD", T("mark.name")).encode("ascii", "ignore").decode().upper()
+        return (t or "CHEATER")[:25]
+
+    # add or refresh the loaned cheater in a manager squad
+    def _write_cheater(self, m):
+        slots = self._slot_offs(m)
+        # club id of the manager
+        own = self.buf[MB + 778 * m + 30]
+        ex = [o for o in slots if self.is_cheater_slot(o)]
+        if ex:
+            o, pi = ex[0], self.buf[ex[0] + 15]
+        else:
+            used = [i for i, q in enumerate(slots) if self.buf[q + 15]]
+            idx = (max(used) + 1) if used else 0
+            # full squad: the cheater replaces the 24th player
+            if idx > 23:
+                idx = 23
+            o = slots[idx]
+            ref = {self.buf[LB + 52 * i + 15] for i in range(125) if LB + 52 * i != o}
+            # free player record, attackers pool first
+            pi = next((i for i in list(range(150, 106, -1)) + list(range(106, 0, -1)) if i not in ref), None)
+            if pi is None:
+                return False
+        self.buf[o:o + 52] = bytes(52)
+        # slot: cards, status, loan lender, suspension, stats
+        self.buf[o + 0] = CHEAT_CARDS
+        self.buf[o + 1] = CHEAT_CARDS
+        self.buf[o + 6] = 1
+        self.buf[o + 9] = 1
+        self.buf[o + 11] = CHEAT_CONTRACT
+        self.buf[o + 12] = 0x80 | self._lender(m, own)
+        self.buf[o + 13] = CHEAT_SUSPENSION
+        self.buf[o + 14] = 0x40
+        self.buf[o + 15] = pi
+        self.buf[o + 16:o + 19] = bytes((CHEAT_STAT,) * 3)
+        self.buf[o + 19] = 99
+        # player record: name, age, stats, role, club
+        nm = self.cheater_name().encode("latin-1")
+        rec = bytearray(37)
+        rec[:len(nm)] = nm
+        rec[26] = CHEAT_AGE
+        rec[27] = 50
+        rec[28:31] = bytes((CHEAT_STAT,) * 3)
+        rec[31] = CHEAT_ROLE
+        rec[33] = 4
+        rec[35] = 1
+        rec[36] = own
+        self.buf[PB + 37 * pi:PB + 37 * pi + 37] = rec
+        return True
+
+    # first club that is not the manager club
+    def _lender(self, m, own):
+        return next(c for c in range(128) if c != own)
+
+    def is_marked(self):
+        return self.mark_copies() > 0 or self.cheater_present()
+
+    # hidden copies plus the visible cheater
+    def mark(self, managers=None):
+        nonce = os.urandom(4)
+        for off in MARK_OFFS:
+            self.buf[off:off + 8] = nonce + struct.pack("<I", _mark_crc(nonce, off))
+        for m in (managers if managers is not None else [0]):
+            if 0 <= m < self.n_managers:
+                self._write_cheater(m)
+
+    # read a typed value
     def rd(self, off, t="u8"):
         return struct.unpack_from(_FMT[t], self.buf, off)[0]
 
+    # write a typed value with range check
     def wr(self, off, t, value):
         lo, hi = _LIMITS[t]
         try:
@@ -280,7 +491,6 @@ class SaveFile:
         self.buf[off:off + n] = raw + bytes(n - len(raw))
         self.dirty = True
 
-    # ----- lookups -----
     @property
     def n_managers(self):
         return self.buf[N_MANAGERS_OFF]
@@ -294,7 +504,6 @@ class SaveFile:
     def club_ids(self, limit=200):
         return [i for i in range(limit) if self.club_name(i)]
 
-    # ----- messages (variable-length block: 4 ptr bytes + len + text) -----
     def read_messages(self):
         out, p = [], FIX
         for m in range(self.n_managers):
@@ -318,8 +527,8 @@ class SaveFile:
         self.dirty = True
 
 
+# sorted .MAN files of a folder
 def list_man_files(directory):
-    """Every *.MAN (case-insensitive) in a directory, sorted by name."""
     try:
         names = [n for n in os.listdir(directory)
                  if n.lower().endswith(".man") and os.path.isfile(os.path.join(directory, n))]
@@ -328,9 +537,7 @@ def list_man_files(directory):
     return sorted(names, key=str.lower)
 
 
-# =========================================================================== STYLE
 def apply_editor_style(root):
-    """Same look as DOSTranslationEditor._apply_modern_style (used when running standalone)."""
     style = ttk.Style(root)
     style.theme_use("clam")
     style.configure("TFrame", background=BG)
@@ -350,9 +557,8 @@ def apply_editor_style(root):
               padding=[("selected", (10, 4))])
 
 
-# =========================================================================== WIDGETS
+# vertical scrollable container
 class ScrollFrame(ttk.Frame):
-    """Vertically scrollable container (scrollbar only when needed); put children in .inner."""
     _wheel_installed = False
 
     def __init__(self, parent):
@@ -405,8 +611,8 @@ class ScrollFrame(ttk.Frame):
             w = getattr(w, "master", None)
 
 
+# editable cell: getter and setter
 class E:
-    """Editable cell: get() -> text, set_(text) -> bool (False = rejected)."""
     __slots__ = ("get", "set")
 
     def __init__(self, get, set_):
@@ -419,8 +625,8 @@ class E:
         return self.set(text)
 
 
+# editable cell with a fixed list of choices
 class Ch(E):
-    """Editable cell edited through a drop-down list; options() -> list of display strings."""
     __slots__ = ("options",)
 
     def __init__(self, get, set_, options):
@@ -428,8 +634,8 @@ class Ch(E):
         self.options = options
 
 
+# read-only cell
 class D:
-    """Read-only cell computed on every row refresh."""
     __slots__ = ("fn",)
 
     def __init__(self, fn):
@@ -440,7 +646,6 @@ class D:
 
 
 def _autohide(bar, show):
-    """yscroll/xscrollcommand that shows the scrollbar only when the content does not fit."""
     state = {"on": False}
 
     def setter(first, last):
@@ -455,9 +660,8 @@ def _autohide(bar, show):
     return setter
 
 
+# table with in-place cell editing
 class EditableGrid(ttk.Frame):
-    """Treeview with in-place editing (scrollbars only when needed).  columns = [(title, width[, anchor])];
-    rows = lists of str/int (static), E / Ch (editable) or D (dynamic read-only)."""
 
     def __init__(self, parent, columns, rows=(), height=12):
         super().__init__(parent)
@@ -502,7 +706,6 @@ class EditableGrid(ttk.Frame):
     def _refresh_row(self, i):
         self.tree.item(str(i), values=[self._display(c) for c in self.rows[i]])
 
-    # ----- editing -----
     def _on_double(self, ev):
         if self.tree.identify_region(ev.x, ev.y) != "cell":
             return
@@ -567,12 +770,11 @@ class EditableGrid(ttk.Frame):
             pass
 
     def _combo_lost(self, combo):
-        """The drop-down list steals the focus from the combobox: only give up when it is really gone."""
         if not (self._edit and self._edit[2] is combo):
             return
         try:
             focus = str(self.focus_get() or "")
-        except KeyError:                               # the popdown list
+        except KeyError:
             return
         if focus.startswith(str(combo)) or "popdown" in focus:
             return
@@ -610,8 +812,8 @@ class EditableGrid(ttk.Frame):
                 return
 
 
+# numeric or text entry bound to a save field
 class ValueEntry(ttk.Entry):
-    """Entry bound to an E cell; commits while typing, resyncs (clamped) on focus-out/Return."""
 
     def __init__(self, parent, cell, width=9, maxlen=None, upper=False, on_write=None,
                  justify="right"):
@@ -646,21 +848,16 @@ class ValueEntry(ttk.Entry):
         self.var.set(self._last)
 
 
-# =========================================================================== PANEL
 NOTE_FONT = ("Segoe UI", 9, "italic")
 H1_FONT = ("Segoe UI", 9, "bold")
 
 
 def _tl(key):
-    """Translated pipe-separated list."""
     return T(key).split("|")
 
 
+# main panel: toolbar, pages and save logic
 class SavegamePanel(ttk.Frame):
-    """Savegame editor panel.  API for the host:
-         set_dir(path)   list the .MAN files of a folder (does not open anything)
-         load_file(path) open a savegame (asks before discarding unsaved edits)
-         is_dirty() / confirm_discard() / save() / clear() / set_language(code)"""
 
     def __init__(self, parent, standalone=False, on_change=None):
         super().__init__(parent)
@@ -673,7 +870,7 @@ class SavegamePanel(ttk.Frame):
         self.mi = self.lg = self.md = self.cup = 0
         self.rec_club = None
         self._pages, self._page_by_path, self._group_inner = [], {}, {}
-        self._live = []                       # callbacks that refresh derived labels after every edit
+        self._live = []
         self._photos = {}
         if not standalone:
             _TR.set_language(i18n.current_language())
@@ -687,7 +884,6 @@ class SavegamePanel(ttk.Frame):
         self._build_notebook()
         self.clear()
 
-    # ------------------------------------------------------------------ setup
     def _configure_styles(self):
         st = ttk.Style(self)
         st.configure("Sub.TNotebook", background=BG)
@@ -775,7 +971,6 @@ class SavegamePanel(ttk.Frame):
         self._pages.append(page)
         self._page_by_path[str(host)] = page
 
-    # ------------------------------------------------------------------ language
     def set_language(self, code):
         if code == _TR.current_language() or not _TR.set_language(code):
             return False
@@ -797,7 +992,6 @@ class SavegamePanel(ttk.Frame):
         if self.standalone and _TR.current_language() in self._lang_codes:
             self.lang_combo.current(self._lang_codes.index(_TR.current_language()))
 
-    # ------------------------------------------------------------------ lazy pages
     def _current_page(self):
         try:
             top = self.nb.select()
@@ -836,7 +1030,6 @@ class SavegamePanel(ttk.Frame):
         page = self._page_by_path[str(host)]
         self.after_idle(lambda: self._build(page))
 
-    # ------------------------------------------------------------------ files
     def set_dir(self, directory):
         self.dir = os.path.abspath(directory) if directory else ""
         self.refresh_list()
@@ -931,7 +1124,7 @@ class SavegamePanel(ttk.Frame):
         self._set_status_key("status.none", MUTED)
         self._update_ui(keep_status=True)
 
-    # ------------------------------------------------------------------ saving
+    # verify, back up and write the save
     def save(self, save_as=False):
         sf = self.sf
         if not sf:
@@ -948,6 +1141,8 @@ class SavegamePanel(ttk.Frame):
             return False
         made_backup = False
         try:
+            # mark every manager edited in this session
+            sf.mark(sorted(getattr(sf, "touched", set()) | {self.mi}))
             data = sf.encode()
             check, _ = SaveFile._decode(data)
             if (bytes(check[:CHK1]) != bytes(sf.buf[:CHK1])
@@ -988,6 +1183,17 @@ class SavegamePanel(ttk.Frame):
         parts = []
         if self.dir:
             parts.append(f"({self.dir})")
+        if self.sf:
+            def tx(k, d):
+                t = T(k)
+                return d if t == k else t
+            ver = self.sf.version_name
+            parts.append(f"{tx('info.version', 'Versione')}: {ver or tx('info.unknown', 'sconosciuta')}")
+            if self.sf.is_marked():
+                n = self.sf.mark_copies()
+                g = self.sf.cheater_present()
+                extra = f" [{n}/{len(MARK_OFFS)}" + (f" + {tx('info.ingame', 'in-game')}]" if g else "]")
+                parts.append(tx("info.edited", "MODIFICATO CON L'EDITOR") + extra)
         if st_text:
             parts.append(st_text)
         self.info_label.config(text=" – ".join(parts), foreground=color)
@@ -998,11 +1204,14 @@ class SavegamePanel(ttk.Frame):
         if loaded and self.sf.dirty and not keep_status:
             self._set_status_key("status.dirty", ERR)
 
+    # remember the edited manager and refresh live widgets
     def _changed(self):
+        if self.sf is not None:
+            self.sf.touched = getattr(self.sf, "touched", set()) | {self.mi}
         for fn in list(self._live):
             try:
                 fn()
-            except tk.TclError:                # widget destroyed with its page
+            except tk.TclError:
                 self._live.remove(fn)
         self._update_ui()
         if self.on_change:
@@ -1094,14 +1303,12 @@ class SavegamePanel(ttk.Frame):
         return cb
 
     def _live_label(self, parent, fn, **kw):
-        """Read-only label whose text is fn(), refreshed after every edit."""
         lab = ttk.Label(parent, **kw)
         lab.config(text=fn())
         self._live.append(lambda: lab.config(text=fn()))
         return lab
 
     def _hexrun(self, off, n):
-        """Editable cell for n raw bytes shown as hex (e.g. '73 94 81')."""
         def get():
             return " ".join(f"{x:02X}" for x in self.sf.buf[off:off + n])
 
@@ -1173,7 +1380,6 @@ class SavegamePanel(ttk.Frame):
         cb.bind("<<ComboboxSelected>>", picked)
         return bar
 
-    # =================================================================== PAGES: Manager
     def _pg_profile(self, host):
         sf, o = self.sf, self._mo()
         body = self._scroll_page(host)
@@ -1192,7 +1398,8 @@ class SavegamePanel(ttk.Frame):
         def club_picked(_e):
             v = ids[cb.current()]
             sf.wr(o + 30, "u8", v)
-            sf.wr(o + 312, "u8", 0 if v < 18 else 1 if v < 38 else 2)
+            first_end = sf.league_team_count
+            sf.wr(o + 312, "u8", 0 if v < first_end else 1 if v < first_end + 20 else 2)
             self._changed()
             for w in league_holder:
                 w.refresh()
@@ -1262,7 +1469,6 @@ class SavegamePanel(ttk.Frame):
         mgmt = self._labeled(body, T("prof.mgmt"), row=0, column=1, sticky="nsew", padx=(5, 10), pady=(10, 5))
         items = list(zip(_tl("prof.mgmt_items"), (305, 319, 321, 322, 323, 324, 317, 314,
                                                   325, 326, 327, 328, 329)))
-        # posizione (1-13) -> (riga, colonna): sx 3,4,5,6,9 | dx 10,11,12,13 | piu' in basso 1,2 / 7,8
         place = {3: (0, 0), 4: (1, 0), 5: (2, 0), 6: (3, 0), 9: (4, 0),
                  10: (0, 1), 11: (1, 1), 12: (2, 1), 13: (3, 1),
                  1: (6, 0), 2: (6, 1), 7: (7, 0), 8: (7, 1)}
@@ -1320,7 +1526,7 @@ class SavegamePanel(ttk.Frame):
         bil = ttk.LabelFrame(left, text=T("hist.balance"), padding=8)
         bil.pack(fill="x", pady=(10, 0))
         labs = _tl("hist.balance_items")
-        labs = labs + ["Games played", "Points conceded (2G-Pts)"][max(0, len(labs) - 6):]   # fallback for older language files
+        labs = labs + ["Games played", "Points conceded (2G-Pts)"][max(0, len(labs) - 6):]
         rows = [[lab, self._num(o + x, "u16"), self._num(o + x + 2, "u16")]
                 for lab, x in zip(labs[:6], (420, 424, 428, 440, 444, 448))]
         rows.append([labs[6], self._num(o + 436, "u16"), self._num(o + 438, "u16")])
@@ -1376,17 +1582,18 @@ class SavegamePanel(ttk.Frame):
         self._field(ch, 0, "+478", self._num_field(ch, o + 478, "u16", width=6), col=1)
         self._note(body, T("stats.note")).pack(anchor="w", padx=10, pady=(2, 10))
 
-    # =================================================================== PAGES: Squadra
+    # squad page, the cheater row is hidden
     def _pg_squad(self, host):
         sf = self.sf
         rows, slots = [], []
         for i in range(25):
             b = LB + 52 * (self.mi * 25 + i)
             pi = sf.buf[b + 15]
-            if not pi:
+            if not pi or sf.is_cheater_slot(b):
                 continue
             pb = PB + 37 * pi
             slots.append(b)
+            # columns: stats, wage, cards, season counters, records, unknown bytes
             rows.append([sf.get_str(pb, 26), D(lambda pb=pb: pos4(self.sf.buf[pb + 31])),
                          self._num(b + 10), self._num(b + 16), self._num(b + 17), self._num(b + 18),
                          self._num(b + 19), self._num(b + 40, "i32"), self._num(b + 11),
@@ -1401,7 +1608,7 @@ class SavegamePanel(ttk.Frame):
         widths = (200, 55, 50, 55, 55, 60, 65, 90, 60, 60, 55, 55, 55, 55)
         xc = _tl("squad.extra_cols")
         grid = EditableGrid(host, [(c[0], widths[0], "w")] + [(t, w) for t, w in zip(c[1:], widths[1:])]
-                            + [(t, 58) for t in xc], rows, height=14)
+                            + [(t, 72) for t in xc], rows, height=14)
 
         def all99():
             for b in slots:
@@ -1422,6 +1629,7 @@ class SavegamePanel(ttk.Frame):
         grid.pack(fill="both", expand=True, padx=10, pady=(0, 6))
         self._note(host, T("squad.note") + " " + T("squad.extra_note")).pack(anchor="w", padx=10, pady=(0, 8))
 
+    # all players of the save
     def _pg_players(self, host):
         sf = self.sf
         club_ids = sorted({sf.buf[PB + 37 * i + 36] for i in range(151) if sf.buf[PB + 37 * i]})
@@ -1463,13 +1671,14 @@ class SavegamePanel(ttk.Frame):
         cb.bind("<<ComboboxSelected>>", draw)
         draw()
 
+    # transfer list slots
     def _pg_market(self, host):
         sf = self.sf
         rows = []
         for i in range(100, 125):
             b = LB + 52 * i
             pi = sf.buf[b + 15]
-            if not pi:
+            if not pi or sf.is_cheater_slot(b):
                 continue
             pb = PB + 37 * pi
             rows.append([i, sf.get_str(pb, 26), D(lambda pb=pb: pos4(self.sf.buf[pb + 31])),
@@ -1484,7 +1693,6 @@ class SavegamePanel(ttk.Frame):
                      rows, height=12).pack(fill="both", expand=True, padx=10, pady=(0, 6))
         self._note(host, T("mk.note")).pack(anchor="w", padx=10, pady=(0, 8))
 
-    # =================================================================== PAGES: Economia
     def _pg_stadium(self, host):
         o = self._mo()
         body = self._scroll_page(host)
@@ -1526,7 +1734,6 @@ class SavegamePanel(ttk.Frame):
         self._field(aff, 1, T("std.avg_att"), self._live_label(aff, avg_att), col=1)
 
     def _choice_cell(self, off, labels, base):
-        """Cella di tabella che mostra l'etichetta di un valore a un byte (accetta etichetta o numero)."""
         buf = self.sf.buf
 
         def get():
@@ -1545,7 +1752,6 @@ class SavegamePanel(ttk.Frame):
         return E(get, set_)
 
     def _loan_date(self, b_day, b_year):
-        """Cella data gg/mm/aaaa di un prestito: giorno a b_day, mese (0-11) a b_day+2, anno u16 a b_year."""
         buf = self.sf.buf
 
         def get():
@@ -1575,7 +1781,7 @@ class SavegamePanel(ttk.Frame):
         o = self._mo()
         rows = []
         mi = self.mi
-        others = [k for k in range(self.sf.n_managers) if k != mi]     # prestatori: gli altri manager, in ordine
+        others = [k for k in range(self.sf.n_managers) if k != mi]
 
         def lender(g):
             if g == 0:
@@ -1634,10 +1840,9 @@ class SavegamePanel(ttk.Frame):
                      height=10).pack(anchor="w")
         self._note(body, T("sp.note")).pack(anchor="w", padx=10, pady=(2, 10))
 
-    # =================================================================== PAGES: Campionato
     def _pg_standings(self, host):
         sf = self.sf
-        a, b = ((0, 18), (18, 38), (38, 58))[self.lg]
+        a, b = sf.league_club_range(self.lg)
         recs = []
         for i in range(a, b):
             o = 12357 + 54 * i
@@ -1661,7 +1866,7 @@ class SavegamePanel(ttk.Frame):
 
     def _pg_results(self, host):
         lg = self.lg
-        n, per = (38, 10) if lg else (34, 9)
+        n, per = ((34, 9) if self.sf.league_team_count == 18 else (38, 10)) if lg == 0 else (38, 10)
         self.md = min(self.md, n - 1)
         bar = self._league_bar(host)
         ms = ttk.Combobox(bar, values=[T("res.round", n=d + 1) for d in range(n)], state="readonly", width=14)
@@ -1689,7 +1894,8 @@ class SavegamePanel(ttk.Frame):
             self._field(lf, 1 + i, T("cal.next", n=i + 1), self._num_field(lf, 28432 + i, width=6))
         bar = self._league_bar(body)
         ttk.Label(bar, text=T("cal.matches"), foreground=MUTED).pack(side="left", padx=6)
-        f, n = ((0, 9), (20, 10), (40, 10))[self.lg]
+        f = 20 * self.lg
+        n = self.sf.league_team_count // 2 if self.lg == 0 else 10
         rows = [[k + 1, self._club_cell(27900 + f + 2 * k), self._club_cell(27901 + f + 2 * k)]
                 for k in range(n)]
         EditableGrid(body, [("#", 40), (T("c.home_team"), 250, "w"), (T("c.away_team"), 250, "w")],
@@ -1700,7 +1906,6 @@ class SavegamePanel(ttk.Frame):
         self._value_grid(pf, 28244 + 20 * self.lg, 20, 10).pack(anchor="w")
         self._note(body, T("cal.perm_note")).pack(anchor="w", padx=10, pady=(2, 10))
 
-    # =================================================================== PAGES: Coppe
     def _pg_cup_state(self, host):
         body = self._scroll_page(host)
         cups = _tl("lists.cups")
@@ -1749,7 +1954,6 @@ class SavegamePanel(ttk.Frame):
         self._value_grid(lf, 28137, 96, 16).pack(anchor="w")
         self._note(body, T("cup.note")).pack(anchor="w", padx=10, pady=(2, 10))
 
-    # =================================================================== PAGES: Club
     def _pg_clubs(self, host):
         sf = self.sf
         bar = ttk.Frame(host)
@@ -1776,7 +1980,12 @@ class SavegamePanel(ttk.Frame):
             count.config(text=T("cl.count", n=len(rows)))
         q.trace_add("write", draw)
         draw()
-        self._note(host, T("cl.note")).pack(anchor="w", padx=10, pady=(0, 8))
+        note = T("cl.note")
+        if sf.league_team_count == 20:
+            for old, new in (("0–17", "0–19"), ("18–37", "20–39"), ("38–57", "40–59"),
+                             ("0-17", "0-19"), ("18-37", "20-39"), ("38-57", "40-59")):
+                note = note.replace(old, new)
+        self._note(host, note).pack(anchor="w", padx=10, pady=(0, 8))
 
     def _pg_ext_standings(self, host):
         sf = self.sf
@@ -1792,9 +2001,7 @@ class SavegamePanel(ttk.Frame):
         EditableGrid(host, cols, rows, height=20).pack(fill="both", expand=True, padx=10, pady=(10, 6))
         self._note(host, T("xs.note")).pack(anchor="w", padx=10, pady=(0, 8))
 
-    # =================================================================== PAGE: Opzioni di gioco
     def _pg_options(self, host):
-        """Pannello OPZIONI del gioco: 15 interruttori ATT/DIS (byte 33447-33461) e velocita' (byte 34222)."""
         def tx(key, default):
             t = T(key)
             return default if t == key else t
@@ -1819,7 +2026,7 @@ class SavegamePanel(ttk.Frame):
         for r, name in enumerate(items):
             ttk.Label(lf, text=name).grid(row=1 + r, column=0, sticky="w", padx=(0, 10))
             for c in range(3):
-                check(lf, 33447 + 3 * c + r, 1 + r, 1 + c)          # ordine in file: per serie, poi per voce
+                check(lf, 33447 + 3 * c + r, 1 + r, 1 + c)
         of = ttk.LabelFrame(body, text=tx("opt.other", "Altre opzioni"), padding=8)
         of.pack(fill="x", padx=10, pady=5)
         for k, name in enumerate(others):
@@ -1892,7 +2099,6 @@ class SavegamePanel(ttk.Frame):
         EditableGrid(host, cols, rows, height=18).pack(fill="both", expand=True, padx=10, pady=10)
         self._note(host, T("vs.note")).pack(anchor="w", padx=10, pady=(0, 8))
 
-    # =================================================================== PAGES: Messaggi
     def _pg_messages(self, host):
         sf = self.sf
         msgs = sf.read_messages()
@@ -1921,12 +2127,12 @@ class SavegamePanel(ttk.Frame):
         self._note(body, T("msg.note")).pack(anchor="w", padx=10, pady=(10, 10))
 
 
-# =================================================================== STANDALONE
 def _resource_path(rel):
     base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base, rel)
 
 
+# pick the UI language from the system locale
 def _guess_language():
     import locale
     try:
@@ -1941,6 +2147,7 @@ def _guess_language():
     return "en"
 
 
+# program entry point
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     root = tk.Tk()
