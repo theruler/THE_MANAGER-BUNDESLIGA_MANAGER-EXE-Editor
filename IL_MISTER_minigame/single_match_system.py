@@ -140,7 +140,7 @@ class SingleMatchMixin: # Team / formation / roster selection for the quick matc
     # ---------- drawing ----------
     def draw_single_match(self, s, bd, hits, vx, vy): # Team / formation / roster screen of the single match.
         W = SU_W # The page background is the 22.CP picture (draw_intro); the surface is transparent.
-        self._put(tr("menu.quick_match"), 56, (232, 236, 255), 26, cx=W // 2, shadow=True)
+        self._put_normal(tr("menu.quick_match"), 48, (232, 236, 255), 26, cx=W // 2, shadow=True)
         self._put(tr("intro.subtitle"), 15, (205, 215, 235), 58, cx=W // 2, w=W - 300, shadow=True)
         self.back_button_br(s, hits, vx, vy) # Framed INDIETRO picture, always in the bottom right corner.
         names_ctl = (tr("intro.team_home"), tr("intro.team_away"))

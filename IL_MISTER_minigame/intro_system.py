@@ -206,6 +206,22 @@ class IntroMixin: # Main menu, OPTIONS, joypad mapping and intro input dispatch.
             bd.put(self.su_surf, bd.font(px).render(txt, True, (0, 0, 0)), left=None if left is None else left + o, cx=None if cx is None else cx + o, cy=cy + o)
         bd.put(self.su_surf, bd.font(px).render(txt, True, col), left=left, cx=cx, cy=cy)
 
+    def _put_normal(self, txt, px, col, cy, left=None, cx=None, w=None, shadow=None): # Text with NORMAL.FON (16 rows, uppercase): the scale follows the requested height px and shrinks until the text fits w.
+        if FONTS.normal is None: # Font file missing: fall back to the scoreboard font.
+            return self._put(txt, px, col, cy, left=left, cx=cx, w=w, shadow=shadow)
+        bd = self.board
+        scale = max(1, int(round(px / 16.0)))
+        f = FONTS.normal_font(scale)
+        while w is not None and scale > 1 and f.size(txt)[0] > w:
+            scale -= 1
+            f = FONTS.normal_font(scale)
+        if w is not None:
+            txt = bd.fit(txt, f, w)
+        if self._txt_shadow if shadow is None else shadow:
+            o = 1 + scale // 2
+            bd.put(self.su_surf, f.render(txt, True, (0, 0, 0)), left=None if left is None else left + o, cx=None if cx is None else cx + o, cy=cy + o)
+        bd.put(self.su_surf, f.render(txt, True, col), left=left, cx=cx, cy=cy)
+
     def _put_right(self, txt, px, col, cy, right, w, shadow=None): # Text ending at x = right.
         txt = self.fit_text(txt, px, w)
         self._put(txt, px, col, cy, left=right - self.board.font(px).size(txt)[0], shadow=shadow)
@@ -419,7 +435,8 @@ class IntroMixin: # Main menu, OPTIONS, joypad mapping and intro input dispatch.
         W = SU_W
         x_lab, x_chip, y = 60, 450, 120
 
-        def label(text, yy, px=28, left=None, cx=None, y_offset=14):
+        def label(text, yy, px=28, left=None, cx=None, y_offset=14, normal=False):
+            put = self._put_normal if normal else self._put
             if cx is not None:
                 shadow_pos = {"cx": cx + 3}
                 text_pos = {"cx": cx}
@@ -428,10 +445,10 @@ class IntroMixin: # Main menu, OPTIONS, joypad mapping and intro input dispatch.
                 shadow_pos = {"left": left + 3}
                 text_pos = {"left": left}
 
-            self._put(text, px, (0, 0, 0), yy + y_offset + 3, **shadow_pos)
-            self._put(text, px, OPT_WHITE, yy + y_offset, **text_pos)
+            put(text, px, (0, 0, 0), yy + y_offset + 3, **shadow_pos)
+            put(text, px, OPT_WHITE, yy + y_offset, **text_pos)
 
-        label(tr("intro.options_title"), 40, 46, cx=W // 2, y_offset=0)
+        label(tr("intro.options_title"), 40, 48, cx=W // 2, y_offset=0, normal=True)
         self.back_button(s, hits, vx, vy, 30, 8, 2)
 
         # Options panel: position and dimensions.

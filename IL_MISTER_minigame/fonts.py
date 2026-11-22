@@ -8,13 +8,17 @@ import unicodedata
 import pygame
 
 
-FONT_ROWS = {"MICRO4.FON": 6, "FLOW.FON": 8} # Glyph row counts used to decode the supported bitmap fonts.
+FONT_ROWS = {"MICRO4.FON": 6, "FLOW.FON": 8, "NORMAL.FON": 16} # Glyph row counts used to decode the supported bitmap fonts.
 FONT_CODES = {  # Character codes supported by the built-in bitmap fonts.
     "MICRO4.FON": list(range(0x20, 0x60)) + list(range(0x61, 0x7F)),
     "FLOW.FON": [0x20, 0x21, 0x22, 0x24, 0x25, 0x27, 0x28, 0x29] + list(range(0x2A, 0x40)) + list(range(0x41, 0x5F)) + list(range(0x61, 0x7F)),
+    # NORMAL.FON: 44 glyphs, 16 rows, uppercase only. Order in the file: space, '-', '.', 0-9, ':', A-Z,
+    # then the accented/special glyphs (I-grave, A-grave, O-grave, degree sign) mapped like the other fonts.
+    "NORMAL.FON": [0x20, 0x2D, 0x2E] + list(range(0x30, 0x3B)) + list(range(0x41, 0x5B)) + [0x5B, 0x2A, 0x7D, 0x7E],
 }
+UPPERCASE_ONLY = {"NORMAL.FON"} # Fonts without lowercase glyphs: text is upper-cased before lookup.
 _ACC = {"7e": "\u00b0", "24": "\u20ac", "5b": "\u00ec", "5d": "\u00e9", "7b": "\u00e8", "7c": "\u00f9", "7d": "\u00f2", "2a": "\u00e0"} # Built-in substitutions for glyphs unsupported by the bitmap font.
-DEFAULT_CHARMAPS = {"MICRO4.FON": dict(_ACC), "FLOW.FON": dict(_ACC)} # Default character remappings applied to bitmap-font data.
+DEFAULT_CHARMAPS = {"MICRO4.FON": dict(_ACC), "FLOW.FON": dict(_ACC), "NORMAL.FON": dict(_ACC)} # Default character remappings applied to bitmap-font data.
 CHARMAP_GAME = "BUNDESLIGA MANAGER PROFESSIONAL" # Game edition whose character map is used for localized text.
 CHAR_FALLBACK = {"|": "/", "{": "(", "}": ")", "~": "-", "[": "(", "]": ")", "*": "+", "$": "S", "#": "+", "&": "+", "@": "a", # Fallback substitutions for characters missing from the bitmap font.
                  "_": "-", "`": "'", "\\": "/", "^": "'", "\u00df": "s", "\u00e6": "a", "\u00f8": "o", "\u0153": "o",
@@ -59,6 +63,12 @@ class BitmapFont: # Legacy bitmap-font decoding and text rendering.
         raw = parse_fon(path, self.rows, FONT_CODES[name])
         self.rev = {ch: int(b, 16) for b, ch in charmap.items()}
         self.remap = {int(b, 16) for b in charmap}
+        self.upper_only = name in UPPERCASE_ONLY
+        if self.upper_only: # Accented lowercase mappings also serve their uppercase form (e.g. "\u00e0" -> "\u00c0").
+            for ch, c in list(self.rev.items()):
+                u = ch.upper()
+                if len(u) == 1:
+                    self.rev.setdefault(u, c)
         self.glyphs = {}
         for code, (w, bits, bpr) in raw.items():
             surf = pygame.Surface((max(1, w), self.rows), pygame.SRCALPHA)
@@ -77,6 +87,9 @@ class BitmapFont: # Legacy bitmap-font decoding and text rendering.
         c = self._lut.get(ch)
         if c is not None:
             return c
+        orig = ch
+        if self.upper_only and len(ch.upper()) == 1:
+            ch = ch.upper()
         c = self.rev.get(ch)
         if c is None or c not in self.glyphs:
             o = ord(ch)
@@ -87,13 +100,15 @@ class BitmapFont: # Legacy bitmap-font decoding and text rendering.
                 if alt is None:
                     base = unicodedata.normalize("NFD", ch)[0]
                     alt = base if base != ch else None
+                if alt is not None and self.upper_only and len(alt.upper()) == 1:
+                    alt = alt.upper()
                 c = None
                 if alt is not None:
                     ao = ord(alt)
                     c = ao if (ao in self.glyphs and ao not in self.remap) else self.rev.get(alt)
                 if c is None or c not in self.glyphs:
                     c = 0x3F if 0x3F in self.glyphs else 0x20
-        self._lut[ch] = c
+        self._lut[orig] = c
         return c
 
     def _glyph(self, code, scale): # Rasterize a single glyph at the requested scale.
@@ -143,13 +158,13 @@ class FontBank: # Loading and caching of bitmap and modern fonts.
     SMALL_MAX_PX = 23
 
     def __init__(self): # Initialize the bitmap-font registry and modern-font cache.
-        self.micro = self.flow = None
+        self.micro = self.flow = self.normal = None
         self.modern = False
         self._px = {}
 
     def load(self, dirs): # Load supported bitmap fonts from the resource directories.
         maps = _read_charmaps(dirs)
-        for attr, name in (("micro", "MICRO4.FON"), ("flow", "FLOW.FON")):
+        for attr, name in (("micro", "MICRO4.FON"), ("flow", "FLOW.FON"), ("normal", "NORMAL.FON")):
             for d in dirs:
                 p = os.path.join(d, name) if d else None
                 if p and os.path.isfile(p):
@@ -160,6 +175,16 @@ class FontBank: # Loading and caching of bitmap and modern fonts.
                         continue
         self._px.clear()
         return self.micro is not None and self.flow is not None
+
+    def bitmap(self, name): # Return a loaded BitmapFont by file name (None if not loaded).
+        return {"MICRO4.FON": self.micro, "FLOW.FON": self.flow, "NORMAL.FON": self.normal}.get(name)
+
+    def normal_font(self, scale=1): # Return a cached 16-row uppercase bitmap font (NORMAL.FON).
+        key = ("n", scale)
+        f = self._px.get(key)
+        if f is None:
+            f = self._px[key] = ScaledFont(self.normal, scale)
+        return f
 
     def small(self, scale=1): # Return a cached compact bitmap font.
         key = ("m", scale)

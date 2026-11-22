@@ -1080,9 +1080,9 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
         hub = self.champ_view != "setup" and not (self.champ_view == "slots" or self.champ is None)
         if not hub: # The hub has no title and no top rule: its space goes to the tables.
             if self.champ_view == "setup":
-                self._put(ctr("title"), 46, WHITE, 40, cx=30 + 495 + 232, w=465) # The top left belongs to the SERIE A / B / C buttons.
+                self._put_normal(ctr("title"), 48, WHITE, 40, cx=30 + 495 + 232, w=465) # The top left belongs to the SERIE A / B / C buttons.
             else: # The slots page has the label of the slots instead of the title.
-                self._put(ctr("slots_title"), 46, WHITE, 40, cx=W // 2, w=W - 60, shadow=True)
+                self._put_normal(ctr("slots_title"), 48, WHITE, 40, cx=W // 2, w=W - 60, shadow=True)
                 pygame.draw.line(s, RULE, (30, 94), (W - 30, 94), 2)
             self.back_button_br(s, hits, vx, vy)
         if self.champ_view == "setup":
@@ -1325,7 +1325,7 @@ class ChampionshipMixin: # Class attributes give the defaults, so Game.__init__ 
             f = lambda p: max(16, int(sh.h * p))
             # Percentuali ridotte per spostare le label più in alto
             self._put(tr("champ.wd.%d" % d.weekday()), f(0.22), BANNER_INK, sh.y + sh.h * 15 // 100, cx=cx, w=sh.w - 12, shadow=True)
-            self._put("%d." % d.day, f(0.50), BANNER_INK, sh.y + sh.h * 45 // 100, cx=cx, w=sh.w - 12, shadow=True)
+            self._put_normal("%d" % d.day, f(0.32), BANNER_INK, sh.y + sh.h * 45 // 100, cx=cx, w=sh.w - 12, shadow=True)
             self._put(tr("champ.mo.%d" % d.month), f(0.22), BANNER_INK, sh.y + sh.h * 70 // 100, cx=cx, w=sh.w - 1, shadow=True)
             self._put(str(d.year), f(0.22), BANNER_INK, sh.y + sh.h * 90 // 100, cx=cx, w=sh.w - 12, shadow=True)
         else:
