@@ -8,11 +8,12 @@ import traceback
 import zlib
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from tkinter import font as tkfont
 from PIL import Image, ImageTk
 
 import i18n
 
-APP_TITLE = "BMP / THE MANAGER Savegame Editor v1.0.8"
+APP_TITLE = "BMP / THE MANAGER Savegame Editor v1.0.15"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
 
 def _hex_palette(s: str, scale: int = 1) -> list[tuple[int, int, int]]:
@@ -225,8 +226,8 @@ def _fp_lists():
     return out
 
 # struct formats and value limits per field type
-_FMT = {"u8": "<B", "i16": "<h", "u16": "<H", "i32": "<i"}
-_LIMITS = {"u8": (0, 255), "i16": (-32768, 32767), "u16": (0, 65535), "i32": (-2 ** 31, 2 ** 31 - 1)}
+_FMT = {"u8": "<B", "i8": "<b", "i16": "<h", "u16": "<H", "i32": "<i", "u32": "<I"}
+_LIMITS = {"u8": (0, 255), "i8": (-128, 127), "i16": (-32768, 32767), "u16": (0, 65535), "i32": (-2 ** 31, 2 ** 31 - 1), "u32": (0, 2 ** 32 - 1)}
 
 
 class SaveError(Exception):
@@ -547,10 +548,10 @@ def apply_editor_style(root):
     style.configure("TButton", font=("Segoe UI", 9, "bold"), padding=6, background="#3498DB",
                     foreground="white", borderwidth=0)
     style.map("TButton", background=[("active", "#2980B9"), ("disabled", "#BDC3C7")])
-    style.configure("Treeview", font=("Consolas", 10), rowheight=28, background="white",
+    style.configure("Treeview", font=("Consolas", 9), rowheight=25, background="white",
                     fieldbackground="white", foreground=FG, borderwidth=0)
-    style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"), background="#EAECEE",
-                    foreground=FG, padding=6)
+    style.configure("Treeview.Heading", font=("Segoe UI", 7, "bold"), background="#EAECEE",
+                    foreground=FG, padding=(2, 7), anchor="center")
     style.map("Treeview", background=[("selected", "#2980B9")], foreground=[("selected", "white")])
     style.configure("TNotebook.Tab", font=("Segoe UI", 9), padding=(10, 3))
     style.map("TNotebook.Tab", font=[("selected", ("Segoe UI", 9, "bold"))],
@@ -663,28 +664,179 @@ def _autohide(bar, show):
 # table with in-place cell editing
 class EditableGrid(ttk.Frame):
 
-    def __init__(self, parent, columns, rows=(), height=12):
+    def __init__(self, parent, columns, rows=(), height=12, tips=None):
         super().__init__(parent)
-        ids = [f"c{i}" for i in range(len(columns))]
-        self.tree = ttk.Treeview(self, columns=ids, show="headings", height=height,
-                                 selectmode="browse")
-        for cid, spec in zip(ids, columns):
-            self.tree.heading(cid, text=spec[0])
-            self.tree.column(cid, width=spec[1], minwidth=30,
+        self.columns = list(columns)
+        self.headings = [str(spec[0]) for spec in self.columns]
+        self.tips = list(tips or ())
+        self.header_font = tkfont.Font(root=self, family="Segoe UI", size=7, weight="bold")
+        try:
+            style = ttk.Style(self)
+            value_font = style.lookup("Treeview", "font") or "TkDefaultFont"
+            self.value_font = tkfont.Font(root=self, font=value_font)
+        except (tk.TclError, TypeError):
+            self.value_font = tkfont.Font(root=self, family="TkDefaultFont", size=9)
+        # Width measurements are reused when rows refresh or cells are edited.
+        # The two fonts are fixed for the lifetime of this grid.
+        self._measure_cache = {"header": {}, "value": {}}
+
+        line_space = self.header_font.metrics("linespace")
+        max_lines = max((len(label.splitlines()) or 1 for label in self.headings), default=1)
+        self.header_height = max(28, line_space * max_lines + 10)
+        self.header = tk.Canvas(self, height=self.header_height, width=300,
+                                background="#EAECEE", highlightthickness=0, bd=0)
+        self.header.grid(row=0, column=0, sticky="ew")
+        self._tip_job = None
+        self._tip_window = None
+        self._header_tip_ranges = []
+        self._hover_tip_index = None
+        self.header.bind("<Motion>", self._on_header_motion)
+        self.header.bind("<Leave>", self._hide_tip)
+
+        ids = [f"c{i}" for i in range(len(self.columns))]
+        self.tree = ttk.Treeview(self, columns=ids, show="", height=height, selectmode="browse")
+        for cid, spec in zip(ids, self.columns):
+            self.tree.column(cid, width=max(36, int(spec[1])), minwidth=36,
                              anchor=spec[2] if len(spec) > 2 else "center", stretch=False)
-        self.tree.grid(row=0, column=0, sticky="nsew")
+        self.tree.grid(row=1, column=0, sticky="nsew")
         vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(self, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=_autohide(vsb, lambda: vsb.grid(row=0, column=1, sticky="ns")),
-                            xscrollcommand=_autohide(hsb, lambda: hsb.grid(row=1, column=0, sticky="ew")))
-        self.rowconfigure(0, weight=1)
+        auto_yset = _autohide(vsb, lambda: vsb.grid(row=1, column=1, sticky="ns"))
+        auto_xset = _autohide(hsb, lambda: hsb.grid(row=2, column=0, sticky="ew"))
+
+        def sync_xview(first, last):
+            auto_xset(first, last)
+            self.header.xview_moveto(first)
+
+        self.tree.configure(
+            yscrollcommand=auto_yset,
+            xscrollcommand=sync_xview)
+        self.rowconfigure(1, weight=1)
         self.columnconfigure(0, weight=1)
         self._edit = None
         self.rows = []
         self.tree.bind("<Double-1>", self._on_double)
         self.tree.bind("<Return>", self._on_return)
         self.tree.bind("<F2>", self._on_return)
+        self.bind("<Destroy>", self._on_destroy, add="+")
         self.set_rows(rows)
+
+    def _fit_columns(self):
+        """Fit each column to its widest heading line or displayed cell value."""
+        widths = []
+        header_cache = self._measure_cache["header"]
+        value_cache = self._measure_cache["value"]
+
+        def measure(font, cache, text):
+            text = str(text)
+            width = cache.get(text)
+            if width is None:
+                try:
+                    width = font.measure(text)
+                except (tk.TclError, TypeError):
+                    width = len(text) * 8
+                cache[text] = width
+            return width
+
+        for col, label in enumerate(self.headings):
+            heading_width = max((measure(self.header_font, header_cache, line)
+                                 for line in (label.splitlines() or [label])), default=0)
+            value_width = 0
+            for row in self.rows:
+                if col < len(row):
+                    value_width = max(value_width, measure(self.value_font, value_cache,
+                                                           self._display(row[col])))
+            # Widths are content-driven: the old design-time width is only a
+            # fallback for the initial Treeview construction, not a minimum.
+            widths.append(max(36, heading_width, value_width) + 18)
+
+        self.column_widths = widths
+        total_width = sum(widths)
+        self.header.delete("all")
+        self._header_tip_ranges = []
+        x = 0
+        for i, (label, width, spec) in enumerate(zip(self.headings, widths, self.columns)):
+            tip_text = spec[3] if len(spec) > 3 else (self.tips[i] if i < len(self.tips) else "")
+            if not tip_text:
+                tip_text = T("tip.generic", label=label.replace("\n", " "))
+            tag = f"header_{i}"
+            self.header.create_rectangle(x, 0, x + width, self.header_height,
+                                         fill="#EAECEE", outline="#B8BDC2", tags=(tag,))
+            self.header.create_text(x + width / 2, self.header_height / 2,
+                                    text=label, width=max(20, width - 8),
+                                    justify="center", anchor="center",
+                                    font=self.header_font, fill=FG, tags=(tag,))
+            self._header_tip_ranges.append((x, x + width, tip_text))
+            self.tree.column(f"c{i}", width=width, minwidth=width, stretch=False)
+            x += width
+
+        # Keep the Canvas viewport tied to the visible table width. Setting its
+        # widget width to total_width makes Tk request the entire virtual width
+        # from its parent and can make wide tables expand the whole window.
+        self.header.configure(scrollregion=(0, 0, total_width, self.header_height))
+
+    def _schedule_tip(self, event, text):
+        self._cancel_tip_job()
+        self._close_tip_window()
+        x, y = event.x_root + 14, event.y_root + 18
+        self._tip_job = self.after(450, self._show_tip, text, x, y)
+
+    def _on_header_motion(self, event):
+        x = self.header.canvasx(event.x)
+        for i, (left, right, text) in enumerate(self._header_tip_ranges):
+            if left <= x < right:
+                if i != self._hover_tip_index:
+                    self._hover_tip_index = i
+                    self._schedule_tip(event, text)
+                return
+        self._hide_tip()
+
+    def _show_tip(self, text, x, y):
+        self._tip_job = None
+        if not self.winfo_exists() or not text:
+            return
+        try:
+            tip = tk.Toplevel(self)
+            tip.wm_overrideredirect(True)
+            tip.configure(background="#6B737B")
+            label = tk.Label(
+                tip, text=text, justify="left", anchor="w", wraplength=390,
+                padx=9, pady=6, background="#FFFBEA", foreground="#20252A",
+                font=("Segoe UI", 9), relief="solid", borderwidth=1)
+            label.pack(padx=1, pady=1)
+            tip.update_idletasks()
+            sw, sh = tip.winfo_screenwidth(), tip.winfo_screenheight()
+            x = min(x, max(4, sw - tip.winfo_width() - 8))
+            y = min(y, max(4, sh - tip.winfo_height() - 8))
+            tip.geometry(f"+{max(4, x)}+{max(4, y)}")
+            self._tip_window = tip
+        except tk.TclError:
+            self._tip_window = None
+
+    def _cancel_tip_job(self):
+        if self._tip_job is not None:
+            try:
+                self.after_cancel(self._tip_job)
+            except tk.TclError:
+                pass
+            self._tip_job = None
+
+    def _hide_tip(self, _event=None):
+        self._cancel_tip_job()
+        self._close_tip_window()
+        self._hover_tip_index = None
+
+    def _close_tip_window(self):
+        if self._tip_window is not None:
+            try:
+                self._tip_window.destroy()
+            except tk.TclError:
+                pass
+            self._tip_window = None
+
+    def _on_destroy(self, event):
+        if event.widget is self:
+            self._hide_tip()
 
     @staticmethod
     def _display(cell):
@@ -698,10 +850,14 @@ class EditableGrid(ttk.Frame):
         self.tree.delete(*self.tree.get_children())
         for i, row in enumerate(self.rows):
             self.tree.insert("", "end", iid=str(i), values=[self._display(c) for c in row])
+        self._fit_columns()
+        self.tree.xview_moveto(0)
+        self.header.xview_moveto(0)
 
     def refresh_all(self):
         for i in range(len(self.rows)):
             self._refresh_row(i)
+        self._fit_columns()
 
     def _refresh_row(self, i):
         self.tree.item(str(i), values=[self._display(c) for c in self.rows[i]])
@@ -741,7 +897,7 @@ class EditableGrid(ttk.Frame):
         x, y, w, h = bbox
         var = tk.StringVar(value=cell.text())
         if isinstance(cell, Ch):
-            ent = ttk.Combobox(self.tree, textvariable=var, values=cell.options(), state="readonly")
+            ent = ttk.Combobox(self.tree, textvariable=var, values=cell.options, state="readonly")
             ent.place(x=x, y=y, width=max(w, 200), height=h)
             ent.focus_set()
             ent.bind("<<ComboboxSelected>>", lambda e: self._finish(True, refocus=True))
@@ -792,6 +948,7 @@ class EditableGrid(ttk.Frame):
             if not self.rows[row][col].commit(text):
                 self.bell()
             self._refresh_row(row)
+            self._fit_columns()
         if move:
             self._edit_next(row, col, move)
         elif refocus:
@@ -854,6 +1011,10 @@ H1_FONT = ("Segoe UI", 9, "bold")
 
 def _tl(key):
     return T(key).split("|")
+
+
+def _tip(key, **args):
+    return T("tip." + key, **args)
 
 
 # main panel: toolbar, pages and save logic
@@ -947,7 +1108,8 @@ class SavegamePanel(ttk.Frame):
                           (P("series"), self._pg_series, None),
                           (P("records"), self._pg_records, None), (P("versus"), self._pg_versus, "mgr")]),
             (G("messages"), [(P("messages"), self._pg_messages, None)]),
-            (G("advanced"), [(P("options"), self._pg_options, None), (P("raw"), self._pg_raw, None)]),
+            (P("options"), [(P("options"), self._pg_options, None)]),
+            (P("raw"), [(P("raw"), self._pg_raw, None)]),
         ]
         self.nb = ttk.Notebook(self.body)
         for gname, pages in layout:
@@ -1247,6 +1409,52 @@ class SavegamePanel(ttk.Frame):
             return True
         return E(get, set_)
 
+    def _num_range(self, off, t="u8", minimum=None, maximum=None):
+        """Numeric field constrained to the accepted interval."""
+        def get():
+            return str(self.sf.rd(off, t))
+
+        def set_(text):
+            try:
+                value = int(text.strip())
+            except ValueError:
+                return False
+            if minimum is not None and value < minimum:
+                return False
+            if maximum is not None and value > maximum:
+                return False
+            try:
+                self.sf.wr(off, t, value)
+            except (OverflowError, struct.error):
+                return False
+            self._changed()
+            return True
+        return E(get, set_)
+
+    def _hex_bytes(self, off, count):
+        return D(lambda off=off, count=count: " ".join(
+            f"{v:02X}" for v in self.sf.buf[off:off + count]))
+
+    def _dword_hex(self, off):
+        # Display the complete 32-bit pointer without splitting it into WORDs.
+        def get():
+            value = int.from_bytes(self.sf.buf[off:off + 4], "little", signed=False)
+            return f"0x{value:08X}"
+        return D(get)
+
+    def _player_owner_cell(self, off):
+        def get():
+            owner = self.sf.buf[off]
+            if 0 <= owner < 4:
+                name = self.sf.get_str(MB + 778 * owner, 29).strip()
+                return f"{owner}: {name or f'Manager {owner + 1}'}"
+            if owner == 4:
+                return f"4: {T('pl.owner_market')}"
+            if owner == 5:
+                return f"5: {T('pl.owner_free')}"
+            return str(owner)
+        return D(get)
+
     def _txt(self, off, n):
         def set_(text):
             self.sf.set_str(off, n, text.upper())
@@ -1350,11 +1558,14 @@ class SavegamePanel(ttk.Frame):
         cb.bind("<<ComboboxSelected>>", picked)
         return cb
 
-    def _value_grid(self, parent, off, n, cols, w=44, first_w=44):
+    def _value_grid(self, parent, off, n, cols, w=44, first_w=44, description=""):
         columns = [("#", first_w)] + [(str(i + 1), w) for i in range(cols)]
         rows = [[i + 1] + [self._num(off + k) for k in range(i, min(n, i + cols))]
                 for i in range(0, n, cols)]
-        return EditableGrid(parent, columns, rows, height=len(rows))
+        tips = [_tip("index")]
+        tips.extend(T("tip.value_column", column=i + 1, description=description or T("tip.unknown_values"))
+                    for i in range(cols))
+        return EditableGrid(parent, columns, rows, height=len(rows), tips=tips)
 
     def _labeled(self, parent, text, **grid):
         lf = ttk.LabelFrame(parent, text=text, padding=8)
@@ -1532,7 +1743,8 @@ class SavegamePanel(ttk.Frame):
         rows.append([labs[6], self._num(o + 436, "u16"), self._num(o + 438, "u16")])
         rows.append([labs[7], self._num(o + 432, "i16"), self._num(o + 434, "i16")])
         EditableGrid(bil, [("", 110, "w"), (T("c.home"), 80), (T("c.away_full"), 80)], rows,
-                     height=len(rows)).pack()
+                     height=len(rows), tips=[_tip("balance_item"), _tip("home_total"),
+                                             _tip("away_total")]).pack()
 
         sea = ttk.LabelFrame(host, text=T("hist.seasons"), padding=8)
         sea.pack(side="right", fill="both", expand=True, padx=(5, 10), pady=10)
@@ -1564,18 +1776,23 @@ class SavegamePanel(ttk.Frame):
         rows = [[i + 1] + [self._num(o + 62 + 4 * i + k) for k in range(4)] for i in range(count)]
         cols = _tl("hist.season_cols")
         EditableGrid(sea, [("#", 50), (cols[0], 90), (cols[1], 70), (cols[2], 95), (cols[3], 80)],
-                     rows, height=12).pack(fill="both", expand=True)
+                     rows, height=12, tips=[_tip("index"), _tip("season_position"),
+                                            _tip("season_league"), _tip("season_cup"),
+                                            _tip("season_europe")]).pack(fill="both", expand=True)
         self._note(sea, T("hist.note"), wrap=520).pack(anchor="w", pady=(6, 0))
 
     def _pg_stats(self, host):
         o = self._mo()
         body = self._scroll_page(host)
-        for title, off, n, cols, w in ((T("stats.positions"), o + 267, 38, 10, 44),
-                                       (T("stats.attendance"), o + 330, 17, 10, 44),
-                                       (T("stats.series"), H + 3904 + 21 * self.mi, 21, 21, 40)):
+        for title, off, n, cols, w, desc in ((T("stats.positions"), o + 267, 38, 10, 44,
+                                              T("tip.positions_by_round")),
+                                             (T("stats.attendance"), o + 330, 17, 10, 44,
+                                              T("tip.attendance_by_match")),
+                                             (T("stats.series"), H + 3904 + 21 * self.mi, 21, 21, 40,
+                                              T("tip.series_unverified"))):
             lf = ttk.LabelFrame(body, text=title, padding=8)
             lf.pack(fill="x", padx=10, pady=(10, 5))
-            self._value_grid(lf, off, n, cols, w=w).pack(anchor="w")
+            self._value_grid(lf, off, n, cols, w=w, description=desc).pack(anchor="w")
         ch = ttk.LabelFrame(body, text=T("stats.chart"), padding=8)
         ch.pack(fill="x", padx=10, pady=5)
         self._field(ch, 0, T("std.home_games") + " (+476)", self._num_field(ch, o + 476, "u16", width=6))
@@ -1593,22 +1810,47 @@ class SavegamePanel(ttk.Frame):
                 continue
             pb = PB + 37 * pi
             slots.append(b)
-            # columns: stats, wage, cards, season counters, records, unknown bytes
-            rows.append([sf.get_str(pb, 26), D(lambda pb=pb: pos4(self.sf.buf[pb + 31])),
-                         self._num(b + 10), self._num(b + 16), self._num(b + 17), self._num(b + 18),
-                         self._num(b + 19), self._num(b + 40, "i32"), self._num(b + 11),
-                         self._num(b + 13), self._num(b + 1), self._num(b), self._num(b + 3),
-                         self._num(b + 6),
-                         self._num(b + 14), self._num(b + 20, "i16"), self._num(b + 25),
-                         self._num(b + 26), self._num(b + 28), self._num(b + 30), self._num(b + 34)]
-                        + [self._num(b + x, "u8") for x in (2, 4, 5, 9, 12, 23, 24)] + [self._num(b + 48, "u16"), self._num(b + 50, "u16")])
+            # Identity first, then every displayed slot field in ascending byte order.
+            rows.append([
+                sf.get_str(pb, 26), D(lambda pb=pb: pos4(self.sf.buf[pb + 31])),
+                self._num(b), self._num(b + 1), self._num(b + 2),
+                self._num(b + 3), self._num(b + 4), self._num(b + 5),
+                self._num(b + 6), self._num(b + 7), self._num(b + 8),
+                self._num(b + 9), self._num(b + 10), self._num(b + 11),
+                self._num(b + 12), self._num(b + 13),
+                self._num(b + 14), D(lambda b=b: str(self.sf.buf[b + 15])),
+                self._num(b + 16), self._num(b + 17), self._num(b + 18),
+                self._num(b + 19), self._num(b + 20), self._num(b + 21, "i8"),
+                self._num(b + 22), self._num(b + 23), self._num(b + 24),
+                self._num(b + 25, "i8"), self._num(b + 26),
+                D(lambda b=b: str(self.sf.buf[b + 27])),
+                self._num(b + 28, "u16"), self._num(b + 30, "u16"),
+                self._num(b + 32, "u16"), self._num(b + 34, "u16"),
+                self._num(b + 36, "u16"), self._num(b + 38, "u16"),
+                self._num(b + 40, "i32"), self._hex_bytes(b + 44, 4), self._dword_hex(b + 48),
+            ])
         bar = ttk.Frame(host)
         bar.pack(fill="x", padx=10, pady=(10, 6))
         c = _tl("squad.cols")
-        widths = (200, 55, 50, 55, 55, 60, 65, 90, 60, 60, 55, 55, 55, 55)
+        widths = (180, 55, 66, 58, 76, 72, 78, 68, 80, 82, 72, 66, 55, 82, 62, 88)
         xc = _tl("squad.extra_cols")
-        grid = EditableGrid(host, [(c[0], widths[0], "w")] + [(t, w) for t, w in zip(c[1:], widths[1:])]
-                            + [(t, 72) for t in xc], rows, height=14)
+        xwidths = (78, 65, 62, 62, 58, 64, 82, 78, 84, 72, 82, 66, 66, 80,
+                   90, 90, 78, 90, 90, 78, 92, 86, 92)
+        squad_tip_keys = [
+            "player", "role_group", "direct_reds", "yellow_cards", "second_yellow",
+            "league_goals", "goals_cup", "goals_europe", "league_appearances", "apps_cup",
+            "apps_europe", "state_flags", "shirt_number", "contract_seasons", "loan",
+            "suspension_injury", "training_factor", "player_index", "condition_current",
+            "technique_current", "form_current", "freshness", "training_program", "match_rating",
+            "offering_club", "injury_type", "contract_status", "pitch_column", "pitch_line",
+            "unknown_byte27", "apps_league", "apps_cup", "apps_europe", "league_goals",
+            "goals_cup", "goals_europe", "monthly_wage", "unknown_bytes44",
+            "notification_pointer",
+        ]
+        grid = EditableGrid(host, [(c[0], widths[0], "w")] +
+                            [(t, w) for t, w in zip(c[1:], widths[1:])] +
+                            [(t, w) for t, w in zip(xc, xwidths)], rows, height=14,
+                            tips=[_tip(k) for k in squad_tip_keys])
 
         def all99():
             for b in slots:
@@ -1626,8 +1868,23 @@ class SavegamePanel(ttk.Frame):
             av = [sum(sf.buf[b + k] for b in slots) / n for k in (16, 17, 18)]
             return T("squad.avg", c=f"{av[0]:.1f}", t=f"{av[1]:.1f}", f=f"{av[2]:.1f}")
         self._live_label(bar, avg_text, foreground=MUTED).pack(side="left", padx=12)
+
+        def formation_text():
+            # Two bytes per manager: active selection and saved backup.
+            off = 51 + 2 * self.mi
+            names = {
+                1: T("squad.system_manual"),
+                2: "4-4-2",
+                3: "3-5-2",
+                4: "3-4-3",
+            }
+            active_v, backup_v = sf.buf[off], sf.buf[off + 1]
+            active = names.get(active_v, T("squad.system_unknown", value=active_v))
+            backup = names.get(backup_v, T("squad.system_unknown", value=backup_v))
+            return T("squad.formation_info", active=active, backup=backup)
+        self._live_label(bar, formation_text, foreground=FG).pack(side="left", padx=12)
         grid.pack(fill="both", expand=True, padx=10, pady=(0, 6))
-        self._note(host, T("squad.note") + " " + T("squad.extra_note")).pack(anchor="w", padx=10, pady=(0, 8))
+        self._note(host, T("squad.hint")).pack(anchor="w", padx=10, pady=(0, 8))
 
     # all players of the save
     def _pg_players(self, host):
@@ -1646,9 +1903,17 @@ class SavegamePanel(ttk.Frame):
         count = ttk.Label(bar, foreground=MUTED)
         count.pack(side="right")
         c = _tl("pl.cols")
-        grid = EditableGrid(host, [("#", 45), (c[0], 190, "w")] + [(t, w) for t, w in zip(
-            c[1:9], (50, 55, 55, 60, 95, 50, 55, 55))] + [(c[9], 230, "w")] + [(t, 50) for t in _tl("pl.extra_cols")], height=16)
-        grid.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        xcols = _tl("pl.extra_cols")
+        labels = [c[0], c[1], xcols[0], c[2], c[3], c[4], c[5], c[6], xcols[1],
+                  xcols[2], c[7], c[8], c[9]]
+        widths = (175, 48, 78, 78, 72, 62, 78, 85, 84, 112, 74, 78, 180)
+        pl_tips = ["player", "age", "initial_average", "condition_base", "technique_base",
+                   "form_base", "position_value", "role_group", "preferred_side", "owner",
+                   "league_goals", "league_appearances", "current_club"]
+        grid = EditableGrid(host, [("#", 42)] + [(t, w, "w" if i in (0, 12) else "center")
+                                                  for i, (t, w) in enumerate(zip(labels, widths))],
+                            height=16, tips=[_tip("index")] + [_tip(k) for k in pl_tips])
+        grid.pack(fill="both", expand=True, padx=10, pady=(0, 4))
 
         def draw(*_):
             f = q.get().upper()
@@ -1661,37 +1926,59 @@ class SavegamePanel(ttk.Frame):
                     continue
                 if f and f not in sf.get_str(o, 26):
                     continue
-                rows.append([i, self._txt(o, 26), self._num(o + 26), self._num(o + 28), self._num(o + 29),
-                             self._num(o + 30), self._num(o + 31),
-                             D(lambda o=o: pos4(self.sf.buf[o + 31])), self._num(o + 34),
-                             self._num(o + 35), self._club_cell(o + 36), self._num(o + 27), self._num(o + 32), self._num(o + 33)])
+                rows.append([
+                    i, self._txt(o, 26), self._num(o + 26),
+                    D(lambda o=o: str(self.sf.buf[o + 27])),
+                    self._num(o + 28), self._num(o + 29), self._num(o + 30),
+                    self._num(o + 31), D(lambda o=o: pos4(self.sf.buf[o + 31])),
+                    self._num(o + 32), self._player_owner_cell(o + 33),
+                    self._num(o + 34), self._num(o + 35), self._club_cell(o + 36),
+                ])
             grid.set_rows(rows)
             count.config(text=T("pl.count", n=len(rows)))
         q.trace_add("write", draw)
         cb.bind("<<ComboboxSelected>>", draw)
         draw()
+        self._note(host, T("pl.hint")).pack(anchor="w", padx=10, pady=(0, 8))
 
     # transfer list slots
     def _pg_market(self, host):
         sf = self.sf
         rows = []
-        for i in range(100, 125):
+        # The actual transfer market contains 12 slots: 100..111.
+        for i in range(100, 112):
             b = LB + 52 * i
             pi = sf.buf[b + 15]
             if not pi or sf.is_cheater_slot(b):
                 continue
             pb = PB + 37 * pi
-            rows.append([i, sf.get_str(pb, 26), D(lambda pb=pb: pos4(self.sf.buf[pb + 31])),
-                         self._num(b + 16), self._num(b + 17), self._num(b + 18), self._num(b + 19),
-                         self._num(b + 14), self._num(b + 20), self._num(b + 40, "i32")])
+            rows.append([
+                i, sf.get_str(pb, 26), D(lambda pb=pb: pos4(self.sf.buf[pb + 31])),
+                self._num(b + 3), self._num(b + 9), self._num(b + 12),
+                self._num(b + 13), self._num(b + 14), D(lambda b=b: str(self.sf.buf[b + 15])),
+                self._num(b + 16), self._num(b + 17), self._num(b + 18),
+                self._num(b + 19), self._num(b + 20), self._num(b + 21, "i8"),
+                self._num(b + 22), self._num(b + 23), self._num(b + 24),
+                D(lambda b=b: str(self.sf.buf[b + 27])), self._num(b + 40, "i32"),
+                self._hex_bytes(b + 44, 4), self._dword_hex(b + 48),
+            ])
         bar = ttk.Frame(host)
         bar.pack(fill="x", padx=10, pady=(10, 6))
         ttk.Label(bar, text=T("mk.count", n=len(rows)), foreground=MUTED).pack(side="right")
         c = _tl("mk.cols")
-        widths = (200, 55, 55, 55, 60, 65, 55, 55, 100)
-        EditableGrid(host, [("#", 45), (c[0], widths[0], "w")] + [(t, w) for t, w in zip(c[1:], widths[1:])],
-                     rows, height=12).pack(fill="both", expand=True, padx=10, pady=(0, 6))
-        self._note(host, T("mk.note")).pack(anchor="w", padx=10, pady=(0, 8))
+        widths = (175, 58, 72, 66, 72, 88, 78, 68, 70, 62, 62, 62, 66, 82, 76,
+                  82, 72, 80, 90, 92, 86)
+        market_tip_keys = ["index", "player", "role_group", "offer_refusals", "state_flags", "loan",
+                           "suspension_injury", "training_factor", "player_index", "condition_current",
+                           "technique_current", "form_current", "freshness", "training_program",
+                           "match_rating", "offering_club", "injury_type", "contract_status",
+                           "unknown_byte27", "market_value", "unknown_bytes44", "notification_pointer"]
+        columns = [("#", 42)] + [(t, w, "w" if j == 0 else "center")
+                                  for j, (t, w) in enumerate(zip(c, widths))]
+        EditableGrid(host, columns, rows, height=12,
+                     tips=[_tip(k) for k in market_tip_keys]).pack(
+            fill="both", expand=True, padx=10, pady=(0, 4))
+        self._note(host, T("mk.hint")).pack(anchor="w", padx=10, pady=(0, 8))
 
     def _pg_stadium(self, host):
         o = self._mo()
@@ -1717,7 +2004,8 @@ class SavegamePanel(ttk.Frame):
                          self._num(o + 404 + 2 * k, "u16")])
         c = _tl("std.exp_cols")
         EditableGrid(amp, [(c[0], 150, "w"), (c[1], 110), (c[2], 120), (c[3], 130)], rows,
-                     height=7).pack(anchor="w")
+                     height=7, tips=[_tip("stadium_item"), _tip("current_value"),
+                                    _tip("work_in_progress"), _tip("days_remaining")]).pack(anchor="w")
 
         aff = self._labeled(body, T("std.attendance"), row=1, column=0, columnspan=2, sticky="ew",
                             padx=10, pady=5)
@@ -1806,7 +2094,10 @@ class SavegamePanel(ttk.Frame):
         self._live_label(tot, lambda: f"{sum(sf.rd(o + 512 + 18 * k, 'i32') for k in range(15)):,}",
                          font=H1_FONT).pack(side="left", padx=6)
         EditableGrid(host, [(c[0], 190, "w"), ("#", 45), (c[1], 110), (c[2], 120), (c[3], 70),
-                            (c[4], 110), (c[5], 110)], rows, height=15).pack(fill="both", expand=True, padx=10, pady=10)
+                            (c[4], 110), (c[5], 110)], rows, height=15,
+                     tips=[_tip("lender"), _tip("loan_number"), _tip("loan_amount"),
+                           _tip("monthly_interest"), _tip("interest_rate"), _tip("start_date"),
+                           _tip("end_date")]).pack(fill="both", expand=True, padx=10, pady=10)
         self._note(host, T("loan.note")).pack(anchor="w", padx=10, pady=(0, 8))
 
     def _pg_sponsors(self, host):
@@ -1821,13 +2112,16 @@ class SavegamePanel(ttk.Frame):
         rows = [[shirt, self._num(a, "i32")]]
         rows += [[f"{board} {k + 1}", self._num(a + 4 + 4 * k, "i32")] for k in range(6)]
         rows += [[tv, self._num(a + 28, "i32")], [adcost, self._num(a + 32, "i32")]]
-        EditableGrid(ent, [(T("sp.item"), 150, "w"), (T("sp.amount"), 120)], rows, height=len(rows)).pack()
+        EditableGrid(ent, [(T("sp.item"), 150, "w"), (T("sp.amount"), 120)], rows,
+                     height=len(rows), tips=[_tip("sponsor_item"), _tip("amount")]).pack()
         con = ttk.LabelFrame(top, text=T("sp.contracts"), padding=8)
         con.pack(side="left", fill="y")
         spaces = [(shirt, 33462 + 2 * mi)] + [(f"{board} {k + 1}", 33470 + (mi * 6 + k) * 2) for k in range(6)]
         rows = [[lab, self._num(x), self._num(x + 1)] for lab, x in spaces]
         c = _tl("sp.contract_cols")
-        EditableGrid(con, [(c[0], 140, "w"), (c[1], 110), (c[2], 100)], rows, height=len(rows)).pack()
+        EditableGrid(con, [(c[0], 140, "w"), (c[1], 110), (c[2], 100)], rows,
+                     height=len(rows), tips=[_tip("sponsor_slot"), _tip("months_remaining"),
+                                             _tip("sponsor_count")]).pack()
         off = ttk.LabelFrame(body, text=T("sp.offers"), padding=8)
         off.pack(fill="x", padx=10, pady=5)
         rows = []
@@ -1837,7 +2131,8 @@ class SavegamePanel(ttk.Frame):
                          self._num(33518 + b), self._num(33598 + 4 * b, "i32")])
         c = _tl("sp.offer_cols")
         EditableGrid(off, [(c[0], 80), (c[1], 110), (c[2], 140), (c[3], 130), (c[4], 150)], rows,
-                     height=10).pack(anchor="w")
+                     height=10, tips=[_tip("sponsor"), _tip("shirt_years"), _tip("shirt_amount"),
+                                     _tip("boards_years"), _tip("boards_amount")]).pack(anchor="w")
         self._note(body, T("sp.note")).pack(anchor="w", padx=10, pady=(2, 10))
 
     def _pg_standings(self, host):
@@ -1860,8 +2155,14 @@ class SavegamePanel(ttk.Frame):
                         + [self._num(o + x) for x in (0, 1, 22, 23, 26, 27, 30, 31, 38, 39, 42, 43)]
                         + [self._num(o + 50, "i32")])
         c = _tl("st.cols")
-        cols = [("#", 40), (c[0], 190, "w")] + [(t, 85 if k == len(c) - 2 else 55) for k, t in enumerate(c[1:])]
-        EditableGrid(host, cols, rows, height=20).pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        widths = (76, 88, 78, 82, 86, 82, 86, 92, 94, 80, 84, 80, 84, 92, 96)
+        cols = [("#", 40), (c[0], 180, "w")] + [(t, w) for t, w in zip(c[1:], widths)]
+        standing_tips = ["index", "club", "points", "goal_difference", "home_points", "away_points",
+                         "home_goals_for", "away_goals_for", "home_goals_against", "away_goals_against",
+                         "home_games", "away_games", "home_wins", "away_wins", "home_losses",
+                         "away_losses", "historical_points"]
+        EditableGrid(host, cols, rows, height=20,
+                     tips=[_tip(k) for k in standing_tips]).pack(fill="both", expand=True, padx=10, pady=(0, 6))
         self._note(host, T("st.note")).pack(anchor="w", padx=10, pady=(0, 8))
 
     def _pg_results(self, host):
@@ -1882,7 +2183,8 @@ class SavegamePanel(ttk.Frame):
         b = 59 + (lg * 38 + self.md) * 20
         rows = [[k + 1, self._num(b + 2 * k), "–", self._num(b + 2 * k + 1)] for k in range(per)]
         EditableGrid(host, [(T("res.match"), 80), (T("c.home"), 80), ("", 30), (T("c.away"), 80)], rows,
-                     height=per).pack(anchor="w", padx=10, pady=(0, 6))
+                     height=per, tips=[_tip("match_no"), _tip("home_goals"), _tip("score_separator"),
+                                      _tip("away_goals")]).pack(anchor="w", padx=10, pady=(0, 6))
         self._note(host, T("res.note")).pack(anchor="w", padx=10)
 
     def _pg_calendar(self, host):
@@ -1899,11 +2201,13 @@ class SavegamePanel(ttk.Frame):
         rows = [[k + 1, self._club_cell(27900 + f + 2 * k), self._club_cell(27901 + f + 2 * k)]
                 for k in range(n)]
         EditableGrid(body, [("#", 40), (T("c.home_team"), 250, "w"), (T("c.away_team"), 250, "w")],
-                     rows, height=n).pack(anchor="w", padx=10, pady=(0, 6))
+                     rows, height=n, tips=[_tip("index"), _tip("home_team"),
+                                           _tip("away_team")]).pack(anchor="w", padx=10, pady=(0, 6))
         self._note(body, T("cal.note")).pack(anchor="w", padx=10, pady=(0, 6))
         pf = ttk.LabelFrame(body, text=T("cal.perm"), padding=8)
         pf.pack(fill="x", padx=10, pady=5)
-        self._value_grid(pf, 28244 + 20 * self.lg, 20, 10).pack(anchor="w")
+        self._value_grid(pf, 28244 + 20 * self.lg, 20, 10,
+                         description=T("tip.calendar_order")).pack(anchor="w")
         self._note(body, T("cal.perm_note")).pack(anchor="w", padx=10, pady=(2, 10))
 
     def _pg_cup_state(self, host):
@@ -1925,10 +2229,12 @@ class SavegamePanel(ttk.Frame):
             self._field(leg, c, cups[c + 1], self._num_field(leg, 28241 + c, width=6))
         lf = ttk.LabelFrame(body, text=T("cup.qualified"), padding=8)
         lf.pack(fill="x", padx=10, pady=5)
-        self._value_grid(lf, 27978, 10, 10).pack(anchor="w")
+        self._value_grid(lf, 27978, 10, 10,
+                         description=T("tip.european_qualifiers")).pack(anchor="w")
         lf = ttk.LabelFrame(body, text=T("cup.slots"), padding=8)
         lf.pack(fill="x", padx=10, pady=5)
-        self._value_grid(lf, 27988, 18, 6).pack(anchor="w")
+        self._value_grid(lf, 27988, 18, 6,
+                         description=T("tip.european_places")).pack(anchor="w")
 
     def _pg_cup_ties(self, host):
         body = self._scroll_page(host)
@@ -1948,10 +2254,13 @@ class SavegamePanel(ttk.Frame):
                  self._num(28304 + 32 * c + 2 * k), self._num(28305 + 32 * c + 2 * k)] for k in range(16)]
         EditableGrid(body, [("#", 40), (T("c.home_team"), 240, "w"), (T("c.away_team"), 240, "w"),
                             (T("cup.goals_h"), 60), (T("cup.goals_a"), 60)], rows,
-                     height=16).pack(anchor="w", padx=10, pady=(0, 6))
+                     height=16, tips=[_tip("index"), _tip("home_team"), _tip("away_team"),
+                                     _tip("home_goals"), _tip("away_goals")]).pack(
+                         anchor="w", padx=10, pady=(0, 6))
         lf = ttk.LabelFrame(body, text=T("cup.first_leg_goals"), padding=8)
         lf.pack(fill="x", padx=10, pady=5)
-        self._value_grid(lf, 28137, 96, 16).pack(anchor="w")
+        self._value_grid(lf, 28137, 96, 16,
+                         description=T("tip.european_first_leg_goals")).pack(anchor="w")
         self._note(body, T("cup.note")).pack(anchor="w", padx=10, pady=(2, 10))
 
     def _pg_clubs(self, host):
@@ -1964,7 +2273,13 @@ class SavegamePanel(ttk.Frame):
         count = ttk.Label(bar, foreground=MUTED)
         count.pack(side="right")
         cols = [("#", 45), (T("c.name"), 200, "w")] + [(t, 52) for t in _tl("cl.cols")]
-        grid = EditableGrid(host, cols, height=16)
+        club_tips = [_tip("index"), _tip("club_name"), _tip("club_base"),
+                     _tip("club_condition_home"), _tip("club_condition_away"),
+                     _tip("club_condition_third"), _tip("club_technique_home"),
+                     _tip("club_technique_away"), _tip("club_technique_third"),
+                     _tip("club_form_home"), _tip("club_form_away"), _tip("club_form_third"),
+                     _tip("club_status")]
+        grid = EditableGrid(host, cols, height=16, tips=club_tips)
         grid.pack(fill="both", expand=True, padx=10, pady=(0, 6))
 
         def draw(*_):
@@ -1998,59 +2313,219 @@ class SavegamePanel(ttk.Frame):
         c = _tl("xs.cols")
         cols = [("#", 40), (T("c.club"), 190, "w"), (c[0], 235), (c[1], 235)] + [(t, 48) for t in c[2:13]] \
             + [(c[13], 160)]
-        EditableGrid(host, cols, rows, height=20).pack(fill="both", expand=True, padx=10, pady=(10, 6))
+        ext_tips = [_tip("index"), _tip("club_name"), _tip("external_series_a"),
+                    _tip("external_series_b")] + [
+                        T("tip.club_record_unknown", offset=x) for x in (2, 3, 24, 25, 28, 29, 40, 41, 44, 45, 46)
+                    ] + [_tip("club_record_tail")]
+        EditableGrid(host, cols, rows, height=20, tips=ext_tips).pack(
+            fill="both", expand=True, padx=10, pady=(10, 6))
         self._note(host, T("xs.note")).pack(anchor="w", padx=10, pady=(0, 8))
 
     def _pg_options(self, host):
-        def tx(key, default):
-            t = T(key)
-            return default if t == key else t
+        """Display the game's original option checkboxes and speed control."""
         body = self._scroll_page(host)
-        lf = ttk.LabelFrame(body, text=tx("opt.panel", "Opzioni di gioco (ATT/DIS)"), padding=8)
+        lf = ttk.LabelFrame(body, text=T("opt.panel"), padding=8)
         lf.pack(fill="x", padx=10, pady=(10, 5))
-        series = tx("opt.series", "Serie A|Serie B|Serie C").split("|")
-        items = tx("opt.items", "Parziali 1° tempo|Risultati finali|Tabella").split("|")
-        others = tx("opt.others", "Azioni di gioco|Coppa Italia|Coppe europee|Recuperi|Giornale|Oscurire").split("|")
+
+        series = _tl("opt.series")
+        items = _tl("opt.items")
         self._opt_vars = []
 
         def check(parent, off, row, col):
             var = tk.BooleanVar(value=bool(self.sf.buf[off]))
 
-            def toggled(*_a, off=off, var=var):
+            def toggled(off=off, var=var):
                 self.sf.wr(off, "u8", 1 if var.get() else 0)
                 self._changed()
-            ttk.Checkbutton(parent, variable=var, command=toggled).grid(row=row, column=col, padx=14, pady=2)
+
+            ttk.Checkbutton(parent, variable=var, command=toggled).grid(
+                row=row, column=col, padx=14, pady=2)
             self._opt_vars.append(var)
-        for c, name in enumerate(series):
-            ttk.Label(lf, text=name, font=("", 9, "bold")).grid(row=0, column=1 + c, padx=14)
-        for r, name in enumerate(items):
-            ttk.Label(lf, text=name).grid(row=1 + r, column=0, sticky="w", padx=(0, 10))
-            for c in range(3):
-                check(lf, 33447 + 3 * c + r, 1 + r, 1 + c)
-        of = ttk.LabelFrame(body, text=tx("opt.other", "Altre opzioni"), padding=8)
-        of.pack(fill="x", padx=10, pady=5)
-        for k, name in enumerate(others):
-            ttk.Label(of, text=name).grid(row=k, column=0, sticky="w", padx=(0, 10))
-            check(of, 33456 + k, k, 1)
-        sp = ttk.LabelFrame(body, text=tx("opt.speed", "Velocità di gioco"), padding=8)
-        sp.pack(fill="x", padx=10, pady=5)
-        self._field(sp, 0, tx("opt.speed_byte", "Valore (byte 34222; 40 = predefinito, 70 = massimo, ipotesi)"),
-                    self._num_field(sp, 34222, width=6))
-        self._note(body, tx("opt.note", "Ordine dei byte ricavato dall'EXE: Serie A (Parziali, Risultati, Tabella), "
-                            "Serie B, Serie C, poi Azioni di gioco, Coppa Italia, Coppe europee, Recuperi, Giornale, Oscurire. "
-                            "La velocità è dedotta dal confronto tra salvataggi.")).pack(anchor="w", padx=10, pady=(2, 10))
+
+        for col, name in enumerate(series, start=1):
+            ttk.Label(lf, text=name, font=("Segoe UI", 9, "bold")).grid(
+                row=0, column=col, padx=14, pady=(0, 4))
+
+        for row, name in enumerate(items, start=1):
+            ttk.Label(lf, text=name).grid(row=row, column=0, sticky="w", padx=(0, 10))
+            for col in range(3):
+                check(lf, 33447 + 3 * col + row - 1, row, col + 1)
+        self._note(lf, T("opt.note")).grid(
+            row=len(items) + 1, column=0, columnspan=4, sticky="w", padx=4, pady=(5, 0))
+
+        other = ttk.LabelFrame(body, text=T("opt.other"), padding=8)
+        other.pack(fill="x", padx=10, pady=5)
+        for row, name in enumerate(_tl("opt.others")):
+            ttk.Label(other, text=name).grid(row=row, column=0, sticky="w", padx=(0, 10))
+            check(other, 33456 + row, row, 1)
+
+        speed = ttk.LabelFrame(body, text=T("opt.speed"), padding=8)
+        speed.pack(fill="x", padx=10, pady=(5, 10))
+        self._field(speed, 0, T("opt.speed_value"),
+                    ValueEntry(speed, self._num_range(34222, "u16", 0, 70), width=7))
+        self._note(speed, T("opt.speed_note")).grid(
+            row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
 
     def _pg_raw(self, host):
         body = self._scroll_page(host)
+
+        # Postponed fixtures: 20 records of five bytes each.
         lf = ttk.LabelFrame(body, text=T("raw.block5"), padding=8)
         lf.pack(fill="x", padx=10, pady=(10, 5))
         rows = [[k + 1] + [self._num(5457 + 5 * k + j) for j in range(5)] for k in range(20)]
         c = _tl("raw.cols5")
-        EditableGrid(lf, [("#", 40)] + [(t, 70) for t in c], rows, height=10).pack(anchor="w")
-        for title, off, n in ((T("raw.tail1"), 34063, 161), (T("raw.tail2"), 34226, 141)):
-            lf = ttk.LabelFrame(body, text=title, padding=8)
-            lf.pack(fill="x", padx=10, pady=5)
-            self._value_grid(lf, off, n, 20, w=38).pack(anchor="w")
+        recovery_tips = [
+            _tip("index"), T("tip.recovery_marker"), T("tip.recovery_day_index"),
+            T("tip.recovery_matchday"), T("tip.recovery_league"), T("tip.recovery_fixture"),
+        ]
+        EditableGrid(lf, [("#", 40)] + [(t, 70) for t in c], rows, height=10,
+                     tips=recovery_tips).pack(anchor="w")
+        self._note(lf, T("raw.recovery_note")).pack(anchor="w", pady=(6, 0))
+
+        # Display identified fields separately from unassigned data ranges.
+        unknown = ttk.LabelFrame(body, text=T("raw.unknown_area"), padding=8)
+        unknown.pack(fill="x", padx=10, pady=5)
+
+        game = ttk.LabelFrame(unknown, text=T("raw.game_type"), padding=6)
+        game.pack(fill="x", pady=3)
+        self._field(game, 0, T("raw.end_year_code"), self._num_field(game, 34063, "u16", width=9))
+        def end_year_text():
+            value = self.sf.rd(34063, "u16")
+            known = {
+                22222: T("raw.endyear_endless_historical"),
+                22251: T("raw.endyear_endless"),
+                1964: T("raw.endyear_one_historical"),
+                1993: T("raw.endyear_one"),
+                1966: T("raw.endyear_three_historical"),
+                1995: T("raw.endyear_three"),
+            }
+            return known.get(value, T("raw.endyear_other", value=value))
+        self._field(game, 0, T("raw.end_year_meaning"), self._live_label(game, end_year_text), col=1)
+        self._note(game, T("tip.raw_34063")).grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
+
+        part = ttk.LabelFrame(unknown, text=T("raw.unknown_34065"), padding=6)
+        part.pack(fill="x", pady=3)
+        self._value_grid(part, 34065, 30, 20, w=38,
+                         description=T("tip.raw_34065")).pack(anchor="w")
+
+        # Four bytes preceding the rules selector have no assigned function.
+        part = ttk.LabelFrame(unknown, text=T("raw.unknown_34095"), padding=6)
+        part.pack(fill="x", pady=3)
+        self._value_grid(part, 34095, 4, 4, w=42,
+                         description=T("tip.raw_34095")).pack(anchor="w")
+
+        rule = ttk.LabelFrame(unknown, text=T("raw.rule_2026"), padding=6)
+        rule.pack(fill="x", pady=3)
+        rule_options = [T("raw.rules_original"), T("raw.rules_2026")]
+        self._field(rule, 0, T("raw.rule_value"),
+                    ValueEntry(rule, self._choice_cell(34099, rule_options, 0), width=24))
+        self._note(rule, T("tip.rule_2026")).grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
+
+        poach = ttk.LabelFrame(unknown, text=T("raw.poach_counts"), padding=6)
+        poach.pack(fill="x", pady=3)
+        poach_rows = [[T("raw.manager_number", n=i + 1)] +
+                      [self._num(34100 + i * 4 + j) for j in range(4)] for i in range(4)]
+        poach_cols = [(T("raw.poacher"), 145, "w")] + [
+            (T("raw.owner_manager", n=j + 1), 90) for j in range(4)]
+        EditableGrid(poach, poach_cols, poach_rows, height=4,
+                     tips=[T("tip.poach_count_row")] + [T("tip.poach_count") for _ in range(4)]).pack(anchor="w")
+        self._note(poach, T("raw.poach_note")).pack(anchor="w", pady=(4, 0))
+
+        small = ttk.LabelFrame(unknown, text=T("raw.additional_fields"), padding=6)
+        small.pack(fill="x", pady=3)
+        self._field(small, 0, T("raw.unknown_34116_label"), self._num_field(small, 34116, width=6))
+        self._field(small, 0, T("raw.debt_mask"), self._num_field(small, 34117, width=6), col=1)
+        self._note(small, T("tip.debt_mask")).grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
+
+        derby = ttk.LabelFrame(unknown, text=T("raw.derby_stakes"), padding=6)
+        derby.pack(fill="x", pady=3)
+        stake_labels = _tl("raw.derby_levels")
+        def stake_cell(off):
+            def get():
+                value = self.sf.buf[off]
+                return stake_labels[value] if 0 <= value < len(stake_labels) else T("raw.unknown_value", value=value)
+            def set_(text):
+                try:
+                    value = stake_labels.index(text)
+                except ValueError:
+                    return False
+                self.sf.buf[off] = value
+                self.sf.dirty = True
+                self._changed()
+                return True
+            return Ch(get, set_, stake_labels)
+        derby_rows = [[T("raw.manager_number", n=i + 1), stake_cell(34118 + i)] for i in range(4)]
+        EditableGrid(derby, [(T("raw.manager"), 145, "w"), (T("raw.stake"), 140)],
+                     derby_rows, height=4,
+                     tips=[T("tip.manager_index"), T("tip.derby_stake")]).pack(anchor="w")
+
+        youth = ttk.LabelFrame(unknown, text=T("raw.youth_counts"), padding=6)
+        youth.pack(fill="x", pady=3)
+        youth_rows = [[T("raw.manager_number", n=i + 1), self._num(34122 + i),
+                       self._num(34126 + i)] for i in range(4)]
+        EditableGrid(youth, [(T("raw.manager"), 145, "w"), (T("raw.promotions"), 155),
+                             (T("raw.youth_poached"), 170)], youth_rows, height=4,
+                     tips=[T("tip.manager_index"), T("tip.youth_promotions"),
+                           T("tip.youth_poach")]).pack(anchor="w")
+        self._note(youth, T("raw.youth_note")).pack(anchor="w", pady=(4, 0))
+
+        part = ttk.LabelFrame(unknown, text=T("raw.unknown_34130"), padding=6)
+        part.pack(fill="x", pady=3)
+        self._value_grid(part, 34130, 85, 20, w=38,
+                         description=T("tip.raw_34130")).pack(anchor="w")
+
+        part = ttk.LabelFrame(unknown, text=T("raw.stadium_lockout"), padding=6)
+        part.pack(fill="x", pady=3)
+        self._value_grid(part, 34215, 7, 7, w=48,
+                         description=T("tip.stadium_lockout")).pack(anchor="w")
+
+        # Calendar pointer and mask.
+        cal = ttk.LabelFrame(body, text=T("raw.calendar_title"), padding=8)
+        cal.pack(fill="x", padx=10, pady=5)
+        index_row = ttk.Frame(cal)
+        index_row.pack(fill="x")
+        self._field(index_row, 0, T("raw.calendar_index"), self._num_field(index_row, 34226, width=6))
+        self._note(cal, T("raw.calendar_index_note")).pack(anchor="w", pady=(2, 5))
+        mask = ttk.LabelFrame(cal, text=T("raw.calendar_mask"), padding=6)
+        mask.pack(fill="x", pady=3)
+        self._value_grid(mask, 34227, 95, 19, w=38,
+                         description=T("tip.calendar_mask")).pack(anchor="w")
+
+        # Eight signed countdowns for the training camps (DGROUP:0620).
+        # Training-ground availability counters, stored as signed 16-bit values.
+        daily = ttk.LabelFrame(body, text=T("raw.training_camps"), padding=8)
+        daily.pack(fill="x", padx=10, pady=5)
+
+        def camp_status(off):
+            value = self.sf.rd(off, "i16")
+            if value < 0:
+                return T("raw.camp_open_days", days=-value)
+            if value > 0:
+                return T("raw.camp_closed_days", days=value)
+            return T("raw.camp_changeover")
+
+        camp_rows = [[i + 1, 34322 + 2 * i,
+                      D(lambda off=34322 + 2 * i: camp_status(off)),
+                      self._num(34322 + 2 * i, "i16")]
+                     for i in range(8)]
+        EditableGrid(daily,
+                     [(T("raw.camp_number"), 72), (T("raw.offset"), 72),
+                      (T("raw.camp_status"), 150), (T("raw.camp_counter"), 150)],
+                     camp_rows, height=8,
+                     tips=[T("tip.camp_number"), T("tip.save_offset"),
+                           T("tip.camp_status"), T("tip.camp_counter")]).pack(anchor="w")
+        self._note(daily, T("raw.camp_note")).pack(anchor="w", pady=(6, 0))
+
+        extra = ttk.LabelFrame(body, text=T("raw.trailing_values"), padding=8)
+        extra.pack(fill="x", padx=10, pady=5)
+        byte_row = ttk.Frame(extra)
+        byte_row.pack(fill="x")
+        self._field(byte_row, 0, T("raw.unknown_byte"), self._num_field(byte_row, 34338, width=6))
+        dword_rows = [[i + 1, 34339 + 4 * i, self._num(34339 + 4 * i, "u32")]
+                      for i in range(7)]
+        EditableGrid(extra, [("#", 40), (T("raw.offset"), 80), (T("raw.dword_value"), 150)],
+                     dword_rows, height=7,
+                     tips=[_tip("index"), T("tip.save_offset"), T("tip.trailing_dword")]).pack(anchor="w", pady=(6, 0))
         self._note(body, T("raw.note")).pack(anchor="w", padx=10, pady=(2, 10))
 
     def _pg_series(self, host):
@@ -2058,7 +2533,9 @@ class SavegamePanel(ttk.Frame):
         rows = [[i, sf.club_name(i)] + [self._num(H + 2560 + 21 * i + k) for k in range(21)]
                 for i in sf.club_ids(64)]
         EditableGrid(host, [("#", 40), (T("c.club"), 190, "w")] + [(str(k + 1), 42) for k in range(21)],
-                     rows, height=18).pack(fill="both", expand=True, padx=10, pady=10)
+                     rows, height=18, tips=[_tip("index"), _tip("club_name")] +
+                     [T("tip.series_column", number=k + 1) for k in range(21)]).pack(
+                         fill="both", expand=True, padx=10, pady=10)
         self._note(host, T("ser.note")).pack(anchor="w", padx=10, pady=(0, 8))
 
     def _pg_records(self, host):
@@ -2085,7 +2562,8 @@ class SavegamePanel(ttk.Frame):
                 for k, lab in enumerate(_tl("lists.records"))]
         c = _tl("rec.cols")
         EditableGrid(host, [(c[0], 160, "w"), (c[1], 110), (c[2], 250, "w")], rows,
-                     height=8).pack(anchor="w", padx=10, pady=(0, 6))
+                     height=8, tips=[_tip("record"), _tip("record_value"),
+                                    _tip("record_opponent")]).pack(anchor="w", padx=10, pady=(0, 6))
         self._note(host, T("rec.note")).pack(anchor="w", padx=10)
 
     def _pg_versus(self, host):
@@ -2096,7 +2574,11 @@ class SavegamePanel(ttk.Frame):
             rows.append([i, sf.club_name(i)] + [self._pair(b + j, True) for j in range(10)])
         home, away = T("c.home"), T("c.away")
         cols = [("#", 40), (T("c.club"), 190, "w")] + [(f"{k} {s}", 62) for k in range(1, 6) for s in (home, away)]
-        EditableGrid(host, cols, rows, height=18).pack(fill="both", expand=True, padx=10, pady=10)
+        versus_tips = [_tip("index"), _tip("club_name")] + [
+            _tip("versus_home") if j % 2 == 0 else _tip("versus_away") for j in range(10)
+        ]
+        EditableGrid(host, cols, rows, height=18, tips=versus_tips).pack(
+            fill="both", expand=True, padx=10, pady=10)
         self._note(host, T("vs.note")).pack(anchor="w", padx=10, pady=(0, 8))
 
     def _pg_messages(self, host):
