@@ -13,7 +13,7 @@ from PIL import Image, ImageTk
 
 import i18n
 
-APP_TITLE = "BMP / THE MANAGER Savegame Editor v1.0.15"
+APP_TITLE = "BMP / THE MANAGER Savegame Editor v1.0.16"
 ICON_FILE = "THE_MANAGER_String_Editor.ico"
 
 def _hex_palette(s: str, scale: int = 1) -> list[tuple[int, int, int]]:
@@ -163,13 +163,16 @@ SEASONS_COUNT_OFF = 34224
 EDITOR_TAG = b"MANED"
 # hidden marker copies, 8 bytes each, in always-zero padding
 MARK_OFFS = (2300, 31000, 33700, 34268)
-# values of the cheater player, impossible in normal play
+# values assigned when creating or refreshing the special player
 CHEAT_AGE = 0
 CHEAT_CARDS = 99
 CHEAT_SUSPENSION = 255
 CHEAT_CONTRACT = 99
 CHEAT_STAT = 10
 CHEAT_ROLE = 99
+CHEAT_RETIRED_FLAG = 0x80
+# The only stable identifier of the special player across matchdays/seasons.
+CHEAT_NAMES = frozenset(("IMBROGLIONE", "CHEATER", "SCHUMMLER", "TRAMPOSO", "TRICHEUR"))
 
 
 # checksum of one marker copy
@@ -389,12 +392,15 @@ class SaveFile:
     def _slot_offs(self, m=0):
         return [LB + 52 * (m * 25 + i) for i in range(25)]
 
-    # cheater signature: max suspension, 99 cards, age 0, loan flag
+    # The player's name is the only stable identifier: game fields change over time.
     def is_cheater_slot(self, off):
         pi = self.buf[off + 15]
-        return (1 <= pi <= 150 and self.buf[off + 13] == CHEAT_SUSPENSION and self.buf[off] == CHEAT_CARDS
-                and self.buf[off + 1] == CHEAT_CARDS and self.buf[off + 12] & 0x80
-                and self.buf[PB + 37 * pi + 26] == CHEAT_AGE)
+        if not 1 <= pi <= 150:
+            return False
+        rec = PB + 37 * pi
+        raw_name = bytes(self.buf[rec:rec + 26]).split(b"\0", 1)[0]
+        name = raw_name.decode("latin-1", errors="ignore").strip().upper()
+        return name in CHEAT_NAMES
 
     def cheater_present(self):
         return any(self.is_cheater_slot(o) for m in range(self.n_managers) for o in self._slot_offs(m))
@@ -405,7 +411,7 @@ class SaveFile:
         t = unicodedata.normalize("NFKD", T("mark.name")).encode("ascii", "ignore").decode().upper()
         return (t or "CHEATER")[:25]
 
-    # add or refresh the loaned cheater in a manager squad
+    # add or refresh the permanent, retired cheater in a manager squad
     def _write_cheater(self, m):
         slots = self._slot_offs(m)
         # club id of the manager
@@ -432,12 +438,13 @@ class SaveFile:
         self.buf[o + 6] = 1
         self.buf[o + 9] = 1
         self.buf[o + 11] = CHEAT_CONTRACT
-        self.buf[o + 12] = 0x80 | self._lender(m, own)
+        self.buf[o + 12] = 0
         self.buf[o + 13] = CHEAT_SUSPENSION
         self.buf[o + 14] = 0x40
         self.buf[o + 15] = pi
         self.buf[o + 16:o + 19] = bytes((CHEAT_STAT,) * 3)
         self.buf[o + 19] = 99
+        self.buf[o + 24] = CHEAT_RETIRED_FLAG
         # player record: name, age, stats, role, club
         nm = self.cheater_name().encode("latin-1")
         rec = bytearray(37)
@@ -446,15 +453,11 @@ class SaveFile:
         rec[27] = 50
         rec[28:31] = bytes((CHEAT_STAT,) * 3)
         rec[31] = CHEAT_ROLE
-        rec[33] = 4
+        rec[33] = m
         rec[35] = 1
         rec[36] = own
         self.buf[PB + 37 * pi:PB + 37 * pi + 37] = rec
         return True
-
-    # first club that is not the manager club
-    def _lender(self, m, own):
-        return next(c for c in range(128) if c != own)
 
     def is_marked(self):
         return self.mark_copies() > 0 or self.cheater_present()
@@ -2361,10 +2364,8 @@ class SavegamePanel(ttk.Frame):
 
         speed = ttk.LabelFrame(body, text=T("opt.speed"), padding=8)
         speed.pack(fill="x", padx=10, pady=(5, 10))
-        self._field(speed, 0, T("opt.speed_value"),
-                    ValueEntry(speed, self._num_range(34222, "u16", 0, 70), width=7))
-        self._note(speed, T("opt.speed_note")).grid(
-            row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
+        self._field(speed, 0, T("opt.speed_value"), ValueEntry(speed, self._num_range(34222, "u16", 0, 70), width=7))
+        self._note(speed, T("opt.speed_note")).grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=(4, 0))
 
     def _pg_raw(self, host):
         body = self._scroll_page(host)
