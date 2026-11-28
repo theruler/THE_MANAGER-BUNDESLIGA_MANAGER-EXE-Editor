@@ -181,6 +181,88 @@ GAME_PROFILES = {
             "types": MATCH_FLAG_TYPES,
         },
         "range_font_defaults": {0: "FLOW.FON", 1: "FLOW.FON", 2: "MICRO4.FON", 3: "MICRO4.FON"},
+        "credits": {
+            # The four loops keep their original counts and screen coordinates.
+            # Each loop now asks the small in-DS helper for the Nth NUL-terminated
+            # string starting at the group's base offset.
+            "xor_key": 0xC8,
+            "pool_start_ds": 0x50A4,
+            "pool_end_ds": 0x5235,
+            "helper_ds": 0x9615,
+            "legacy_helper_ds": 0x5235,
+            "pool_capacity": 0x191,  # 401 bytes; helper is stored in a separate unused DS gap.
+            "data_segment": 0x4CB3,
+            "legacy_helper_code": bytes.fromhex(
+                "9C FC 51 56 8B F0 8B 4E FA E3 08 2E AC 0A C0 75 FA E2 F8 "
+                "8B C6 5E 59 9D 5B 5A 50 52 53 CB"
+            ),
+            "helper_code": bytes.fromhex(
+                "9C FC 83 FF 01 75 40 50 53 51 52 56 06 89 E3 "
+                "36 8B 47 0E 36 8B 57 10 8E C2 89 C3 83 C3 3D "
+                "89 C6 83 C6 2C 26 8A 04 30 E4 06 8E 06 B0 9A "
+                "26 8B 0E 28 2F 26 8B 16 2A 2F 07 50 52 51 "
+                "26 FF 1F 83 C4 06 07 5E 5A 59 5B 58 FC 51 56 "
+                "89 C6 8B 4E FA E3 08 2E AC 84 C0 75 FA E2 F8 "
+                "89 F0 5E 59 9D 5B 5A 59 5F 51 50 52 53 CB"
+            ),
+            # Broken compact FIX6/FIX7 helper signature, recognized only so
+            # existing EXEs can be read and migrated back to the relocation-safe
+            # 103-byte helper above on the next Credits commit.
+            "compact_helper_code": bytes.fromhex(
+                "9C FC 09 FF 74 2F 83 7E FA 00 75 29 "
+                "50 53 51 52 56 06 8B C7 88 E0 30 E4 50 "
+                "8E 06 B0 9A 26 FF 36 2A 2F 26 FF 36 28 2F "
+                "9A 91 0C 6B 07 83 C4 06 07 5E 5A 59 5B 58 "
+                "FC 51 56 89 C6 8B 4E FA E3 08 2E AC 84 C0 "
+                "75 FA E2 F8 89 F0 5E 59 9D 5B 5A 59 5F "
+                "51 50 52 53 CB"
+            ),
+            "charmap_overrides": {"5d": "Ü", "7c": "Ö", "7d": "ü"},
+            "groups": {
+                "top_labels": {
+                    "count": 3, "legacy_start_ds": 0x50A4,
+                    "legacy_stride": 0x11, "legacy_slot_size": 0x11,
+                    "code_site": 0x164BA, "code_length": 14,
+                    "relocation_delta": 10,
+                    "legacy_code": bytes.fromhex("B8 11 00 F7 6E FA 05 A4 50 B9 B3 4C 51 50"),
+                },
+                "top_names": {
+                    "count": 2, "legacy_start_ds": 0x50D8,
+                    "legacy_stride": 0x0D, "legacy_slot_size": 0x0D,
+                    "code_site": 0x1650B, "code_length": 14,
+                    "relocation_delta": 10,
+                    "legacy_code": bytes.fromhex("B8 0D 00 F7 6E FA 05 D8 50 B9 B3 4C 51 50"),
+                },
+                "labels": {
+                    # The editor always exposes seven labels. Original fixed-slot
+                    # EXEs contain six; the packed format supports all seven.
+                    "count": 7, "legacy_count": 6,
+                    "legacy_start_ds": 0x50F2,
+                    "legacy_stride": 0x0C, "legacy_slot_size": 0x0C,
+                    "code_site": 0x1655B, "code_length": 14,
+                    "relocation_delta": 10,
+                    "count_site": 0x1658F, "legacy_count_value": 6,
+                    "legacy_code": bytes.fromhex("B8 0C 00 F7 6E FA 05 F2 50 B9 B3 4C 51 50"),
+                },
+                "names": {
+                    "count": 7, "legacy_start_ds": 0x513A,
+                    "legacy_stride": 0x20, "legacy_slot_size": 0x20,
+                    "code_site": 0x165AC, "code_length": 15,
+                    # This call site has its existing MZ relocation at +11,
+                    # one byte later than the other three call sites.
+                    "relocation_delta": 11,
+                    "helper_call_padding": 4,
+                    "legacy_code": bytes.fromhex("B1 05 8B 46 FA D3 E0 05 3A 51 B9 B3 4C 51 50"),
+                },
+            },
+            "group_order": ("top_labels", "top_names", "labels", "names"),
+            "footer": {
+                "count": 1, "legacy_start_ds": 0x521A,
+                "legacy_slot_size": 0x3B, "pointer_site": 0x16612,
+            },
+            "font_values": {"FLOW.FON": 1, "MICRO4.FON": 2},
+            "font_sites": {"main": 0x16489, "footer": 0x165E5},
+        },
         "immutable_signature": {
             "header_size": 0x6CB0,
             "relocation_table_offset": 0x1C,
@@ -188,6 +270,7 @@ GAME_PROFILES = {
             "relocation_topology_sha256": [
                 "8D0F8560784383D50D92DB5902B9ABF4ADA29D34035CD6FE18F14E2EEE29611E",
                 "7A3E76BF470E0CC8F760A9BB231BC25EEDBA7E70EFEA434BD0F810FBC4155AE1", # patch conceded points in history with 3 points rule
+                "7FCD1D3E7A01588F3135160EFF706E905DE3EE2E679020FA24DD77A03F5276E6", # patch labels like Amiga's screens
             ],
             "entry_cs": 0x3A01,
             "entry_ip": 0x0016,
